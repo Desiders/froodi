@@ -1,0 +1,14 @@
+[package]
+name = "froodi"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tracing = { version = "0.1", default-features = false, features = ["attributes"]}
+
+[dev-dependencies]
+tokio = { version = "1.43", default-features = false, features = ["macros", "rt-multi-thread"] }
+tracing-test = { version = "0.2", default-features = false }
+
+[profile.test]
+opt-level = 3
