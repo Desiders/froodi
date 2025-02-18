@@ -9,7 +9,6 @@ pub(crate) struct Container {
 }
 
 impl Container {
-    #[inline]
     pub(crate) fn get<Dep: DependencyResolver>(&self) -> Result<Dep, Dep::Error> {
         Dep::resolve(self.registry.clone(), self.context.clone())
     }

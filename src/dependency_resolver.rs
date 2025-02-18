@@ -6,7 +6,7 @@ use crate::{
     context::Context,
     instantiator::{InstantiateErrorKind, InstantiatorErrorKind, Request},
     registry::Registry,
-    service::base::Service as _,
+    service::Service as _,
 };
 
 #[derive(Debug)]
