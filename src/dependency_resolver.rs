@@ -1,6 +1,6 @@
 use alloc::{boxed::Box, rc::Rc};
 use core::{any::type_name, cell::RefCell};
-use tracing::{debug, error, instrument};
+use tracing::{debug, error, instrument, warn};
 
 use crate::{
     context::Context,
@@ -35,12 +35,13 @@ impl<Dep: Clone + 'static> DependencyResolverSync for Inject<Dep, true> {
             debug!("Dependency not found in context");
         }
 
-        let Some(mut factory) = registry.get_instantiator::<Dep>() else {
+        let Some((mut instantiator, config)) = registry.get_instantiator::<Dep>() else {
             debug!("Instantiator not found in registry");
             return Err(ResolveErrorKind::NoFactory);
         };
+        let cache_provides = config.cache_provides;
 
-        let dependency = match factory.call(Request::new(registry, context.clone())) {
+        let dependency = match instantiator.call(Request::new(registry, context.clone())) {
             Ok(dependency) => match dependency.downcast::<Dep>() {
                 Ok(dependency) => *dependency,
                 Err(incorrect_type) => {
@@ -64,9 +65,11 @@ impl<Dep: Clone + 'static> DependencyResolverSync for Inject<Dep, true> {
 
         debug!("Dependency resolved");
 
-        context.borrow_mut().insert(dependency.clone());
+        if cache_provides {
+            context.borrow_mut().insert(dependency.clone());
 
-        debug!("Dependency cached");
+            debug!("Dependency cached");
+        }
 
         Ok(Self(dependency))
     }
@@ -84,12 +87,12 @@ impl<Dep: 'static> DependencyResolverSync for Inject<Dep, false> {
             debug!("Dependency not found in context");
         }
 
-        let Some(mut factory) = registry.get_instantiator::<Dep>() else {
+        let Some((mut instantiator, _config)) = registry.get_instantiator::<Dep>() else {
             debug!("Instantiator not found in registry");
             return Err(ResolveErrorKind::NoFactory);
         };
 
-        let dependency = match factory.call(Request::new(registry, context)) {
+        let dependency = match instantiator.call(Request::new(registry, context)) {
             Ok(dependency) => match dependency.downcast::<Dep>() {
                 Ok(dependency) => *dependency,
                 Err(incorrect_type) => {

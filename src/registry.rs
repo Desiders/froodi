@@ -3,27 +3,53 @@ use core::any::TypeId;
 
 use crate::{
     dependency_resolver::ResolveErrorKind,
-    instantiator::{BoxedCloneInstantiatorSync, InstantiateErrorKind},
+    instantiator::{BoxedCloneInstantiatorSync, Config, InstantiateErrorKind},
 };
 
 #[derive(Default)]
 pub(crate) struct Registry {
-    instantiators:
-        BTreeMap<TypeId, BoxedCloneInstantiatorSync<ResolveErrorKind, InstantiateErrorKind>>,
+    instantiators: BTreeMap<
+        TypeId,
+        (
+            BoxedCloneInstantiatorSync<ResolveErrorKind, InstantiateErrorKind>,
+            Config,
+        ),
+    >,
 }
 
 impl Registry {
     pub(crate) fn add_instantiator<Dep: 'static>(
         &mut self,
         value: BoxedCloneInstantiatorSync<ResolveErrorKind, InstantiateErrorKind>,
-    ) -> Option<BoxedCloneInstantiatorSync<ResolveErrorKind, InstantiateErrorKind>> {
-        self.instantiators.insert(TypeId::of::<Dep>(), value)
+    ) -> Option<(
+        BoxedCloneInstantiatorSync<ResolveErrorKind, InstantiateErrorKind>,
+        Config,
+    )> {
+        self.instantiators
+            .insert(TypeId::of::<Dep>(), (value, Config::default()))
+    }
+
+    pub(crate) fn add_instantiator_with_config<Dep: 'static>(
+        &mut self,
+        value: BoxedCloneInstantiatorSync<ResolveErrorKind, InstantiateErrorKind>,
+        config: Config,
+    ) -> Option<(
+        BoxedCloneInstantiatorSync<ResolveErrorKind, InstantiateErrorKind>,
+        Config,
+    )> {
+        self.instantiators
+            .insert(TypeId::of::<Dep>(), (value, config))
     }
 
     #[must_use]
     pub(crate) fn get_instantiator<Dep: 'static>(
         &self,
-    ) -> Option<BoxedCloneInstantiatorSync<ResolveErrorKind, InstantiateErrorKind>> {
-        self.instantiators.get(&TypeId::of::<Dep>()).cloned()
+    ) -> Option<(
+        BoxedCloneInstantiatorSync<ResolveErrorKind, InstantiateErrorKind>,
+        &Config,
+    )> {
+        self.instantiators
+            .get(&TypeId::of::<Dep>())
+            .map(|(value, config)| (value.clone(), config))
     }
 }
