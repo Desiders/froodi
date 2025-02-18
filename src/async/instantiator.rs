@@ -1,7 +1,7 @@
 use alloc::{boxed::Box, sync::Arc};
 use core::{any::Any, future::Future};
 
-use crate::r#async::service::{boxed_clone::BoxCloneService, fn_service::fn_service};
+use crate::r#async::service::{service_fn, BoxCloneService};
 
 use super::{context::Context, dependency_resolver::DependencyResolver, registry::Registry};
 
@@ -74,7 +74,7 @@ where
     Inst::Provides: 'static,
     Deps: DependencyResolver,
 {
-    BoxCloneService::new(fn_service(move |Request { registry, context }| {
+    BoxCloneService::new(service_fn(move |Request { registry, context }| {
         let mut instantiator = instantiator.clone();
 
         async move {
@@ -132,7 +132,7 @@ mod tests {
     use super::boxed_instantiator_factory;
     use crate::r#async::{
         context::Context, dependency_resolver::Inject, instantiator::InstantiateErrorKind,
-        registry::Registry, service::base::Service as _,
+        registry::Registry, service::Service as _,
     };
 
     #[derive(Clone, Copy)]

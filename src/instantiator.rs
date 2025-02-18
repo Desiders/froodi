@@ -5,7 +5,7 @@ use crate::{
     context::Context,
     dependency_resolver::DependencyResolver,
     registry::Registry,
-    service::{boxed_clone::BoxCloneService, fn_service::FnService},
+    service::{service_fn, BoxCloneService},
 };
 
 #[derive(Debug)]
@@ -72,7 +72,7 @@ where
 {
     let mut instantiator = instantiator.clone();
 
-    BoxCloneService(Box::new(FnService({
+    BoxCloneService(Box::new(service_fn({
         move |Request { registry, context }| {
             let dependencies = match Deps::resolve(registry, context) {
                 Ok(dependencies) => dependencies,
@@ -128,7 +128,7 @@ mod tests {
     use super::boxed_instantiator_factory;
     use crate::{
         context::Context, dependency_resolver::Inject, instantiator::InstantiateErrorKind,
-        registry::Registry, service::base::Service as _,
+        registry::Registry, service::Service as _,
     };
 
     #[derive(Clone, Copy)]

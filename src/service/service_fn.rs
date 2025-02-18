@@ -1,9 +1,17 @@
 use super::base::Service;
 
-#[derive(Clone)]
-pub(crate) struct FnService<F>(pub(crate) F);
+#[inline]
+#[must_use]
+pub(crate) const fn service_fn<T>(f: T) -> ServiceFn<T> {
+    ServiceFn { f }
+}
 
-impl<F, Request, Response, Error> Service<Request> for FnService<F>
+#[derive(Clone)]
+pub(crate) struct ServiceFn<T> {
+    f: T,
+}
+
+impl<F, Request, Response, Error> Service<Request> for ServiceFn<F>
 where
     F: FnMut(Request) -> Result<Response, Error>,
 {
@@ -12,7 +20,7 @@ where
 
     #[inline]
     fn call(&mut self, request: Request) -> Result<Self::Response, Self::Error> {
-        self.0(request)
+        (self.f)(request)
     }
 }
 
@@ -20,7 +28,7 @@ where
 mod tests {
     use core::convert::Infallible;
 
-    use super::{FnService, Service as _};
+    use super::{service_fn, Service as _};
 
     #[derive(Clone, Copy)]
     struct Request(bool);
@@ -28,7 +36,7 @@ mod tests {
 
     #[test]
     fn test_service() {
-        let mut service = FnService(|Request(val)| Ok::<_, Infallible>(Response(val)));
+        let mut service = service_fn(|Request(val)| Ok::<_, Infallible>(Response(val)));
 
         let request = Request(true);
         let response = service.call(request).unwrap();
