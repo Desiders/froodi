@@ -15,15 +15,15 @@ pub(crate) enum ResolveErrorKind {
     Factory(InstantiatorErrorKind<Box<ResolveErrorKind>, InstantiateErrorKind>),
 }
 
-pub(crate) trait DependencyResolverSync: Sized {
-    type Error;
+pub(crate) trait DependencyResolver: Sized {
+    type Error: Into<ResolveErrorKind>;
 
     fn resolve(registry: Rc<Registry>, context: Rc<RefCell<Context>>) -> Result<Self, Self::Error>;
 }
 
 pub(crate) struct Inject<Dep, const CACHABLE: bool = true>(pub(crate) Dep);
 
-impl<Dep: Clone + 'static> DependencyResolverSync for Inject<Dep, true> {
+impl<Dep: Clone + 'static> DependencyResolver for Inject<Dep, true> {
     type Error = ResolveErrorKind;
 
     #[instrument(skip_all, fields(dependency = type_name::<Dep>()))]
@@ -75,7 +75,7 @@ impl<Dep: Clone + 'static> DependencyResolverSync for Inject<Dep, true> {
     }
 }
 
-impl<Dep: 'static> DependencyResolverSync for Inject<Dep, false> {
+impl<Dep: 'static> DependencyResolver for Inject<Dep, false> {
     type Error = ResolveErrorKind;
 
     #[instrument(skip_all, fields(dependency = type_name::<Dep>()))]
@@ -120,14 +120,14 @@ impl<Dep: 'static> DependencyResolverSync for Inject<Dep, false> {
     }
 }
 
-macro_rules! impl_dependency_resolver_sync {
+macro_rules! impl_dependency_resolver {
     (
         [$($ty:ident),*]
     ) => {
         #[allow(non_snake_case)]
-        impl<$($ty,)*> DependencyResolverSync for ($($ty,)*)
+        impl<$($ty,)*> DependencyResolver for ($($ty,)*)
         where
-            $( $ty: DependencyResolverSync<Error: Into<ResolveErrorKind>>, )*
+            $( $ty: DependencyResolver, )*
         {
             type Error = ResolveErrorKind;
 
@@ -140,4 +140,4 @@ macro_rules! impl_dependency_resolver_sync {
     };
 }
 
-all_the_tuples!(impl_dependency_resolver_sync);
+all_the_tuples!(impl_dependency_resolver);

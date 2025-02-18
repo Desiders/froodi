@@ -3,17 +3,20 @@ use core::{any::Any, cell::RefCell};
 
 use crate::{
     context::Context,
-    dependency_resolver::DependencyResolverSync,
+    dependency_resolver::DependencyResolver,
     registry::Registry,
-    service::{boxed_clone::BoxCloneServiceSync, fn_service::FnServiceSync},
+    service::{boxed_clone::BoxCloneService, fn_service::FnService},
 };
 
 #[derive(Debug)]
 pub(crate) enum InstantiateErrorKind {}
 
-pub(crate) trait InstantiatorSync<Deps> {
-    type Provides;
-    type Error;
+pub(crate) trait Instantiator<Deps>: Clone + 'static
+where
+    Deps: DependencyResolver,
+{
+    type Provides: 'static;
+    type Error: Into<InstantiateErrorKind>;
 
     fn instantiate(&mut self, dependencies: Deps) -> Result<Self::Provides, Self::Error>;
 }
@@ -50,8 +53,8 @@ impl Request {
     }
 }
 
-pub(crate) type BoxedCloneInstantiatorSync<DepsErr, FactoryErr> =
-    BoxCloneServiceSync<Request, Box<dyn Any>, InstantiatorErrorKind<DepsErr, FactoryErr>>;
+pub(crate) type BoxedCloneInstantiator<DepsErr, FactoryErr> =
+    BoxCloneService<Request, Box<dyn Any>, InstantiatorErrorKind<DepsErr, FactoryErr>>;
 
 #[derive(Debug)]
 pub(crate) enum InstantiatorErrorKind<DepsErr, FactoryErr> {
@@ -60,17 +63,16 @@ pub(crate) enum InstantiatorErrorKind<DepsErr, FactoryErr> {
 }
 
 #[must_use]
-pub(crate) fn instantiator_sync<Instantiator, Deps>(
-    instantiator: Instantiator,
-) -> BoxedCloneInstantiatorSync<Deps::Error, Instantiator::Error>
+pub(crate) fn boxed_instantiator_factory<Inst, Deps>(
+    instantiator: Inst,
+) -> BoxedCloneInstantiator<Deps::Error, Inst::Error>
 where
-    Instantiator: InstantiatorSync<Deps> + Clone + 'static,
-    Instantiator::Provides: 'static,
-    Deps: DependencyResolverSync,
+    Inst: Instantiator<Deps>,
+    Deps: DependencyResolver,
 {
-    BoxCloneServiceSync(Box::new(FnServiceSync({
-        let mut instantiator = instantiator.clone();
+    let mut instantiator = instantiator.clone();
 
+    BoxCloneService(Box::new(FnService({
         move |Request { registry, context }| {
             let dependencies = match Deps::resolve(registry, context) {
                 Ok(dependencies) => dependencies,
@@ -86,16 +88,17 @@ where
     })))
 }
 
-macro_rules! impl_instantiator_sync {
+macro_rules! impl_instantiator {
     (
         [$($ty:ident),*]
     ) => {
         #[allow(non_snake_case)]
-        impl<F, Response, Err, $($ty,)*> InstantiatorSync<($($ty,)*)> for F
+        impl<F, Response, Err, $($ty,)*> Instantiator<($($ty,)*)> for F
         where
-            F: Fn($($ty,)*) -> Result<Response, Err>,
+            F: FnMut($($ty,)*) -> Result<Response, Err> + Clone + 'static,
+            Response: 'static,
             Err: Into<InstantiateErrorKind>,
-            $( $ty: DependencyResolverSync, )*
+            $( $ty: DependencyResolver, )*
         {
             type Provides = Response;
             type Error = Err;
@@ -107,7 +110,7 @@ macro_rules! impl_instantiator_sync {
     };
 }
 
-all_the_tuples!(impl_instantiator_sync);
+all_the_tuples!(impl_instantiator);
 
 #[cfg(test)]
 mod tests {
@@ -122,7 +125,7 @@ mod tests {
     use tracing::debug;
     use tracing_test::traced_test;
 
-    use super::instantiator_sync;
+    use super::boxed_instantiator_factory;
     use crate::{
         context::Context, dependency_resolver::Inject, instantiator::InstantiateErrorKind,
         registry::Registry, service::base::Service as _,
@@ -134,15 +137,15 @@ mod tests {
 
     #[test]
     #[traced_test]
-    fn test_instantiator_sync() {
+    fn test_boxed_instantiator_factory() {
         let request = Request(true);
 
-        let instantiator_request = instantiator_sync(move || {
+        let instantiator_request = boxed_instantiator_factory(move || {
             debug!("Call instantiator request");
             Ok::<_, InstantiateErrorKind>(request)
         });
         let mut instantiator_response =
-            instantiator_sync(|Inject(Request(val)): Inject<_, true>| {
+            boxed_instantiator_factory(|Inject(Request(val)): Inject<_, true>| {
                 debug!("Call instantiator response");
                 Ok::<_, InstantiateErrorKind>(Response(val))
             });

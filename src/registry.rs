@@ -3,7 +3,7 @@ use core::any::TypeId;
 
 use crate::{
     dependency_resolver::ResolveErrorKind,
-    instantiator::{BoxedCloneInstantiatorSync, Config, InstantiateErrorKind},
+    instantiator::{BoxedCloneInstantiator, Config, InstantiateErrorKind},
 };
 
 #[derive(Default)]
@@ -11,7 +11,7 @@ pub(crate) struct Registry {
     instantiators: BTreeMap<
         TypeId,
         (
-            BoxedCloneInstantiatorSync<ResolveErrorKind, InstantiateErrorKind>,
+            BoxedCloneInstantiator<ResolveErrorKind, InstantiateErrorKind>,
             Config,
         ),
     >,
@@ -20,9 +20,9 @@ pub(crate) struct Registry {
 impl Registry {
     pub(crate) fn add_instantiator<Dep: 'static>(
         &mut self,
-        value: BoxedCloneInstantiatorSync<ResolveErrorKind, InstantiateErrorKind>,
+        value: BoxedCloneInstantiator<ResolveErrorKind, InstantiateErrorKind>,
     ) -> Option<(
-        BoxedCloneInstantiatorSync<ResolveErrorKind, InstantiateErrorKind>,
+        BoxedCloneInstantiator<ResolveErrorKind, InstantiateErrorKind>,
         Config,
     )> {
         self.instantiators
@@ -31,10 +31,10 @@ impl Registry {
 
     pub(crate) fn add_instantiator_with_config<Dep: 'static>(
         &mut self,
-        value: BoxedCloneInstantiatorSync<ResolveErrorKind, InstantiateErrorKind>,
+        value: BoxedCloneInstantiator<ResolveErrorKind, InstantiateErrorKind>,
         config: Config,
     ) -> Option<(
-        BoxedCloneInstantiatorSync<ResolveErrorKind, InstantiateErrorKind>,
+        BoxedCloneInstantiator<ResolveErrorKind, InstantiateErrorKind>,
         Config,
     )> {
         self.instantiators
@@ -45,7 +45,7 @@ impl Registry {
     pub(crate) fn get_instantiator<Dep: 'static>(
         &self,
     ) -> Option<(
-        BoxedCloneInstantiatorSync<ResolveErrorKind, InstantiateErrorKind>,
+        BoxedCloneInstantiator<ResolveErrorKind, InstantiateErrorKind>,
         &Config,
     )> {
         self.instantiators
