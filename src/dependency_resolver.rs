@@ -1,10 +1,10 @@
 use alloc::{boxed::Box, rc::Rc};
-use core::any::type_name;
+use core::{any::type_name, cell::RefCell};
 use tracing::{debug, error, instrument};
 
 use crate::{
     context::Context,
-    instantiator::{InstantiateErrorKind, InstantiatorErrorKind, RequestSync},
+    instantiator::{InstantiateErrorKind, InstantiatorErrorKind, Request},
     registry::Registry,
     service::base::Service as _,
 };
@@ -18,17 +18,17 @@ pub(crate) enum ResolveErrorKind {
 pub(crate) trait DependencyResolverSync: Sized {
     type Error;
 
-    fn resolve(registry: Rc<Registry>, context: Rc<Context>) -> Result<Self, Self::Error>;
+    fn resolve(registry: Rc<Registry>, context: Rc<RefCell<Context>>) -> Result<Self, Self::Error>;
 }
 
-pub(crate) struct Inject<Dep>(pub(crate) Dep);
+pub(crate) struct Inject<Dep, const CACHABLE: bool = true>(pub(crate) Dep);
 
-impl<Dep: 'static> DependencyResolverSync for Inject<Dep> {
+impl<Dep: Clone + 'static> DependencyResolverSync for Inject<Dep, true> {
     type Error = ResolveErrorKind;
 
     #[instrument(skip_all, fields(dependency = type_name::<Dep>()))]
-    fn resolve(registry: Rc<Registry>, context: Rc<Context>) -> Result<Self, Self::Error> {
-        if let Some(dependency) = context.get::<Dep>() {
+    fn resolve(registry: Rc<Registry>, context: Rc<RefCell<Context>>) -> Result<Self, Self::Error> {
+        if let Some(dependency) = context.borrow().get::<Dep>() {
             debug!("Dependency found in context");
             return Ok(Self(dependency));
         } else {
@@ -40,9 +40,58 @@ impl<Dep: 'static> DependencyResolverSync for Inject<Dep> {
             return Err(ResolveErrorKind::NoFactory);
         };
 
-        let dependency = match factory.call(RequestSync::new(registry, context)) {
-            Ok(dependency) => *match dependency.downcast::<Dep>() {
-                Ok(dependency) => dependency,
+        let dependency = match factory.call(Request::new(registry, context.clone())) {
+            Ok(dependency) => match dependency.downcast::<Dep>() {
+                Ok(dependency) => *dependency,
+                Err(incorrect_type) => {
+                    error!("Incorrect factory provides type: {incorrect_type:#?}");
+                    unreachable!("Incorrect factory provides type: {incorrect_type:#?}");
+                }
+            },
+            Err(InstantiatorErrorKind::Deps(err)) => {
+                error!("Resolve error kind: {err:#?}");
+                return Err(ResolveErrorKind::Factory(InstantiatorErrorKind::Deps(
+                    Box::new(err),
+                )));
+            }
+            Err(InstantiatorErrorKind::Factory(err)) => {
+                error!("Instantiate error kind: {err:#?}");
+                return Err(ResolveErrorKind::Factory(InstantiatorErrorKind::Factory(
+                    err,
+                )));
+            }
+        };
+
+        debug!("Dependency resolved");
+
+        context.borrow_mut().insert(dependency.clone());
+
+        debug!("Dependency cached");
+
+        Ok(Self(dependency))
+    }
+}
+
+impl<Dep: 'static> DependencyResolverSync for Inject<Dep, false> {
+    type Error = ResolveErrorKind;
+
+    #[instrument(skip_all, fields(dependency = type_name::<Dep>()))]
+    fn resolve(registry: Rc<Registry>, context: Rc<RefCell<Context>>) -> Result<Self, Self::Error> {
+        if let Some(dependency) = context.borrow().get::<Dep>() {
+            debug!("Dependency found in context");
+            return Ok(Self(dependency));
+        } else {
+            debug!("Dependency not found in context");
+        }
+
+        let Some(mut factory) = registry.get_instantiator::<Dep>() else {
+            debug!("Instantiator not found in registry");
+            return Err(ResolveErrorKind::NoFactory);
+        };
+
+        let dependency = match factory.call(Request::new(registry, context)) {
+            Ok(dependency) => match dependency.downcast::<Dep>() {
+                Ok(dependency) => *dependency,
                 Err(incorrect_type) => {
                     error!("Incorrect factory provides type: {incorrect_type:#?}");
                     unreachable!("Incorrect factory provides type: {incorrect_type:#?}");
@@ -81,7 +130,7 @@ macro_rules! impl_dependency_resolver_sync {
 
             #[inline]
             #[allow(unused_variables)]
-            fn resolve(registry: Rc<Registry>, context: Rc<Context>) -> Result<Self, Self::Error> {
+            fn resolve(registry: Rc<Registry>, context: Rc<RefCell<Context>>) -> Result<Self, Self::Error> {
                 Ok(($($ty::resolve(registry.clone(), context.clone()).map_err(Into::into)?,)*))
             }
         }
