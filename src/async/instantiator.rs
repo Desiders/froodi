@@ -1,12 +1,15 @@
 use alloc::{boxed::Box, sync::Arc};
-use core::{any::Any, future::Future};
-
-use crate::r#async::service::{service_fn, BoxCloneService};
+use core::{
+    any::{type_name, Any},
+    future::Future,
+};
+use tracing::{debug, debug_span, Instrument as _};
 
 use super::{context::Context, dependency_resolver::DependencyResolver, registry::Registry};
-
-#[derive(Debug)]
-pub(crate) enum InstantiateErrorKind {}
+use crate::{
+    errors::{InstantiateErrorKind, InstantiatorErrorKind},
+    r#async::service::{service_fn, BoxCloneService},
+};
 
 pub(crate) trait Instantiator<Deps>: Clone + Send + Sync + 'static
 where
@@ -24,8 +27,9 @@ where
 /// - cache_provides:
 ///     If `true`, the instance provided by the instantiator will be cached and reused.
 ///
-///     This does **not** affect the dependencies of the instance—only
-///     the final result is cached if caching is applicable.
+///     This does **not** affect the dependencies of the instance.
+///     Only the final result is cached if caching is applicable.
+#[derive(Clone, Copy)]
 pub(crate) struct Config {
     pub(crate) cache_provides: bool,
 }
@@ -40,6 +44,7 @@ impl Default for Config {
 
 pub(crate) struct Request {
     registry: Arc<Registry>,
+    config: Config,
     #[cfg(feature = "async_tokio")]
     context: Arc<tokio::sync::Mutex<Context>>,
 }
@@ -50,16 +55,15 @@ impl Request {
     #[cfg(feature = "async_tokio")]
     pub(crate) const fn new(
         registry: Arc<Registry>,
+        config: Config,
         context: Arc<tokio::sync::Mutex<Context>>,
     ) -> Self {
-        Self { registry, context }
+        Self {
+            registry,
+            config,
+            context,
+        }
     }
-}
-
-#[derive(Debug)]
-pub(crate) enum InstantiatorErrorKind<DepsErr, FactoryErr> {
-    Deps(DepsErr),
-    Factory(FactoryErr),
 }
 
 pub(crate) type BoxedCloneInstantiator<DepsErr, FactoryErr> =
@@ -71,25 +75,96 @@ pub(crate) fn boxed_instantiator_factory<Inst, Deps>(
 ) -> BoxedCloneInstantiator<Deps::Error, Inst::Error>
 where
     Inst: Instantiator<Deps>,
-    Inst::Provides: 'static,
     Deps: DependencyResolver,
 {
-    BoxCloneService::new(service_fn(move |Request { registry, context }| {
-        let mut instantiator = instantiator.clone();
+    BoxCloneService::new(service_fn(
+        move |Request {
+                  registry,
+                  config: _config,
+                  context,
+              }| {
+            let mut instantiator = instantiator.clone();
 
-        async move {
-            let dependencies = match Deps::resolve(registry, context).await {
-                Ok(dependencies) => dependencies,
-                Err(err) => return Err(InstantiatorErrorKind::Deps(err)),
-            };
-            let dependency = match instantiator.instantiate(dependencies).await {
-                Ok(dependency) => dependency,
-                Err(err) => return Err(InstantiatorErrorKind::Factory(err)),
-            };
+            async move {
+                if let Some(dependency) = context.lock().await.get::<Inst::Provides>() {
+                    debug!("Found in context");
+                    return Ok(Box::new(dependency) as _);
+                } else {
+                    debug!("Not found in context");
+                };
 
-            Ok(Box::new(dependency) as _)
-        }
-    }))
+                let dependencies = match Deps::resolve(registry, context).await {
+                    Ok(dependencies) => dependencies,
+                    Err(err) => return Err(InstantiatorErrorKind::Deps(err)),
+                };
+                let dependency = match instantiator.instantiate(dependencies).await {
+                    Ok(dependency) => dependency,
+                    Err(err) => return Err(InstantiatorErrorKind::Factory(err)),
+                };
+
+                debug!("Resolved");
+
+                Ok(Box::new(dependency) as _)
+            }
+            .instrument(debug_span!(
+                "instantiator",
+                provides = type_name::<Inst::Provides>()
+            ))
+        },
+    ))
+}
+
+#[must_use]
+pub(crate) fn boxed_instantiator_cachable_factory<Inst, Deps>(
+    instantiator: Inst,
+) -> BoxedCloneInstantiator<Deps::Error, Inst::Error>
+where
+    Inst: Instantiator<Deps>,
+    Inst::Provides: Clone + Send,
+    Deps: DependencyResolver,
+{
+    BoxCloneService::new(service_fn(
+        move |Request {
+                  registry,
+                  config,
+                  context,
+              }| {
+            let mut instantiator = instantiator.clone();
+
+            async move {
+                if let Some(dependency) = context.lock().await.get::<Inst::Provides>() {
+                    debug!("Found in context");
+                    return Ok(Box::new(dependency) as _);
+                } else {
+                    debug!("Not found in context");
+                };
+
+                let dependencies = match Deps::resolve(registry, context.clone()).await {
+                    Ok(dependencies) => dependencies,
+                    Err(err) => return Err(InstantiatorErrorKind::Deps(err)),
+                };
+                let dependency = match instantiator.instantiate(dependencies).await {
+                    Ok(dependency) => dependency,
+                    Err(err) => {
+                        return Err(InstantiatorErrorKind::Factory(err));
+                    }
+                };
+
+                debug!("Resolved");
+
+                if config.cache_provides {
+                    context.lock().await.insert(dependency.clone());
+                    debug!("Cached");
+                }
+
+                Ok(Box::new(dependency) as _)
+            }
+            .instrument(debug_span!(
+                "instantiator",
+                provides = type_name::<Inst::Provides>()
+            ))
+        },
+    ))
 }
 
 macro_rules! impl_instantiator {
@@ -125,11 +200,12 @@ mod tests {
     use alloc::{
         format,
         string::{String, ToString as _},
+        sync::Arc,
     };
     use tracing::debug;
     use tracing_test::traced_test;
 
-    use super::boxed_instantiator_factory;
+    use super::{boxed_instantiator_factory, Config};
     use crate::r#async::{
         context::Context, dependency_resolver::Inject, instantiator::InstantiateErrorKind,
         registry::Registry, service::Service as _,
@@ -144,8 +220,6 @@ mod tests {
     #[traced_test]
     #[cfg(feature = "async_tokio")]
     async fn test_boxed_instantiator_factory() {
-        use alloc::sync::Arc;
-
         let request = Request(true);
 
         let instantiator_request = boxed_instantiator_factory(move || async move {
@@ -153,7 +227,7 @@ mod tests {
             Ok::<_, InstantiateErrorKind>(request)
         });
         let mut instantiator_response =
-            boxed_instantiator_factory(|Inject(Request(val)): Inject<_, true>| async move {
+            boxed_instantiator_factory(|Inject(Request(val))| async move {
                 debug!("Call instantiator response");
                 Ok::<_, InstantiateErrorKind>(Response(val))
             });
@@ -164,6 +238,7 @@ mod tests {
         let response = instantiator_response
             .call(super::Request::new(
                 Arc::new(registry),
+                Config::default(),
                 Arc::new(tokio::sync::Mutex::new(Context::default())),
             ))
             .await
