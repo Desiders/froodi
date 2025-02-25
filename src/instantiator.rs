@@ -168,37 +168,64 @@ mod tests {
         rc::Rc,
         string::{String, ToString as _},
     };
-    use core::cell::RefCell;
+    use core::{
+        cell::RefCell,
+        sync::atomic::{AtomicU8, Ordering},
+    };
     use tracing::debug;
     use tracing_test::traced_test;
 
-    use super::{boxed_instantiator_factory, Config};
+    use super::{boxed_instantiator_cachable_factory, boxed_instantiator_factory, Config};
     use crate::{
         context::Context, dependency_resolver::Inject, instantiator::InstantiateErrorKind, registry::Registry, service::Service as _,
     };
 
-    #[derive(Clone, Copy)]
     struct Request(bool);
     struct Response(bool);
+
+    #[derive(Clone)]
+    struct RequestCachable(bool);
+    #[derive(Clone)]
+    struct ResponseCachable(bool);
 
     #[test]
     #[traced_test]
     fn test_boxed_instantiator_factory() {
-        let request = Request(true);
+        let instantiator_request_call_count = Rc::new(AtomicU8::new(0));
+        let instantiator_response_call_count = Rc::new(AtomicU8::new(0));
 
-        let instantiator_request = boxed_instantiator_factory(move || {
-            debug!("Call instantiator request");
-            Ok::<_, InstantiateErrorKind>(request)
+        let instantiator_request = boxed_instantiator_factory({
+            let instantiator_request_call_count = instantiator_request_call_count.clone();
+            move || {
+                instantiator_request_call_count.fetch_add(1, Ordering::SeqCst);
+
+                debug!("Call instantiator request");
+                Ok::<_, InstantiateErrorKind>(Request(true))
+            }
         });
-        let mut instantiator_response = boxed_instantiator_factory(|Inject(Request(val))| {
-            debug!("Call instantiator response");
-            Ok::<_, InstantiateErrorKind>(Response(val))
+        let mut instantiator_response = boxed_instantiator_factory({
+            let instantiator_response_call_count = instantiator_response_call_count.clone();
+            move |Inject(Request(val_1)), Inject(Request(val_2))| {
+                assert_eq!(val_1, val_2);
+
+                instantiator_response_call_count.fetch_add(1, Ordering::SeqCst);
+
+                debug!("Call instantiator response");
+                Ok::<_, InstantiateErrorKind>(Response(val_1))
+            }
         });
 
         let mut registry = Registry::default();
         registry.add_instantiator::<Request>(instantiator_request);
 
-        let response = instantiator_response
+        let response_1 = instantiator_response
+            .call(super::Request::new(
+                Rc::new(registry.clone()),
+                Config::default(),
+                Rc::new(RefCell::new(Context::default())),
+            ))
+            .unwrap();
+        let response_2 = instantiator_response
             .call(super::Request::new(
                 Rc::new(registry),
                 Config::default(),
@@ -206,6 +233,59 @@ mod tests {
             ))
             .unwrap();
 
-        assert_eq!(request.0, response.downcast::<Response>().unwrap().0);
+        assert!(response_1.downcast::<Response>().unwrap().0);
+        assert!(response_2.downcast::<Response>().unwrap().0);
+        assert_eq!(instantiator_request_call_count.load(Ordering::SeqCst), 4);
+        assert_eq!(instantiator_response_call_count.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    #[traced_test]
+    fn test_boxed_instantiator_cached_factory() {
+        let instantiator_request_call_count = Rc::new(AtomicU8::new(0));
+        let instantiator_response_call_count = Rc::new(AtomicU8::new(0));
+
+        let instantiator_request = boxed_instantiator_cachable_factory({
+            let instantiator_request_call_count = instantiator_request_call_count.clone();
+            move || {
+                instantiator_request_call_count.fetch_add(1, Ordering::SeqCst);
+
+                debug!("Call instantiator request");
+                Ok::<_, InstantiateErrorKind>(RequestCachable(true))
+            }
+        });
+        let mut instantiator_response = boxed_instantiator_cachable_factory({
+            let instantiator_response_call_count = instantiator_response_call_count.clone();
+            move |Inject(RequestCachable(val_1)), Inject(RequestCachable(val_2))| {
+                assert_eq!(val_1, val_2);
+
+                instantiator_response_call_count.fetch_add(1, Ordering::SeqCst);
+
+                debug!("Call instantiator response");
+                Ok::<_, InstantiateErrorKind>(ResponseCachable(val_1))
+            }
+        });
+
+        let mut registry = Registry::default();
+        registry.add_instantiator::<RequestCachable>(instantiator_request);
+
+        let registry = Rc::new(registry);
+        let context = Rc::new(RefCell::new(Context::default()));
+
+        let response_1 = instantiator_response
+            .call(super::Request::new(registry.clone(), Config::default(), context.clone()))
+            .unwrap();
+        let response_2 = instantiator_response
+            .call(super::Request::new(registry.clone(), Config::default(), context.clone()))
+            .unwrap();
+        let response_3 = instantiator_response
+            .call(super::Request::new(registry.clone(), Config::default(), context))
+            .unwrap();
+
+        assert!(response_1.downcast::<ResponseCachable>().unwrap().0);
+        assert!(response_2.downcast::<ResponseCachable>().unwrap().0);
+        assert!(response_3.downcast::<ResponseCachable>().unwrap().0);
+        assert_eq!(instantiator_request_call_count.load(Ordering::SeqCst), 1);
+        assert_eq!(instantiator_response_call_count.load(Ordering::SeqCst), 1);
     }
 }
