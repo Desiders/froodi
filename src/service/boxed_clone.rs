@@ -14,7 +14,7 @@ pub(crate) trait CloneService<Request: ?Sized>: Service<Request> {
 impl<Request, T> CloneService<Request> for T
 where
     Request: ?Sized,
-    T: Service<Request> + Clone + ?Sized + 'static,
+    T: Service<Request> + Clone + 'static,
 {
     #[inline]
     #[must_use]

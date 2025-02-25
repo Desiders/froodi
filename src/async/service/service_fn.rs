@@ -1,4 +1,4 @@
-pub(crate) use tower::util::{service_fn, ServiceFn};
+pub(crate) use tower::util::service_fn;
 
 #[cfg(test)]
 mod tests {
