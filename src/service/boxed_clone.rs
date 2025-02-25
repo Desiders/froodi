@@ -8,9 +8,7 @@ pub(crate) struct BoxCloneService<Request: ?Sized, Response, Error>(
 
 pub(crate) trait CloneService<Request: ?Sized>: Service<Request> {
     #[must_use]
-    fn clone_box(
-        &self,
-    ) -> Box<dyn CloneService<Request, Response = Self::Response, Error = Self::Error>>;
+    fn clone_box(&self) -> Box<dyn CloneService<Request, Response = Self::Response, Error = Self::Error>>;
 }
 
 impl<Request, T> CloneService<Request> for T
@@ -20,9 +18,7 @@ where
 {
     #[inline]
     #[must_use]
-    fn clone_box(
-        &self,
-    ) -> Box<dyn CloneService<Request, Response = T::Response, Error = T::Error>> {
+    fn clone_box(&self) -> Box<dyn CloneService<Request, Response = T::Response, Error = T::Error>> {
         Box::new(self.clone())
     }
 }

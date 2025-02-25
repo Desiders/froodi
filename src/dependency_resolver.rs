@@ -40,15 +40,11 @@ impl<Dep: 'static> DependencyResolver for Inject<Dep> {
             },
             Err(InstantiatorErrorKind::Deps(err)) => {
                 error!(%err);
-                return Err(ResolveErrorKind::Instantiator(InstantiatorErrorKind::Deps(
-                    Box::new(err),
-                )));
+                return Err(ResolveErrorKind::Instantiator(InstantiatorErrorKind::Deps(Box::new(err))));
             }
             Err(InstantiatorErrorKind::Factory(err)) => {
                 error!(%err);
-                return Err(ResolveErrorKind::Instantiator(
-                    InstantiatorErrorKind::Factory(err),
-                ));
+                return Err(ResolveErrorKind::Instantiator(InstantiatorErrorKind::Factory(err)));
             }
         };
 

@@ -36,9 +36,7 @@ pub(crate) struct Config {
 
 impl Default for Config {
     fn default() -> Self {
-        Self {
-            cache_provides: true,
-        }
+        Self { cache_provides: true }
     }
 }
 
@@ -53,16 +51,8 @@ impl Request {
     #[inline]
     #[must_use]
     #[cfg(feature = "async_tokio")]
-    pub(crate) const fn new(
-        registry: Arc<Registry>,
-        config: Config,
-        context: Arc<tokio::sync::Mutex<Context>>,
-    ) -> Self {
-        Self {
-            registry,
-            config,
-            context,
-        }
+    pub(crate) const fn new(registry: Arc<Registry>, config: Config, context: Arc<tokio::sync::Mutex<Context>>) -> Self {
+        Self { registry, config, context }
     }
 }
 
@@ -70,9 +60,7 @@ pub(crate) type BoxedCloneInstantiator<DepsErr, FactoryErr> =
     BoxCloneService<Request, Box<dyn Any>, InstantiatorErrorKind<DepsErr, FactoryErr>>;
 
 #[must_use]
-pub(crate) fn boxed_instantiator_factory<Inst, Deps>(
-    instantiator: Inst,
-) -> BoxedCloneInstantiator<Deps::Error, Inst::Error>
+pub(crate) fn boxed_instantiator_factory<Inst, Deps>(instantiator: Inst) -> BoxedCloneInstantiator<Deps::Error, Inst::Error>
 where
     Inst: Instantiator<Deps>,
     Deps: DependencyResolver,
@@ -106,65 +94,51 @@ where
 
                 Ok(Box::new(dependency) as _)
             }
-            .instrument(debug_span!(
-                "instantiator",
-                provides = type_name::<Inst::Provides>()
-            ))
+            .instrument(debug_span!("instantiator", provides = type_name::<Inst::Provides>()))
         },
     ))
 }
 
 #[must_use]
-pub(crate) fn boxed_instantiator_cachable_factory<Inst, Deps>(
-    instantiator: Inst,
-) -> BoxedCloneInstantiator<Deps::Error, Inst::Error>
+pub(crate) fn boxed_instantiator_cachable_factory<Inst, Deps>(instantiator: Inst) -> BoxedCloneInstantiator<Deps::Error, Inst::Error>
 where
     Inst: Instantiator<Deps>,
     Inst::Provides: Clone + Send,
     Deps: DependencyResolver,
 {
-    BoxCloneService::new(service_fn(
-        move |Request {
-                  registry,
-                  config,
-                  context,
-              }| {
-            let mut instantiator = instantiator.clone();
+    BoxCloneService::new(service_fn(move |Request { registry, config, context }| {
+        let mut instantiator = instantiator.clone();
 
-            async move {
-                if let Some(dependency) = context.lock().await.get::<Inst::Provides>() {
-                    debug!("Found in context");
-                    return Ok(Box::new(dependency) as _);
-                } else {
-                    debug!("Not found in context");
-                };
+        async move {
+            if let Some(dependency) = context.lock().await.get::<Inst::Provides>() {
+                debug!("Found in context");
+                return Ok(Box::new(dependency) as _);
+            } else {
+                debug!("Not found in context");
+            };
 
-                let dependencies = match Deps::resolve(registry, context.clone()).await {
-                    Ok(dependencies) => dependencies,
-                    Err(err) => return Err(InstantiatorErrorKind::Deps(err)),
-                };
-                let dependency = match instantiator.instantiate(dependencies).await {
-                    Ok(dependency) => dependency,
-                    Err(err) => {
-                        return Err(InstantiatorErrorKind::Factory(err));
-                    }
-                };
-
-                debug!("Resolved");
-
-                if config.cache_provides {
-                    context.lock().await.insert(dependency.clone());
-                    debug!("Cached");
+            let dependencies = match Deps::resolve(registry, context.clone()).await {
+                Ok(dependencies) => dependencies,
+                Err(err) => return Err(InstantiatorErrorKind::Deps(err)),
+            };
+            let dependency = match instantiator.instantiate(dependencies).await {
+                Ok(dependency) => dependency,
+                Err(err) => {
+                    return Err(InstantiatorErrorKind::Factory(err));
                 }
+            };
 
-                Ok(Box::new(dependency) as _)
+            debug!("Resolved");
+
+            if config.cache_provides {
+                context.lock().await.insert(dependency.clone());
+                debug!("Cached");
             }
-            .instrument(debug_span!(
-                "instantiator",
-                provides = type_name::<Inst::Provides>()
-            ))
-        },
-    ))
+
+            Ok(Box::new(dependency) as _)
+        }
+        .instrument(debug_span!("instantiator", provides = type_name::<Inst::Provides>()))
+    }))
 }
 
 macro_rules! impl_instantiator {
@@ -207,8 +181,7 @@ mod tests {
 
     use super::{boxed_instantiator_factory, Config};
     use crate::r#async::{
-        context::Context, dependency_resolver::Inject, instantiator::InstantiateErrorKind,
-        registry::Registry, service::Service as _,
+        context::Context, dependency_resolver::Inject, instantiator::InstantiateErrorKind, registry::Registry, service::Service as _,
     };
 
     #[derive(Clone, Copy)]
@@ -226,11 +199,10 @@ mod tests {
             debug!("Call instantiator request");
             Ok::<_, InstantiateErrorKind>(request)
         });
-        let mut instantiator_response =
-            boxed_instantiator_factory(|Inject(Request(val))| async move {
-                debug!("Call instantiator response");
-                Ok::<_, InstantiateErrorKind>(Response(val))
-            });
+        let mut instantiator_response = boxed_instantiator_factory(|Inject(Request(val))| async move {
+            debug!("Call instantiator response");
+            Ok::<_, InstantiateErrorKind>(Response(val))
+        });
 
         let mut registry = Registry::default();
         registry.add_instantiator::<Request>(instantiator_request);

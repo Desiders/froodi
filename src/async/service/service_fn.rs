@@ -13,8 +13,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_service() {
-        let mut service =
-            service_fn(|Request(val)| async move { Ok::<_, Infallible>(Response(val)) });
+        let mut service = service_fn(|Request(val)| async move { Ok::<_, Infallible>(Response(val)) });
 
         let request = Request(true);
         let response = service.call(request).await.unwrap();

@@ -37,9 +37,7 @@ pub(crate) struct Config {
 
 impl Default for Config {
     fn default() -> Self {
-        Self {
-            cache_provides: true,
-        }
+        Self { cache_provides: true }
     }
 }
 
@@ -52,16 +50,8 @@ pub(crate) struct Request {
 impl Request {
     #[inline]
     #[must_use]
-    pub(crate) const fn new(
-        registry: Rc<Registry>,
-        config: Config,
-        context: Rc<RefCell<Context>>,
-    ) -> Self {
-        Self {
-            registry,
-            config,
-            context,
-        }
+    pub(crate) const fn new(registry: Rc<Registry>, config: Config, context: Rc<RefCell<Context>>) -> Self {
+        Self { registry, config, context }
     }
 }
 
@@ -69,9 +59,7 @@ pub(crate) type BoxedCloneInstantiator<DepsErr, FactoryErr> =
     BoxCloneService<Request, Box<dyn Any>, InstantiatorErrorKind<DepsErr, FactoryErr>>;
 
 #[must_use]
-pub(crate) fn boxed_instantiator_factory<Inst, Deps>(
-    instantiator: Inst,
-) -> BoxedCloneInstantiator<Deps::Error, Inst::Error>
+pub(crate) fn boxed_instantiator_factory<Inst, Deps>(instantiator: Inst) -> BoxedCloneInstantiator<Deps::Error, Inst::Error>
 where
     Inst: Instantiator<Deps>,
     Deps: DependencyResolver,
@@ -108,20 +96,14 @@ where
 }
 
 #[must_use]
-pub(crate) fn boxed_instantiator_cachable_factory<Inst, Deps>(
-    instantiator: Inst,
-) -> BoxedCloneInstantiator<Deps::Error, Inst::Error>
+pub(crate) fn boxed_instantiator_cachable_factory<Inst, Deps>(instantiator: Inst) -> BoxedCloneInstantiator<Deps::Error, Inst::Error>
 where
     Inst: Instantiator<Deps>,
     Inst::Provides: Clone,
     Deps: DependencyResolver,
 {
     BoxCloneService(Box::new(service_fn({
-        move |Request {
-                  registry,
-                  config,
-                  context,
-              }| {
+        move |Request { registry, config, context }| {
             let mut instantiator = instantiator.clone();
 
             let span = debug_span!("instantiator", provides = type_name::<Inst::Provides>());
@@ -194,8 +176,7 @@ mod tests {
 
     use super::{boxed_instantiator_factory, Config};
     use crate::{
-        context::Context, dependency_resolver::Inject, instantiator::InstantiateErrorKind,
-        registry::Registry, service::Service as _,
+        context::Context, dependency_resolver::Inject, instantiator::InstantiateErrorKind, registry::Registry, service::Service as _,
     };
 
     #[derive(Clone, Copy)]

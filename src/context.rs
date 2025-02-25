@@ -32,14 +32,7 @@ impl Context {
         self.map
             .as_ref()
             .and_then(|map| map.get(&TypeId::of::<T>()))
-            .and_then(|boxed| {
-                boxed
-                    .clone_box()
-                    .into_any()
-                    .downcast()
-                    .ok()
-                    .map(|boxed| *boxed)
-            })
+            .and_then(|boxed| boxed.clone_box().into_any().downcast().ok().map(|boxed| *boxed))
     }
 
     #[inline]
