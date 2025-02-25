@@ -1,5 +1,8 @@
 use alloc::{boxed::Box, rc::Rc};
-use core::{any::type_name, cell::RefCell};
+use core::{
+    any::{type_name, TypeId},
+    cell::RefCell,
+};
 use tracing::{debug_span, error, warn};
 
 use super::{
@@ -26,24 +29,29 @@ impl<Dep: 'static> DependencyResolver for Inject<Dep> {
         let _guard = span.enter();
 
         let Some((mut instantiator, config)) = registry.get_instantiator::<Dep>() else {
-            warn!("Instantiator not found in registry");
-            return Err(ResolveErrorKind::NoFactory);
+            let err = ResolveErrorKind::NoInstantiator;
+            warn!("{}", err);
+            return Err(err);
         };
 
         let dependency = match instantiator.call(Request::new(registry, config, context)) {
             Ok(dependency) => match dependency.downcast::<Dep>() {
                 Ok(dependency) => *dependency,
                 Err(incorrect_type) => {
-                    error!("Incorrect instantiator provides type: {incorrect_type:#?}");
-                    unreachable!("Incorrect instantiator provides type: {incorrect_type:#?}");
+                    let err = ResolveErrorKind::IncorrectType {
+                        expected: TypeId::of::<Dep>(),
+                        actual: incorrect_type.type_id(),
+                    };
+                    error!("{}", err);
+                    return Err(err);
                 }
             },
             Err(InstantiatorErrorKind::Deps(err)) => {
-                error!(%err);
+                error!("{}", err);
                 return Err(ResolveErrorKind::Instantiator(InstantiatorErrorKind::Deps(Box::new(err))));
             }
             Err(InstantiatorErrorKind::Factory(err)) => {
-                error!(%err);
+                error!("{}", err);
                 return Err(ResolveErrorKind::Instantiator(InstantiatorErrorKind::Factory(err)));
             }
         };

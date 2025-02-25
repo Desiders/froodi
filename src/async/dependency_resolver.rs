@@ -25,8 +25,9 @@ impl<Dep: Send + 'static> DependencyResolver for Inject<Dep> {
         Box::pin(
             async move {
                 let Some((mut instantiator, config)) = registry.get_instantiator::<Dep>() else {
-                    warn!("Instantiator not found in registry");
-                    return Err(ResolveErrorKind::NoFactory);
+                    let err = ResolveErrorKind::NoInstantiator;
+                    warn!("{}", err);
+                    return Err(err);
                 };
 
                 let dependency = match instantiator.call(Request::new(registry, config, context)).await {
@@ -38,11 +39,11 @@ impl<Dep: Send + 'static> DependencyResolver for Inject<Dep> {
                         }
                     },
                     Err(InstantiatorErrorKind::Deps(err)) => {
-                        error!(%err);
+                        error!("{}", err);
                         return Err(ResolveErrorKind::Instantiator(InstantiatorErrorKind::Deps(Box::new(err))));
                     }
                     Err(InstantiatorErrorKind::Factory(err)) => {
-                        error!(%err);
+                        error!("{}", err);
                         return Err(ResolveErrorKind::Instantiator(InstantiatorErrorKind::Factory(err)));
                     }
                 };
