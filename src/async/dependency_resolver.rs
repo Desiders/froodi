@@ -29,30 +29,21 @@ impl<Dep: Send + 'static> DependencyResolver for Inject<Dep> {
                     return Err(ResolveErrorKind::NoFactory);
                 };
 
-                let dependency = match instantiator
-                    .call(Request::new(registry, config, context))
-                    .await
-                {
+                let dependency = match instantiator.call(Request::new(registry, config, context)).await {
                     Ok(dependency) => match dependency.downcast::<Dep>() {
                         Ok(dependency) => *dependency,
                         Err(incorrect_type) => {
                             error!("Incorrect instantiator provides type: {incorrect_type:#?}");
-                            unreachable!(
-                                "Incorrect instantiator provides type: {incorrect_type:#?}"
-                            );
+                            unreachable!("Incorrect instantiator provides type: {incorrect_type:#?}");
                         }
                     },
                     Err(InstantiatorErrorKind::Deps(err)) => {
                         error!(%err);
-                        return Err(ResolveErrorKind::Instantiator(InstantiatorErrorKind::Deps(
-                            Box::new(err),
-                        )));
+                        return Err(ResolveErrorKind::Instantiator(InstantiatorErrorKind::Deps(Box::new(err))));
                     }
                     Err(InstantiatorErrorKind::Factory(err)) => {
                         error!(%err);
-                        return Err(ResolveErrorKind::Instantiator(
-                            InstantiatorErrorKind::Factory(err),
-                        ));
+                        return Err(ResolveErrorKind::Instantiator(InstantiatorErrorKind::Factory(err)));
                     }
                 };
 
