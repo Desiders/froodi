@@ -1,9 +1,9 @@
 use alloc::collections::BTreeMap;
 use core::any::TypeId;
 
-use crate::{
-    dependency_resolver::ResolveErrorKind,
-    instantiator::{BoxedCloneInstantiator, Config, InstantiateErrorKind},
+use super::{
+    errors::{InstantiateErrorKind, ResolveErrorKind},
+    instantiator::{BoxedCloneInstantiator, Config},
 };
 
 #[derive(Default)]
@@ -46,10 +46,8 @@ impl Registry {
         &self,
     ) -> Option<(
         BoxedCloneInstantiator<ResolveErrorKind, InstantiateErrorKind>,
-        &Config,
+        Config,
     )> {
-        self.instantiators
-            .get(&TypeId::of::<Dep>())
-            .map(|(value, config)| (value.clone(), config))
+        self.instantiators.get(&TypeId::of::<Dep>()).cloned()
     }
 }
