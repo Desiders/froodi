@@ -6,7 +6,7 @@ use super::{
     instantiator::{BoxedCloneInstantiator, Config},
 };
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub(crate) struct Registry {
     instantiators: BTreeMap<TypeId, (BoxedCloneInstantiator<ResolveErrorKind, InstantiateErrorKind>, Config)>,
 }
