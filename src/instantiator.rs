@@ -25,7 +25,7 @@ where
 
 /// Config for an instantiator
 /// ## Fields
-/// - cache_provides:
+/// - `cache_provides`:
 ///     If `true`, the instance provided by the instantiator will be cached and reused.
 ///
 ///     This does **not** affect the dependencies of the instance.
@@ -75,9 +75,8 @@ where
             if let Some(dependency) = context.borrow().get::<Inst::Provides>() {
                 debug!("Found in context");
                 return Ok(Box::new(dependency) as _);
-            } else {
-                debug!("Not found in context");
-            };
+            }
+            debug!("Not found in context");
 
             let dependencies = match Deps::resolve(registry, context) {
                 Ok(dependencies) => dependencies,
@@ -112,9 +111,8 @@ where
             if let Some(dependency) = context.borrow().get::<Inst::Provides>() {
                 debug!("Found in context");
                 return Ok(Box::new(dependency) as _);
-            } else {
-                debug!("Not found in context");
-            };
+            }
+            debug!("Not found in context");
 
             let dependencies = match Deps::resolve(registry, context.clone()) {
                 Ok(dependencies) => dependencies,
