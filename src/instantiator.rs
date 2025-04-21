@@ -218,19 +218,14 @@ mod tests {
         let mut registry = Registry::default();
         registry.add_instantiator::<Request>(instantiator_request);
 
+        let registry = Rc::new(registry);
+        let context = Rc::new(RefCell::new(Context::default()));
+
         let response_1 = instantiator_response
-            .call(super::Request::new(
-                Rc::new(registry.clone()),
-                Config::default(),
-                Rc::new(RefCell::new(Context::default())),
-            ))
+            .call(super::Request::new(registry.clone(), Config::default(), context.clone()))
             .unwrap();
         let response_2 = instantiator_response
-            .call(super::Request::new(
-                Rc::new(registry),
-                Config::default(),
-                Rc::new(RefCell::new(Context::default())),
-            ))
+            .call(super::Request::new(registry.clone(), Config::default(), context))
             .unwrap();
 
         assert!(response_1.downcast::<Response>().unwrap().0);
