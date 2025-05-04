@@ -61,7 +61,7 @@ where
     Deps: DependencyResolver,
 {
     BoxCloneService(Box::new(service_fn({
-        move |Request { registry, context, .. }| {
+        move |Request { registry, context }| {
             let dependencies = match Deps::resolve(registry, context) {
                 Ok(dependencies) => dependencies,
                 Err(err) => return Err(InstantiatorErrorKind::Deps(err)),
@@ -166,7 +166,7 @@ mod tests {
         let response_1 = instantiator_response
             .call(super::Request::new(registry.clone(), context.clone()))
             .unwrap();
-        let response_2 = instantiator_response.call(super::Request::new(registry.clone(), context)).unwrap();
+        let response_2 = instantiator_response.call(super::Request::new(registry, context)).unwrap();
 
         assert!(response_1.downcast::<Response>().unwrap().0);
         assert!(response_2.downcast::<Response>().unwrap().0);
@@ -213,7 +213,7 @@ mod tests {
         let response_2 = instantiator_response
             .call(super::Request::new(registry.clone(), context.clone()))
             .unwrap();
-        let response_3 = instantiator_response.call(super::Request::new(registry.clone(), context)).unwrap();
+        let response_3 = instantiator_response.call(super::Request::new(registry, context)).unwrap();
 
         assert!(response_1.downcast::<Response>().unwrap().0);
         assert!(response_2.downcast::<Response>().unwrap().0);
