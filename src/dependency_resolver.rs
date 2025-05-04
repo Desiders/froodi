@@ -34,13 +34,13 @@ impl<Dep: 'static> DependencyResolver for Inject<Dep> {
         }
         debug!("Not found in context");
 
-        let Some((mut instantiator, config)) = registry.get_instantiator::<Dep>() else {
+        let Some((mut instantiator, config)) = registry.get_instantiator_with_config::<Dep>() else {
             let err = ResolveErrorKind::NoInstantiator;
             warn!("{}", err);
             return Err(err);
         };
 
-        match instantiator.call(Request::new(registry, config, context.clone())) {
+        match instantiator.call(Request::new(registry, context.clone())) {
             Ok(dependency) => match dependency.downcast::<Dep>() {
                 Ok(dependency) => {
                     let dependency = Rc::new(*dependency);
@@ -80,13 +80,13 @@ impl<Dep: 'static> DependencyResolver for InjectTransient<Dep> {
         let span = debug_span!("resolve", dependency = type_name::<Dep>());
         let _guard = span.enter();
 
-        let Some((mut instantiator, config)) = registry.get_instantiator::<Dep>() else {
+        let Some(mut instantiator) = registry.get_instantiator::<Dep>() else {
             let err = ResolveErrorKind::NoInstantiator;
             warn!("{}", err);
             return Err(err);
         };
 
-        match instantiator.call(Request::new(registry, config, context.clone())) {
+        match instantiator.call(Request::new(registry, context.clone())) {
             Ok(dependency) => match dependency.downcast::<Dep>() {
                 Ok(dependency) => Ok(Self(*dependency as _)),
                 Err(incorrect_type) => {
