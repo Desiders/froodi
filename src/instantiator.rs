@@ -40,15 +40,14 @@ impl Default for Config {
 
 pub(crate) struct Request {
     registry: Rc<Registry>,
-    config: Config,
     context: Rc<RefCell<Context>>,
 }
 
 impl Request {
     #[inline]
     #[must_use]
-    pub(crate) const fn new(registry: Rc<Registry>, config: Config, context: Rc<RefCell<Context>>) -> Self {
-        Self { registry, config, context }
+    pub(crate) const fn new(registry: Rc<Registry>, context: Rc<RefCell<Context>>) -> Self {
+        Self { registry, context }
     }
 }
 
@@ -119,7 +118,7 @@ mod tests {
     use tracing::debug;
     use tracing_test::traced_test;
 
-    use super::{boxed_instantiator_factory, Config};
+    use super::boxed_instantiator_factory;
     use crate::{
         context::Context,
         dependency_resolver::{Inject, InjectTransient},
@@ -165,11 +164,9 @@ mod tests {
         let context = Rc::new(RefCell::new(Context::default()));
 
         let response_1 = instantiator_response
-            .call(super::Request::new(registry.clone(), Config::default(), context.clone()))
+            .call(super::Request::new(registry.clone(), context.clone()))
             .unwrap();
-        let response_2 = instantiator_response
-            .call(super::Request::new(registry.clone(), Config::default(), context))
-            .unwrap();
+        let response_2 = instantiator_response.call(super::Request::new(registry.clone(), context)).unwrap();
 
         assert!(response_1.downcast::<Response>().unwrap().0);
         assert!(response_2.downcast::<Response>().unwrap().0);
@@ -211,14 +208,12 @@ mod tests {
         let context = Rc::new(RefCell::new(Context::default()));
 
         let response_1 = instantiator_response
-            .call(super::Request::new(registry.clone(), Config::default(), context.clone()))
+            .call(super::Request::new(registry.clone(), context.clone()))
             .unwrap();
         let response_2 = instantiator_response
-            .call(super::Request::new(registry.clone(), Config::default(), context.clone()))
+            .call(super::Request::new(registry.clone(), context.clone()))
             .unwrap();
-        let response_3 = instantiator_response
-            .call(super::Request::new(registry.clone(), Config::default(), context))
-            .unwrap();
+        let response_3 = instantiator_response.call(super::Request::new(registry.clone(), context)).unwrap();
 
         assert!(response_1.downcast::<Response>().unwrap().0);
         assert!(response_2.downcast::<Response>().unwrap().0);

@@ -28,7 +28,12 @@ impl Registry {
     }
 
     #[must_use]
-    pub(crate) fn get_instantiator<Dep: 'static>(
+    pub(crate) fn get_instantiator<Dep: 'static>(&self) -> Option<BoxedCloneInstantiator<ResolveErrorKind, InstantiateErrorKind>> {
+        self.instantiators.get(&TypeId::of::<Dep>()).map(|(value, _)| value.clone())
+    }
+
+    #[must_use]
+    pub(crate) fn get_instantiator_with_config<Dep: 'static>(
         &self,
     ) -> Option<(BoxedCloneInstantiator<ResolveErrorKind, InstantiateErrorKind>, Config)> {
         self.instantiators.get(&TypeId::of::<Dep>()).cloned()
