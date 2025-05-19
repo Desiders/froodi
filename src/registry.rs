@@ -5,10 +5,46 @@ use super::{
     errors::{InstantiateErrorKind, ResolveErrorKind},
     instantiator::{BoxedCloneInstantiator, Config},
 };
+use crate::{
+    dependency_resolver::DependencyResolver,
+    instantiator::{boxed_instantiator_factory, Instantiator},
+};
 
 #[derive(Default, Clone)]
-pub(crate) struct Registry {
+pub struct Registry {
     instantiators: BTreeMap<TypeId, (BoxedCloneInstantiator<ResolveErrorKind, InstantiateErrorKind>, Config)>,
+}
+
+impl Registry {
+    #[inline]
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            instantiators: BTreeMap::new(),
+        }
+    }
+
+    #[inline]
+    #[allow(private_bounds)]
+    pub fn provide<Inst, Deps>(mut self, instantiator: Inst) -> Self
+    where
+        Inst: Instantiator<Deps, Error = InstantiateErrorKind>,
+        Deps: DependencyResolver<Error = ResolveErrorKind>,
+    {
+        self.add_instantiator::<Inst::Provides>(boxed_instantiator_factory(instantiator));
+        self
+    }
+
+    #[inline]
+    #[allow(private_bounds)]
+    pub fn provide_with_config<Inst, Deps>(mut self, instantiator: Inst, config: Config) -> Self
+    where
+        Inst: Instantiator<Deps, Error = InstantiateErrorKind>,
+        Deps: DependencyResolver<Error = ResolveErrorKind>,
+    {
+        self.add_instantiator_with_config::<Inst::Provides>(boxed_instantiator_factory(instantiator), config);
+        self
+    }
 }
 
 impl Registry {
