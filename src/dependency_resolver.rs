@@ -154,12 +154,12 @@ mod tests {
     struct Request;
 
     #[test]
+    #[allow(dead_code)]
     fn test_dependency_resolver_impls() {
         fn resolver<T: DependencyResolver>() {}
         fn resolver_with_dep<Dep: 'static>() {
             resolver::<Inject<Dep>>();
             resolver::<InjectTransient<Dep>>();
-
             resolver::<(Inject<Dep>, InjectTransient<Dep>)>();
         }
     }

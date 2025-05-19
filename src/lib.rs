@@ -15,3 +15,8 @@ pub(crate) mod service;
 
 #[cfg(feature = "async")]
 pub(crate) mod r#async;
+
+pub use container::Container;
+pub use errors::{InstantiateErrorKind, InstantiatorErrorKind, ResolveErrorKind};
+pub use instantiator::Config;
+pub use registry::Registry;
