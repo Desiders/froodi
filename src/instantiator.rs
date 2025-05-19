@@ -118,11 +118,9 @@ mod tests {
     use tracing::debug;
     use tracing_test::traced_test;
 
-    use super::{boxed_instantiator_factory, DependencyResolver, InstantiateErrorKind, Instantiator};
+    use super::{boxed_instantiator_factory, Context, DependencyResolver, InstantiateErrorKind, Instantiator, Registry};
     use crate::{
-        context::Context,
         dependency_resolver::{Inject, InjectTransient},
-        registry::Registry,
         service::Service as _,
     };
 
