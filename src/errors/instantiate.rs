@@ -1,5 +1,5 @@
 #[derive(thiserror::Error, Debug)]
-pub(crate) enum InstantiateErrorKind {
+pub enum InstantiateErrorKind {
     #[error(transparent)]
     Custom(#[from] anyhow::Error),
 }

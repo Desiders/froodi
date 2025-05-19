@@ -28,8 +28,8 @@ where
 ///     This does **not** affect the dependencies of the instance.
 ///     Only the final result is cached if caching is applicable.
 #[derive(Clone, Copy)]
-pub(crate) struct Config {
-    pub(crate) cache_provides: bool,
+pub struct Config {
+    pub cache_provides: bool,
 }
 
 impl Default for Config {
@@ -118,17 +118,25 @@ mod tests {
     use tracing::debug;
     use tracing_test::traced_test;
 
-    use super::boxed_instantiator_factory;
+    use super::{boxed_instantiator_factory, DependencyResolver, InstantiateErrorKind, Instantiator};
     use crate::{
         context::Context,
         dependency_resolver::{Inject, InjectTransient},
-        instantiator::InstantiateErrorKind,
         registry::Registry,
         service::Service as _,
     };
 
     struct Request(bool);
     struct Response(bool);
+
+    #[test]
+    #[allow(dead_code)]
+    fn test_factory_helper() {
+        fn resolver<Deps: DependencyResolver, F: Instantiator<Deps>>(_f: F) {}
+        fn resolver_with_dep<Deps: DependencyResolver>() {
+            resolver(|| Ok::<_, InstantiateErrorKind>(()));
+        }
+    }
 
     #[test]
     #[traced_test]
