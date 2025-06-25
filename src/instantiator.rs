@@ -1,9 +1,6 @@
 use alloc::{boxed::Box, rc::Rc};
-use core::{
-    any::{type_name, Any},
-    cell::RefCell,
-};
-use tracing::{debug, debug_span};
+use core::{any::Any, cell::RefCell};
+use tracing::debug;
 
 use super::{
     context::Context,
@@ -26,13 +23,13 @@ where
 /// Config for an instantiator
 /// ## Fields
 /// - `cache_provides`:
-///     If `true`, the instance provided by the instantiator will be cached and reused.
+///   If `true`, the instance provided by the instantiator will be cached and reused.
 ///
-///     This does **not** affect the dependencies of the instance.
-///     Only the final result is cached if caching is applicable.
+///   This does **not** affect the dependencies of the instance.
+///   Only the final result is cached if caching is applicable.
 #[derive(Clone, Copy)]
-pub(crate) struct Config {
-    pub(crate) cache_provides: bool,
+pub struct Config {
+    pub cache_provides: bool,
 }
 
 impl Default for Config {
@@ -43,15 +40,14 @@ impl Default for Config {
 
 pub(crate) struct Request {
     registry: Rc<Registry>,
-    config: Config,
     context: Rc<RefCell<Context>>,
 }
 
 impl Request {
     #[inline]
     #[must_use]
-    pub(crate) const fn new(registry: Rc<Registry>, config: Config, context: Rc<RefCell<Context>>) -> Self {
-        Self { registry, config, context }
+    pub(crate) const fn new(registry: Rc<Registry>, context: Rc<RefCell<Context>>) -> Self {
+        Self { registry, context }
     }
 }
 
@@ -65,70 +61,17 @@ where
     Deps: DependencyResolver,
 {
     BoxCloneService(Box::new(service_fn({
-        move |Request {
-                  registry,
-                  config: _config,
-                  context,
-              }| {
-            let mut instantiator = instantiator.clone();
-
-            if let Some(dependency) = context.borrow().get::<Inst::Provides>() {
-                debug!("Found in context");
-                return Ok(Box::new(dependency) as _);
-            }
-            debug!("Not found in context");
-
+        move |Request { registry, context }| {
             let dependencies = match Deps::resolve(registry, context) {
                 Ok(dependencies) => dependencies,
                 Err(err) => return Err(InstantiatorErrorKind::Deps(err)),
             };
-            let dependency = match instantiator.instantiate(dependencies) {
+            let dependency = match instantiator.clone().instantiate(dependencies) {
                 Ok(dependency) => dependency,
                 Err(err) => return Err(InstantiatorErrorKind::Factory(err)),
             };
 
             debug!("Resolved");
-
-            Ok(Box::new(dependency) as _)
-        }
-    })))
-}
-
-#[must_use]
-pub(crate) fn boxed_instantiator_cachable_factory<Inst, Deps>(instantiator: Inst) -> BoxedCloneInstantiator<Deps::Error, Inst::Error>
-where
-    Inst: Instantiator<Deps>,
-    Inst::Provides: Clone,
-    Deps: DependencyResolver,
-{
-    BoxCloneService(Box::new(service_fn({
-        move |Request { registry, config, context }| {
-            let mut instantiator = instantiator.clone();
-
-            let span = debug_span!("instantiator", provides = type_name::<Inst::Provides>());
-            let _guard = span.enter();
-
-            if let Some(dependency) = context.borrow().get::<Inst::Provides>() {
-                debug!("Found in context");
-                return Ok(Box::new(dependency) as _);
-            }
-            debug!("Not found in context");
-
-            let dependencies = match Deps::resolve(registry, context.clone()) {
-                Ok(dependencies) => dependencies,
-                Err(err) => return Err(InstantiatorErrorKind::Deps(err)),
-            };
-            let dependency = match instantiator.instantiate(dependencies) {
-                Ok(dependency) => dependency,
-                Err(err) => return Err(InstantiatorErrorKind::Factory(err)),
-            };
-
-            debug!("Resolved");
-
-            if config.cache_provides {
-                context.borrow_mut().insert(dependency.clone());
-                debug!("Cached");
-            }
 
             Ok(Box::new(dependency) as _)
         }
@@ -175,18 +118,23 @@ mod tests {
     use tracing::debug;
     use tracing_test::traced_test;
 
-    use super::{boxed_instantiator_cachable_factory, boxed_instantiator_factory, Config};
+    use super::{boxed_instantiator_factory, Context, DependencyResolver, InstantiateErrorKind, Instantiator, Registry};
     use crate::{
-        context::Context, dependency_resolver::Inject, instantiator::InstantiateErrorKind, registry::Registry, service::Service as _,
+        dependency_resolver::{Inject, InjectTransient},
+        service::Service as _,
     };
 
     struct Request(bool);
     struct Response(bool);
 
-    #[derive(Clone)]
-    struct RequestCachable(bool);
-    #[derive(Clone)]
-    struct ResponseCachable(bool);
+    #[test]
+    #[allow(dead_code)]
+    fn test_factory_helper() {
+        fn resolver<Deps: DependencyResolver, F: Instantiator<Deps>>(_f: F) {}
+        fn resolver_with_dep<Deps: DependencyResolver>() {
+            resolver(|| Ok::<_, InstantiateErrorKind>(()));
+        }
+    }
 
     #[test]
     #[traced_test]
@@ -205,7 +153,7 @@ mod tests {
         });
         let mut instantiator_response = boxed_instantiator_factory({
             let instantiator_response_call_count = instantiator_response_call_count.clone();
-            move |Inject(Request(val_1)), Inject(Request(val_2))| {
+            move |InjectTransient(Request(val_1)), InjectTransient(Request(val_2))| {
                 assert_eq!(val_1, val_2);
 
                 instantiator_response_call_count.fetch_add(1, Ordering::SeqCst);
@@ -218,20 +166,13 @@ mod tests {
         let mut registry = Registry::default();
         registry.add_instantiator::<Request>(instantiator_request);
 
+        let registry = Rc::new(registry);
+        let context = Rc::new(RefCell::new(Context::default()));
+
         let response_1 = instantiator_response
-            .call(super::Request::new(
-                Rc::new(registry.clone()),
-                Config::default(),
-                Rc::new(RefCell::new(Context::default())),
-            ))
+            .call(super::Request::new(registry.clone(), context.clone()))
             .unwrap();
-        let response_2 = instantiator_response
-            .call(super::Request::new(
-                Rc::new(registry),
-                Config::default(),
-                Rc::new(RefCell::new(Context::default())),
-            ))
-            .unwrap();
+        let response_2 = instantiator_response.call(super::Request::new(registry, context)).unwrap();
 
         assert!(response_1.downcast::<Response>().unwrap().0);
         assert!(response_2.downcast::<Response>().unwrap().0);
@@ -245,47 +186,46 @@ mod tests {
         let instantiator_request_call_count = Rc::new(AtomicU8::new(0));
         let instantiator_response_call_count = Rc::new(AtomicU8::new(0));
 
-        let instantiator_request = boxed_instantiator_cachable_factory({
+        let instantiator_request = boxed_instantiator_factory({
             let instantiator_request_call_count = instantiator_request_call_count.clone();
             move || {
                 instantiator_request_call_count.fetch_add(1, Ordering::SeqCst);
 
                 debug!("Call instantiator request");
-                Ok::<_, InstantiateErrorKind>(RequestCachable(true))
+                Ok::<_, InstantiateErrorKind>(Request(true))
             }
         });
-        let mut instantiator_response = boxed_instantiator_cachable_factory({
+        let mut instantiator_response = boxed_instantiator_factory({
             let instantiator_response_call_count = instantiator_response_call_count.clone();
-            move |Inject(RequestCachable(val_1)), Inject(RequestCachable(val_2))| {
-                assert_eq!(val_1, val_2);
+            move |val_1: Inject<Request>, val_2: Inject<Request>| {
+                assert_eq!(val_1.0 .0, val_2.0 .0);
 
                 instantiator_response_call_count.fetch_add(1, Ordering::SeqCst);
 
                 debug!("Call instantiator response");
-                Ok::<_, InstantiateErrorKind>(ResponseCachable(val_1))
+                Ok::<_, InstantiateErrorKind>(Response(val_1.0 .0))
             }
         });
 
         let mut registry = Registry::default();
-        registry.add_instantiator::<RequestCachable>(instantiator_request);
+        registry.add_instantiator::<Request>(instantiator_request);
 
         let registry = Rc::new(registry);
         let context = Rc::new(RefCell::new(Context::default()));
 
         let response_1 = instantiator_response
-            .call(super::Request::new(registry.clone(), Config::default(), context.clone()))
+            .call(super::Request::new(registry.clone(), context.clone()))
             .unwrap();
         let response_2 = instantiator_response
-            .call(super::Request::new(registry.clone(), Config::default(), context.clone()))
+            .call(super::Request::new(registry.clone(), context.clone()))
             .unwrap();
-        let response_3 = instantiator_response
-            .call(super::Request::new(registry.clone(), Config::default(), context))
-            .unwrap();
+        let response_3 = instantiator_response.call(super::Request::new(registry, context)).unwrap();
 
-        assert!(response_1.downcast::<ResponseCachable>().unwrap().0);
-        assert!(response_2.downcast::<ResponseCachable>().unwrap().0);
-        assert!(response_3.downcast::<ResponseCachable>().unwrap().0);
+        assert!(response_1.downcast::<Response>().unwrap().0);
+        assert!(response_2.downcast::<Response>().unwrap().0);
+        assert!(response_3.downcast::<Response>().unwrap().0);
         assert_eq!(instantiator_request_call_count.load(Ordering::SeqCst), 1);
-        assert_eq!(instantiator_response_call_count.load(Ordering::SeqCst), 1);
+        // We don't cache instantiator provides of main factory here, we do it in container
+        assert_eq!(instantiator_response_call_count.load(Ordering::SeqCst), 3);
     }
 }

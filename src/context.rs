@@ -1,9 +1,9 @@
-use alloc::boxed::Box;
+use alloc::{boxed::Box, rc::Rc};
 use core::any::TypeId;
 
 #[derive(Default, Clone)]
 pub(crate) struct Context {
-    map: Option<Box<any::AnyMap>>,
+    map: Option<Box<any::Map>>,
 }
 
 impl Context {
@@ -12,11 +12,18 @@ impl Context {
         Self { map: None }
     }
 
-    pub fn insert<T: Clone + 'static>(&mut self, value: T) -> Option<T> {
+    pub fn insert<T: 'static>(&mut self, value: T) -> Option<Rc<T>> {
         self.map
             .get_or_insert_with(Box::default)
-            .insert(TypeId::of::<T>(), Box::new(value))
-            .and_then(|boxed| boxed.into_any().downcast().ok().map(|boxed| *boxed))
+            .insert(TypeId::of::<T>(), Rc::new(value))
+            .and_then(|boxed| boxed.downcast().ok())
+    }
+
+    pub fn insert_rc<T: 'static>(&mut self, value: Rc<T>) -> Option<Rc<T>> {
+        self.map
+            .get_or_insert_with(Box::default)
+            .insert(TypeId::of::<T>(), value)
+            .and_then(|boxed| boxed.downcast().ok())
     }
 
     #[must_use]
@@ -24,21 +31,21 @@ impl Context {
         self.map
             .as_ref()
             .and_then(|map| map.get(&TypeId::of::<T>()))
-            .and_then(|boxed| (**boxed).as_any().downcast_ref())
+            .and_then(|boxed| boxed.downcast_ref())
     }
 
     #[must_use]
-    pub fn get<T: 'static>(&self) -> Option<T> {
+    pub fn get<T: 'static>(&self) -> Option<Rc<T>> {
         self.map
             .as_ref()
             .and_then(|map| map.get(&TypeId::of::<T>()))
-            .and_then(|boxed| boxed.clone_box().into_any().downcast().ok().map(|boxed| *boxed))
+            .and_then(|boxed| boxed.clone().downcast().ok())
     }
 
     #[inline]
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.map.as_ref().map_or(true, |map| map.is_empty())
+        self.map.as_ref().is_none_or(|map| map.is_empty())
     }
 
     #[inline]
@@ -49,51 +56,8 @@ impl Context {
 }
 
 mod any {
-    use alloc::{boxed::Box, collections::BTreeMap};
+    use alloc::{collections::BTreeMap, rc::Rc};
     use core::any::{Any, TypeId};
 
-    pub(super) trait AnyClone: Any {
-        #[must_use]
-        fn clone_box(&self) -> Box<dyn AnyClone>;
-
-        #[must_use]
-        fn as_any(&self) -> &dyn Any;
-
-        #[must_use]
-        fn as_any_mut(&mut self) -> &mut dyn Any;
-
-        #[must_use]
-        fn into_any(self: Box<Self>) -> Box<dyn Any>;
-    }
-
-    pub(super) type AnyMap = BTreeMap<TypeId, Box<dyn AnyClone>>;
-
-    impl<T: Clone + 'static> AnyClone for T {
-        #[inline]
-        fn clone_box(&self) -> Box<dyn AnyClone> {
-            Box::new(self.clone())
-        }
-
-        #[inline]
-        fn as_any(&self) -> &dyn Any {
-            self
-        }
-
-        #[inline]
-        fn as_any_mut(&mut self) -> &mut dyn Any {
-            self
-        }
-
-        #[inline]
-        fn into_any(self: Box<Self>) -> Box<dyn Any> {
-            self
-        }
-    }
-
-    impl Clone for Box<dyn AnyClone> {
-        #[inline]
-        fn clone(&self) -> Self {
-            (**self).clone_box()
-        }
-    }
+    pub(super) type Map = BTreeMap<TypeId, Rc<dyn Any>>;
 }

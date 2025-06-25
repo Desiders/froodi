@@ -4,7 +4,7 @@ use core::any::TypeId;
 use super::{instantiate::InstantiateErrorKind, instantiator::InstantiatorErrorKind};
 
 #[derive(thiserror::Error, Debug)]
-pub(crate) enum ResolveErrorKind {
+pub enum ResolveErrorKind {
     #[error("Instantiator not found in registry")]
     NoInstantiator,
     #[error("Incorrect instantiator provides type. Actual: {actual:?}, expected: {expected:?}")]
