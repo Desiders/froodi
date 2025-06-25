@@ -25,10 +25,10 @@ where
 /// Config for an instantiator
 /// ## Fields
 /// - `cache_provides`:
-///     If `true`, the instance provided by the instantiator will be cached and reused.
+///   If `true`, the instance provided by the instantiator will be cached and reused.
 ///
-///     This does **not** affect the dependencies of the instance.
-///     Only the final result is cached if caching is applicable.
+///   This does **not** affect the dependencies of the instance.
+///   Only the final result is cached if caching is applicable.
 #[derive(Clone, Copy)]
 pub(crate) struct Config {
     pub(crate) cache_provides: bool,

@@ -17,7 +17,6 @@ where
     T: Service<Request> + Clone + 'static,
 {
     #[inline]
-    #[must_use]
     fn clone_box(&self) -> Box<dyn CloneService<Request, Response = T::Response, Error = T::Error>> {
         Box::new(self.clone())
     }

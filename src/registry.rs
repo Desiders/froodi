@@ -26,6 +26,7 @@ impl Registry {
 
     #[inline]
     #[allow(private_bounds)]
+    #[must_use]
     pub fn provide<Inst, Deps>(mut self, instantiator: Inst) -> Self
     where
         Inst: Instantiator<Deps, Error = InstantiateErrorKind>,
@@ -37,6 +38,7 @@ impl Registry {
 
     #[inline]
     #[allow(private_bounds)]
+    #[must_use]
     pub fn provide_with_config<Inst, Deps>(mut self, instantiator: Inst, config: Config) -> Self
     where
         Inst: Instantiator<Deps, Error = InstantiateErrorKind>,

@@ -23,10 +23,10 @@ where
 /// Config for an instantiator
 /// ## Fields
 /// - `cache_provides`:
-///     If `true`, the instance provided by the instantiator will be cached and reused.
+///   If `true`, the instance provided by the instantiator will be cached and reused.
 ///
-///     This does **not** affect the dependencies of the instance.
-///     Only the final result is cached if caching is applicable.
+///   This does **not** affect the dependencies of the instance.
+///   Only the final result is cached if caching is applicable.
 #[derive(Clone, Copy)]
 pub struct Config {
     pub cache_provides: bool,
@@ -198,12 +198,12 @@ mod tests {
         let mut instantiator_response = boxed_instantiator_factory({
             let instantiator_response_call_count = instantiator_response_call_count.clone();
             move |val_1: Inject<Request>, val_2: Inject<Request>| {
-                assert_eq!((*val_1.0).0, (*val_2.0).0);
+                assert_eq!(val_1.0 .0, val_2.0 .0);
 
                 instantiator_response_call_count.fetch_add(1, Ordering::SeqCst);
 
                 debug!("Call instantiator response");
-                Ok::<_, InstantiateErrorKind>(Response((*val_1.0).0))
+                Ok::<_, InstantiateErrorKind>(Response(val_1.0 .0))
             }
         });
 
