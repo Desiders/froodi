@@ -50,7 +50,7 @@ mod tests {
 
     #[test]
     #[traced_test]
-    fn test_scoped_single_get() {
+    fn test_scoped_get() {
         let registry = Registry::new()
             .provide(|| Ok(Request1))
             .provide(|Inject(req): Inject<Request1>| Ok(Request2(req)))
@@ -72,7 +72,7 @@ mod tests {
 
     #[test]
     #[traced_test]
-    fn test_transient_single_get() {
+    fn test_transient_get() {
         let registry = Registry::new()
             .provide(|| Ok(RequestTransient1))
             .provide(|InjectTransient(req): InjectTransient<RequestTransient1>| Ok(RequestTransient2(req)))
