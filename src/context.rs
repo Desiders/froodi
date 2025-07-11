@@ -3,7 +3,7 @@ use core::any::TypeId;
 
 #[derive(Default, Clone)]
 #[cfg_attr(feature = "debug", derive(Debug))]
-pub(crate) struct Context {
+pub struct Context {
     map: Option<Box<any::Map>>,
 }
 
