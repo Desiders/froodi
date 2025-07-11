@@ -12,6 +12,10 @@ tower = { version = "0.5", default-features = false, optional = true, features =
 futures-util = { version = "0.3", default-features = false, optional = true }
 
 [features]
+debug = []
+eq = []
+test = ["debug", "eq"]
+
 async = ["futures-util", "tower"]
 async_tokio = ["async", "tokio"]
 
