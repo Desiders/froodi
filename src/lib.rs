@@ -11,12 +11,14 @@ pub(crate) mod dependency_resolver;
 pub(crate) mod errors;
 pub(crate) mod instantiator;
 pub(crate) mod registry;
+pub(crate) mod scope;
 pub(crate) mod service;
 
 #[cfg(feature = "async")]
 pub(crate) mod r#async;
 
 pub use container::Container;
-pub use errors::{InstantiateErrorKind, InstantiatorErrorKind, ResolveErrorKind};
+pub use errors::{InstantiateErrorKind, InstantiatorErrorKind, ResolveErrorKind, ScopeErrorKind, ScopeWithErrorKind};
 pub use instantiator::Config;
-pub use registry::Registry;
+pub use registry::RegistriesBuilder;
+pub use scope::{DefaultScope, Scope};
