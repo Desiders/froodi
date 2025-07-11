@@ -2,6 +2,7 @@ use alloc::{boxed::Box, rc::Rc};
 use core::any::TypeId;
 
 #[derive(Default, Clone)]
+#[cfg_attr(feature = "debug", derive(Debug))]
 pub(crate) struct Context {
     map: Option<Box<any::Map>>,
 }
