@@ -58,12 +58,14 @@ impl Container {
         }
     }
 
+    /// Creates child container builder
     #[inline]
     #[must_use]
     pub fn child(&self) -> ChildContainerBuiler {
         ChildContainerBuiler { container: self.clone() }
     }
 
+    /// Creates child container and builds it with next non-skipped scope
     #[inline]
     pub fn child_build(&self) -> Result<Container, ScopeErrorKind> {
         self.child().build()
