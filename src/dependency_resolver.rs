@@ -5,11 +5,12 @@ use core::{
 };
 use tracing::{debug, debug_span, error, warn};
 
+use crate::registry::{InstantiatorInnerData, Registry};
+
 use super::{
     context::Context,
     errors::{InstantiatorErrorKind, ResolveErrorKind},
     instantiator::Request,
-    registry::Registry,
     service::Service as _,
 };
 
@@ -34,7 +35,7 @@ impl<Dep: 'static> DependencyResolver for Inject<Dep> {
         }
         debug!("Not found in context");
 
-        let Some((mut instantiator, config)) = registry.get_instantiator_with_config::<Dep>() else {
+        let Some(InstantiatorInnerData { mut instantiator, config }) = registry.get_instantiator_data::<Dep>() else {
             let err = ResolveErrorKind::NoInstantiator;
             warn!("{}", err);
             return Err(err);
@@ -136,6 +137,9 @@ all_the_tuples!(impl_dependency_resolver);
 mod tests {
     extern crate std;
 
+    use super::{Context, DependencyResolver, Inject, InjectTransient};
+    use crate::{errors::InstantiateErrorKind, scope::DefaultScope, RegistriesBuilder};
+
     use alloc::{
         format,
         rc::Rc,
@@ -147,9 +151,6 @@ mod tests {
     };
     use tracing::debug;
     use tracing_test::traced_test;
-
-    use super::{Context, DependencyResolver, Inject, InjectTransient, Registry};
-    use crate::{errors::InstantiateErrorKind, instantiator::boxed_instantiator_factory};
 
     struct Request;
 
@@ -169,18 +170,26 @@ mod tests {
     fn test_scoped_resolve() {
         let instantiator_request_call_count = Rc::new(AtomicU8::new(0));
 
-        let mut registry = Registry::default();
-        registry.add_instantiator::<Request>(boxed_instantiator_factory({
-            let instantiator_request_call_count = instantiator_request_call_count.clone();
-            move || {
-                instantiator_request_call_count.fetch_add(1, Ordering::SeqCst);
+        let registries_builder = RegistriesBuilder::new().provide(
+            {
+                let instantiator_request_call_count = instantiator_request_call_count.clone();
+                move || {
+                    instantiator_request_call_count.fetch_add(1, Ordering::SeqCst);
 
-                debug!("Call instantiator request");
-                Ok::<_, InstantiateErrorKind>(Request)
-            }
-        }));
+                    debug!("Call instantiator request");
+                    Ok::<_, InstantiateErrorKind>(Request)
+                }
+            },
+            DefaultScope::App,
+        );
 
-        let registry = Rc::new(registry);
+        let mut registries = registries_builder.build().into_iter();
+        let registry = if let Some(root_registry) = registries.next() {
+            Rc::new(root_registry)
+        } else {
+            panic!("registries len (is 0) should be >= 1");
+        };
+
         let context = Rc::new(RefCell::new(Context::default()));
 
         let request_1 = Inject::<Request>::resolve(registry.clone(), context.clone()).unwrap();
@@ -195,18 +204,25 @@ mod tests {
     fn test_transient_resolve() {
         let instantiator_request_call_count = Rc::new(AtomicU8::new(0));
 
-        let mut registry = Registry::default();
-        registry.add_instantiator::<Request>(boxed_instantiator_factory({
-            let instantiator_request_call_count = instantiator_request_call_count.clone();
-            move || {
-                instantiator_request_call_count.fetch_add(1, Ordering::SeqCst);
+        let registries_builder = RegistriesBuilder::new().provide(
+            {
+                let instantiator_request_call_count = instantiator_request_call_count.clone();
+                move || {
+                    instantiator_request_call_count.fetch_add(1, Ordering::SeqCst);
 
-                debug!("Call instantiator request");
-                Ok::<_, InstantiateErrorKind>(Request)
-            }
-        }));
+                    debug!("Call instantiator request");
+                    Ok::<_, InstantiateErrorKind>(Request)
+                }
+            },
+            DefaultScope::App,
+        );
 
-        let registry = Rc::new(registry);
+        let mut registries = registries_builder.build().into_iter();
+        let registry = if let Some(root_registry) = registries.next() {
+            Rc::new(root_registry)
+        } else {
+            panic!("registries len (is 0) should be >= 1");
+        };
         let context = Rc::new(RefCell::new(Context::default()));
 
         InjectTransient::<Request>::resolve(registry.clone(), context.clone()).unwrap();
