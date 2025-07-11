@@ -93,7 +93,7 @@ where
     S: Scope,
 {
     pub(crate) fn build(self) -> Vec<Registry> {
-        use alloc::collections::btree_map::Entry::*;
+        use alloc::collections::btree_map::Entry::{Occupied, Vacant};
 
         let mut scopes_instantiators: BTreeMap<S, Vec<(TypeId, InstantiatorInnerData)>> = BTreeMap::new();
         for (

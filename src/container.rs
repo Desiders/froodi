@@ -58,60 +58,17 @@ impl Container {
         }
     }
 
-    /// Creates child container with next non-skipped scope.
-    ///
-    /// # Errors
-    /// - Returns [ScopeErrorKind::NoChildRegistries] if there are no registries
-    /// - Returns [ScopeErrorKind::NoNonSkippedRegistries] if there are no non-skipped registries
-    ///
-    /// # Warning
-    /// - This method skips skipped scopes, if you want to use one of them, use [Self::scope_with]
-    /// - If you want to use specific scope, use [Self::scope_with]
-    pub fn scope(&self) -> Result<Container, ScopeErrorKind> {
-        use ScopeErrorKind::*;
-
-        let mut iter = self.child_registries.iter();
-        let registry = iter.next().ok_or(NoChildRegistries)?;
-
-        let mut child = self.child(registry.clone(), iter.cloned().collect());
-        while child.root_registry.scope.is_skipped_by_default {
-            let mut iter = child.child_registries.iter();
-            let registry = iter.next().ok_or(NoNonSkippedRegistries)?;
-
-            child = child.child(registry.clone(), iter.cloned().collect());
-        }
-
-        Ok(child)
+    /// Creates child container builder
+    #[inline]
+    #[must_use]
+    pub fn child(&self) -> ChildContainerBuiler {
+        ChildContainerBuiler { container: self.clone() }
     }
 
-    /// Creates child container with specified scope.
-    ///
-    /// # Errors
-    /// - Returns [ScopeWithErrorKind::NoChildRegistries] if there are no registries
-    /// - Returns [ScopeWithErrorKind::NoChildRegistriesWithScope] if there are no registries with specified scope
-    ///
-    /// # Warning
-    /// If you want just to use next non-skipped scope, use [Self::scope]
-    pub fn scope_with<S: Scope>(&self, scope: S) -> Result<Container, ScopeWithErrorKind> {
-        use ScopeWithErrorKind::*;
-
-        let priority = scope.priority();
-
-        let mut iter = self.child_registries.iter();
-        let registry = iter.next().ok_or(NoChildRegistries)?;
-
-        let mut child = self.child(registry.clone(), iter.cloned().collect());
-        while child.root_registry.scope.priority != priority {
-            let mut iter = child.child_registries.iter();
-            let registry = iter.next().ok_or(NoChildRegistriesWithScope {
-                name: scope.name(),
-                priority,
-            })?;
-
-            child = child.child(registry.clone(), iter.cloned().collect());
-        }
-
-        Ok(child)
+    /// Creates child container and builds it with next non-skipped scope
+    #[inline]
+    pub fn child_build(&self) -> Result<Container, ScopeErrorKind> {
+        self.child().build()
     }
 
     pub fn get<Dep: 'static>(&self) -> Result<Rc<Dep>, ResolveErrorKind> {
@@ -137,14 +94,219 @@ impl Container {
     }
 }
 
+pub struct ChildContainerBuiler {
+    container: Container,
+}
+
+impl ChildContainerBuiler {
+    #[inline]
+    #[must_use]
+    pub fn with_scope<S: Scope>(self, scope: S) -> ChildContainerWithScope<S> {
+        ChildContainerWithScope {
+            container: self.container,
+            scope,
+        }
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn with_context(self, context: Context) -> ChildContainerWithContext {
+        ChildContainerWithContext {
+            container: self.container,
+            context,
+        }
+    }
+
+    /// Creates child container with next non-skipped scope.
+    ///
+    /// # Errors
+    /// - Returns [`ScopeErrorKind::NoChildRegistries`] if there are no registries
+    /// - Returns [`ScopeErrorKind::NoNonSkippedRegistries`] if there are no non-skipped registries
+    ///
+    /// # Warning
+    /// - This method skips skipped scopes, if you want to use one of them, use [`ChildContainerBuiler::with_scope`]
+    /// - If you want to use specific scope, use [`ChildContainerBuiler::with_scope`]
+    pub fn build(self) -> Result<Container, ScopeErrorKind> {
+        use ScopeErrorKind::{NoChildRegistries, NoNonSkippedRegistries};
+
+        let mut iter = self.container.child_registries.iter();
+        let registry = iter.next().ok_or(NoChildRegistries)?;
+
+        let mut child = self.container.init_child(registry.clone(), iter.cloned().collect());
+        while child.root_registry.scope.is_skipped_by_default {
+            let mut iter = child.child_registries.iter();
+            let registry = iter.next().ok_or(NoNonSkippedRegistries)?;
+
+            child = child.init_child(registry.clone(), iter.cloned().collect());
+        }
+
+        Ok(child)
+    }
+}
+
+pub struct ChildContainerWithScope<S> {
+    container: Container,
+    scope: S,
+}
+
+impl<S> ChildContainerWithScope<S>
+where
+    S: Scope,
+{
+    #[inline]
+    #[must_use]
+    pub fn with_context(self, context: Context) -> ChildContainerWithScopeAndContext<S> {
+        ChildContainerWithScopeAndContext {
+            container: self.container,
+            scope: self.scope,
+            context,
+        }
+    }
+
+    /// Creates child container with specified scope.
+    ///
+    /// # Errors
+    /// - Returns [`ScopeWithErrorKind::NoChildRegistries`] if there are no registries
+    /// - Returns [`ScopeWithErrorKind::NoChildRegistriesWithScope`] if there are no registries with specified scope
+    ///
+    /// # Warning
+    /// If you want just to use next non-skipped scope, use [`ChildContainerBuiler::with_scope`]
+    pub fn build(self) -> Result<Container, ScopeWithErrorKind> {
+        use ScopeWithErrorKind::{NoChildRegistries, NoChildRegistriesWithScope};
+
+        let priority = self.scope.priority();
+
+        let mut iter = self.container.child_registries.iter();
+        let registry = iter.next().ok_or(NoChildRegistries)?;
+
+        let mut child = self.container.init_child(registry.clone(), iter.cloned().collect());
+        while child.root_registry.scope.priority != priority {
+            let mut iter = child.child_registries.iter();
+            let registry = iter.next().ok_or(NoChildRegistriesWithScope {
+                name: self.scope.name(),
+                priority,
+            })?;
+
+            child = child.init_child(registry.clone(), iter.cloned().collect());
+        }
+
+        Ok(child)
+    }
+}
+
+pub struct ChildContainerWithContext {
+    container: Container,
+    context: Context,
+}
+
+impl ChildContainerWithContext {
+    #[inline]
+    #[must_use]
+    pub fn with_scope<S: Scope>(self, scope: S) -> ChildContainerWithScopeAndContext<S> {
+        ChildContainerWithScopeAndContext {
+            container: self.container,
+            scope,
+            context: self.context,
+        }
+    }
+
+    /// Creates child container with next non-skipped scope and passes context to it.
+    ///
+    /// # Errors
+    /// - Returns [`ScopeErrorKind::NoChildRegistries`] if there are no registries
+    /// - Returns [`ScopeErrorKind::NoNonSkippedRegistries`] if there are no non-skipped registries
+    ///
+    /// # Warning
+    /// - This method skips skipped scopes, if you want to use one of them, use [`ChildContainerBuiler::with_scope`]
+    /// - If you want to use specific scope, use [`ChildContainerBuiler::with_scope`]
+    pub fn build(self) -> Result<Container, ScopeErrorKind> {
+        use ScopeErrorKind::{NoChildRegistries, NoNonSkippedRegistries};
+
+        let mut iter = self.container.child_registries.iter();
+        let registry = iter.next().ok_or(NoChildRegistries)?;
+
+        let mut child = self.container.init_child(registry.clone(), iter.cloned().collect());
+        while child.root_registry.scope.is_skipped_by_default {
+            let mut iter = child.child_registries.iter();
+            let registry = iter.next().ok_or(NoNonSkippedRegistries)?;
+
+            child = child.init_child_with_context(
+                Rc::new(RefCell::new(self.context.clone())),
+                registry.clone(),
+                iter.cloned().collect(),
+            );
+        }
+
+        Ok(child)
+    }
+}
+
+pub struct ChildContainerWithScopeAndContext<S> {
+    container: Container,
+    scope: S,
+    context: Context,
+}
+
+impl<S> ChildContainerWithScopeAndContext<S>
+where
+    S: Scope,
+{
+    /// Creates child container with specified scope and passes context to it.
+    ///
+    /// # Errors
+    /// - Returns [`ScopeWithErrorKind::NoChildRegistries`] if there are no registries
+    /// - Returns [`ScopeWithErrorKind::NoChildRegistriesWithScope`] if there are no registries with specified scope
+    ///
+    /// # Warning
+    /// If you want just to use next non-skipped scope, use [`ChildContainerBuiler::with_scope`]
+    pub fn build(self) -> Result<Container, ScopeWithErrorKind> {
+        use ScopeWithErrorKind::{NoChildRegistries, NoChildRegistriesWithScope};
+
+        let priority = self.scope.priority();
+
+        let mut iter = self.container.child_registries.iter();
+        let registry = iter.next().ok_or(NoChildRegistries)?;
+
+        let mut child = self.container.init_child(registry.clone(), iter.cloned().collect());
+        while child.root_registry.scope.priority != priority {
+            let mut iter = child.child_registries.iter();
+            let registry = iter.next().ok_or(NoChildRegistriesWithScope {
+                name: self.scope.name(),
+                priority,
+            })?;
+
+            child = child.init_child_with_context(
+                Rc::new(RefCell::new(self.context.clone())),
+                registry.clone(),
+                iter.cloned().collect(),
+            );
+        }
+
+        Ok(child)
+    }
+}
+
 impl Container {
-    fn child(&self, root_registry: Rc<Registry>, child_registries: Box<[Rc<Registry>]>) -> Container {
+    #[inline]
+    #[must_use]
+    fn init_child_with_context(
+        &self,
+        context: Rc<RefCell<Context>>,
+        root_registry: Rc<Registry>,
+        child_registries: Box<[Rc<Registry>]>,
+    ) -> Container {
         Container {
-            context: self.context.clone(),
+            context,
             root_registry,
             child_registries,
             parent: Some(Box::new(self.clone())),
         }
+    }
+
+    #[inline]
+    #[must_use]
+    fn init_child(&self, root_registry: Rc<Registry>, child_registries: Box<[Rc<Registry>]>) -> Container {
+        self.init_child_with_context(self.context.clone(), root_registry, child_registries)
     }
 }
 
@@ -226,10 +388,10 @@ mod tests {
             .provide(|| Ok(((), (), (), (), (), ())), Step);
 
         let runtime_container = Container::new(registry);
-        let app_container = runtime_container.scope().unwrap();
-        let request_container = app_container.scope().unwrap();
-        let action_container = request_container.scope().unwrap();
-        let step_container = action_container.scope().unwrap();
+        let app_container = runtime_container.child_build().unwrap();
+        let request_container = app_container.child_build().unwrap();
+        let action_container = request_container.child_build().unwrap();
+        let step_container = action_container.child_build().unwrap();
 
         assert_eq!(runtime_container.parent, None);
         assert_eq!(runtime_container.child_registries.len(), 5);
@@ -273,11 +435,11 @@ mod tests {
             .provide(|| Ok(((), (), (), (), (), ())), Step);
 
         let runtime_container = Container::new(registry);
-        let app_container = runtime_container.scope_with(App).unwrap();
-        let session_container = runtime_container.scope_with(Session).unwrap();
-        let request_container = app_container.scope_with(Request).unwrap();
-        let action_container = request_container.scope_with(Action).unwrap();
-        let step_container = action_container.scope_with(Step).unwrap();
+        let app_container = runtime_container.child().with_scope(App).build().unwrap();
+        let session_container = runtime_container.child().with_scope(Session).build().unwrap();
+        let request_container = app_container.child().with_scope(Request).build().unwrap();
+        let action_container = request_container.child().with_scope(Action).build().unwrap();
+        let step_container = action_container.child().with_scope(Step).build().unwrap();
 
         assert_eq!(runtime_container.parent, None);
         assert_eq!(runtime_container.child_registries.len(), 5);
