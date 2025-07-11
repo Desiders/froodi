@@ -6,9 +6,9 @@ use super::{
     context::Context,
     dependency_resolver::DependencyResolver,
     errors::{InstantiateErrorKind, InstantiatorErrorKind},
-    registry::Registry,
     service::{service_fn, BoxCloneService},
 };
+use crate::registry::Registry;
 
 pub(crate) trait Instantiator<Deps>: Clone + 'static
 where
@@ -28,6 +28,7 @@ where
 ///   This does **not** affect the dependencies of the instance.
 ///   Only the final result is cached if caching is applicable.
 #[derive(Clone, Copy)]
+#[cfg_attr(feature = "debug", derive(Debug))]
 pub struct Config {
     pub cache_provides: bool,
 }
@@ -106,6 +107,14 @@ all_the_tuples!(impl_instantiator);
 mod tests {
     extern crate std;
 
+    use super::{boxed_instantiator_factory, Context, DependencyResolver, InstantiateErrorKind, Instantiator};
+    use crate::{
+        dependency_resolver::{Inject, InjectTransient},
+        scope::DefaultScope::*,
+        service::Service as _,
+        RegistriesBuilder,
+    };
+
     use alloc::{
         format,
         rc::Rc,
@@ -117,12 +126,6 @@ mod tests {
     };
     use tracing::debug;
     use tracing_test::traced_test;
-
-    use super::{boxed_instantiator_factory, Context, DependencyResolver, InstantiateErrorKind, Instantiator, Registry};
-    use crate::{
-        dependency_resolver::{Inject, InjectTransient},
-        service::Service as _,
-    };
 
     struct Request(bool);
     struct Response(bool);
@@ -163,10 +166,15 @@ mod tests {
             }
         });
 
-        let mut registry = Registry::default();
-        registry.add_instantiator::<Request>(instantiator_request);
+        let mut registries_builder = RegistriesBuilder::new();
+        registries_builder.add_instantiator::<Request>(instantiator_request, App);
 
-        let registry = Rc::new(registry);
+        let mut registries = registries_builder.build().into_iter();
+        let registry = if let Some(root_registry) = registries.next() {
+            Rc::new(root_registry)
+        } else {
+            panic!("registries len (is 0) should be >= 1");
+        };
         let context = Rc::new(RefCell::new(Context::default()));
 
         let response_1 = instantiator_response
@@ -207,10 +215,15 @@ mod tests {
             }
         });
 
-        let mut registry = Registry::default();
-        registry.add_instantiator::<Request>(instantiator_request);
+        let mut registries_builder = RegistriesBuilder::new();
+        registries_builder.add_instantiator::<Request>(instantiator_request, App);
 
-        let registry = Rc::new(registry);
+        let mut registries = registries_builder.build().into_iter();
+        let registry = if let Some(root_registry) = registries.next() {
+            Rc::new(root_registry)
+        } else {
+            panic!("registries len (is 0) should be >= 1");
+        };
         let context = Rc::new(RefCell::new(Context::default()));
 
         let response_1 = instantiator_response
