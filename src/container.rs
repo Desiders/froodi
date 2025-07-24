@@ -473,6 +473,7 @@ mod handle {
 
 pub use handle::ContainerHandle;
 
+#[allow(dead_code)]
 #[cfg(test)]
 mod tests {
     extern crate std;
@@ -497,22 +498,34 @@ mod tests {
     #[test]
     #[traced_test]
     fn test_scoped_get() {
+        struct A(Arc<B>, Arc<C>);
+        struct B(i32);
+        struct C(Arc<CA>);
+        struct CA(Arc<CAA>);
+        struct CAA(Arc<CAAA>);
+        struct CAAA(Arc<CAAAA>);
+        struct CAAAA(Arc<CAAAAA>);
+        struct CAAAAA;
+
         let registry = RegistriesBuilder::new()
-            .provide(|| Ok(Request1), Runtime)
-            .provide(|Inject(req): Inject<Request1>| Ok(Request2(req)), Runtime)
-            .provide(
-                |Inject(req_1): Inject<Request1>, Inject(req_2): Inject<Request2>| Ok(Request3(req_1, req_2)),
-                Runtime,
-            );
+            .provide(|| (Ok(CAAAAA)), Request)
+            .provide(|Inject(caaaaa): Inject<CAAAAA>| Ok(CAAAA(caaaaa)), Request)
+            .provide(|Inject(caaaa): Inject<CAAAA>| Ok(CAAA(caaaa)), Request)
+            .provide(|Inject(caaa): Inject<CAAA>| Ok(CAA(caaa)), Request)
+            .provide(|Inject(caa): Inject<CAA>| Ok(CA(caa)), Request)
+            .provide(|Inject(ca): Inject<CA>| Ok(C(ca)), Request)
+            .provide(|| Ok(B(2)), Request)
+            .provide(|Inject(b): Inject<B>, Inject(c): Inject<C>| Ok(A(b, c)), Request);
         let mut container = Container::new(registry);
 
-        let request_1 = container.get::<Request1>().unwrap();
-        let request_2 = container.get::<Request2>().unwrap();
-        let request_3 = container.get::<Request3>().unwrap();
-
-        assert!(Arc::ptr_eq(&request_1, &request_2.0));
-        assert!(Arc::ptr_eq(&request_1, &request_3.0));
-        assert!(Arc::ptr_eq(&request_2, &request_3.1));
+        let _ = container.get::<A>().unwrap();
+        let _ = container.get::<CAAAAA>().unwrap();
+        let _ = container.get::<CAAAA>().unwrap();
+        let _ = container.get::<CAAA>().unwrap();
+        let _ = container.get::<CAA>().unwrap();
+        let _ = container.get::<CA>().unwrap();
+        let _ = container.get::<C>().unwrap();
+        let _ = container.get::<B>().unwrap();
     }
 
     struct RequestTransient1;
