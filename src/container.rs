@@ -1,4 +1,5 @@
-use alloc::{boxed::Box, rc::Rc};
+use alloc::{boxed::Box, rc::Rc, sync::Arc};
+use parking_lot::Mutex;
 use tracing::debug;
 
 use super::{context::Context, dependency_resolver::DependencyResolver, registry::RegistriesBuilder};
@@ -67,18 +68,37 @@ impl Container {
     }
 
     /// Creates child container builder
+    ///
+    /// # Warning
+    /// This method requires `self` instead of `&self` because it consumes the container,
+    /// so be careful when want to clone container before calling this method,
+    /// because these containers will be different and using different state like context,
+    /// so `close` will not work as expected for parent container that was cloned to create child container and used after.
     #[inline]
     #[must_use]
-    pub fn child(&self) -> ChildContainerBuiler {
-        ChildContainerBuiler { container: self.clone() }
+    pub fn child(self) -> ChildContainerBuiler {
+        ChildContainerBuiler { container: self }
     }
 
     /// Creates child container and builds it with next non-skipped scope
+    ///
+    /// # Warning
+    /// This method requires `self` instead of `&self` because it consumes the container,
+    /// so be careful when want to clone container before calling this method,
+    /// because these containers will be different and using different state like context,
+    /// so `close` will not work as expected for parent container that was cloned to create child container and used after.
     #[inline]
-    pub fn child_build(&self) -> Result<Container, ScopeErrorKind> {
+    pub fn child_build(self) -> Result<Container, ScopeErrorKind> {
         self.child().build()
     }
 
+    /// Gets a scoped dependency from the container
+    ///
+    /// # Notes
+    /// This method resolves a dependency from the container,
+    /// so it should be used for dependencies that are cached or shared,
+    /// and with optional finalizer.
+    #[allow(clippy::missing_errors_doc)]
     pub fn get<Dep: 'static>(&mut self) -> Result<Rc<Dep>, ResolveErrorKind> {
         match Inject::resolve(self.root_registry.clone(), self.context.clone()) {
             Ok((Inject(dep), context)) => {
@@ -96,6 +116,12 @@ impl Container {
         }
     }
 
+    /// Gets a transient dependency from the container
+    ///
+    /// # Notes
+    /// This method resolves a new instance of the dependency each time it is called,
+    /// so it should be used for dependencies that are not cached or shared, and without finalizer.
+    #[allow(clippy::missing_errors_doc)]
     pub fn get_transient<Dep: 'static>(&mut self) -> Result<Dep, ResolveErrorKind> {
         match InjectTransient::resolve(self.root_registry.clone(), self.context.clone()) {
             Ok((InjectTransient(dep), context)) => {
@@ -346,6 +372,84 @@ impl Container {
     }
 }
 
+impl Container {
+    /// Creates a shared container that can be used across threads.
+    /// This is useful for scenarios where you want to share the container data.
+    #[inline]
+    #[must_use]
+    pub fn shared(self) -> ContainerShared {
+        ContainerShared {
+            inner: Arc::new(Mutex::new(self)),
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct ContainerShared {
+    inner: Arc<Mutex<Container>>,
+}
+
+impl ContainerShared {
+    /// Creates child container builder
+    ///
+    /// # Warning
+    /// - The container is cloned before creating a child container,
+    /// so the child container will have its own state like context,
+    /// so `close` will not work as expected for the container that was cloned to create child container and used after.
+    ///
+    /// - `self` instead of `&self` is used to warn about this behavior
+    #[inline]
+    #[must_use]
+    pub fn child(self) -> ChildContainerBuiler {
+        self.inner.lock().clone().child()
+    }
+
+    /// Creates child container and builds it with next non-skipped scope
+    ///
+    /// # Warning
+    /// - The container is cloned before creating a child container,
+    /// so the child container will have its own state like context,
+    /// so `close` will not work as expected for the container that was cloned to create child container and used after.
+    ///
+    /// - `self` instead of `&self` is used to warn about this behavior
+    #[inline]
+    pub fn child_build(self) -> Result<Container, ScopeErrorKind> {
+        self.inner.lock().clone().child_build()
+    }
+
+    /// Gets a scoped dependency from the container
+    ///
+    /// # Notes
+    /// This method resolves a dependency from the container,
+    /// so it should be used for dependencies that are cached or shared,
+    /// and with optional finalizer.
+    #[inline]
+    pub fn get<Dep: 'static>(&self) -> Result<Rc<Dep>, ResolveErrorKind> {
+        self.inner.lock().get()
+    }
+
+    /// Gets a transient dependency from the container
+    ///
+    /// # Notes
+    /// This method resolves a new instance of the dependency each time it is called,
+    /// so it should be used for dependencies that are not cached or shared, and without finalizer.
+    #[inline]
+    pub fn get_transient<Dep: 'static>(&self) -> Result<Dep, ResolveErrorKind> {
+        self.inner.lock().get_transient()
+    }
+
+    /// Closes the container, calling finalizers for resolved dependencies in LIFO order.
+    ///
+    /// # Warning
+    /// - This method can be called multiple times, but it will only call finalizers for dependencies that were resolved since the last call
+    ///
+    /// - If the container has a parent, it will also close the parent container if [`Self::close_parent`] is set to `true`
+    #[inline]
+    pub fn close(&self) {
+        self.inner.lock().close();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     extern crate std;
@@ -426,10 +530,10 @@ mod tests {
             .provide(|| Ok(((), (), (), (), (), ())), Step);
 
         let runtime_container = Container::new(registry);
-        let app_container = runtime_container.child_build().unwrap();
-        let request_container = app_container.child_build().unwrap();
-        let action_container = request_container.child_build().unwrap();
-        let step_container = action_container.child_build().unwrap();
+        let app_container = runtime_container.clone().child_build().unwrap();
+        let request_container = app_container.clone().child_build().unwrap();
+        let action_container = request_container.clone().child_build().unwrap();
+        let step_container = action_container.clone().child_build().unwrap();
 
         assert_eq!(runtime_container.parent, None);
         assert_eq!(runtime_container.child_registries.len(), 5);
@@ -473,11 +577,11 @@ mod tests {
             .provide(|| Ok(((), (), (), (), (), ())), Step);
 
         let runtime_container = Container::new(registry);
-        let app_container = runtime_container.child().with_scope(App).build().unwrap();
-        let session_container = runtime_container.child().with_scope(Session).build().unwrap();
-        let request_container = app_container.child().with_scope(Request).build().unwrap();
-        let action_container = request_container.child().with_scope(Action).build().unwrap();
-        let step_container = action_container.child().with_scope(Step).build().unwrap();
+        let app_container = runtime_container.clone().child().with_scope(App).build().unwrap();
+        let session_container = runtime_container.clone().child().with_scope(Session).build().unwrap();
+        let request_container = app_container.clone().child().with_scope(Request).build().unwrap();
+        let action_container = request_container.clone().child().with_scope(Action).build().unwrap();
+        let step_container = action_container.clone().child().with_scope(Step).build().unwrap();
 
         assert_eq!(runtime_container.parent, None);
         assert_eq!(runtime_container.child_registries.len(), 5);
@@ -540,8 +644,8 @@ mod tests {
             });
 
         let mut runtime_container = Container::new(registry);
-        let mut app_container = runtime_container.child().with_scope(App).build().unwrap();
-        let mut request_container = app_container.child().with_scope(Request).build().unwrap();
+        let mut app_container = runtime_container.clone().child().with_scope(App).build().unwrap();
+        let mut request_container = app_container.clone().child().with_scope(Request).build().unwrap();
 
         request_container.close();
         app_container.close();
@@ -657,5 +761,56 @@ mod tests {
         assert_eq!(finalizer_3_request_call_position.load(Ordering::SeqCst), 1);
         assert_eq!(finalizer_4_request_call_count.load(Ordering::SeqCst), 1);
         assert_eq!(finalizer_4_request_call_position.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    #[traced_test]
+    fn test_shared_container_close_for_resolved() {
+        let finalizer_1_request_call_count = Rc::new(AtomicU8::new(0));
+        let finalizer_2_request_call_count = Rc::new(AtomicU8::new(0));
+        let finalizer_3_request_call_count = Rc::new(AtomicU8::new(0));
+
+        let registry = RegistriesBuilder::new()
+            .provide(|| Ok(()), Runtime)
+            .provide(|| Ok(((), ())), App)
+            .provide(|| Ok(((), (), (), ())), Request)
+            .add_finalizer({
+                let finalizer_1_request_call_count = finalizer_1_request_call_count.clone();
+                move |_: Rc<()>| {
+                    finalizer_1_request_call_count.fetch_add(1, Ordering::SeqCst);
+
+                    debug!("Finalizer 1 called");
+                }
+            })
+            .add_finalizer({
+                let finalizer_2_request_call_count = finalizer_2_request_call_count.clone();
+                move |_: Rc<((), ())>| {
+                    finalizer_2_request_call_count.fetch_add(1, Ordering::SeqCst);
+
+                    debug!("Finalizer 2 called");
+                }
+            })
+            .add_finalizer({
+                let finalizer_3_request_call_count = finalizer_3_request_call_count.clone();
+                move |_: Rc<((), (), (), ())>| {
+                    finalizer_3_request_call_count.fetch_add(1, Ordering::SeqCst);
+
+                    debug!("Finalizer 3 called");
+                }
+            });
+
+        let runtime_container = Container::new(registry).shared();
+        let app_container = runtime_container.child().with_scope(App).build().unwrap().shared();
+        let request_container = app_container.child().with_scope(Request).build().unwrap().shared();
+
+        let _ = request_container.get::<()>().unwrap();
+        let _ = request_container.get::<((), ())>().unwrap();
+        let _ = request_container.get::<((), (), (), ())>().unwrap();
+
+        request_container.close();
+
+        assert_eq!(finalizer_1_request_call_count.load(Ordering::SeqCst), 1);
+        assert_eq!(finalizer_2_request_call_count.load(Ordering::SeqCst), 1);
+        assert_eq!(finalizer_3_request_call_count.load(Ordering::SeqCst), 1);
     }
 }
