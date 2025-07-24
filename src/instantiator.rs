@@ -1,5 +1,5 @@
 use alloc::{boxed::Box, rc::Rc};
-use core::{any::Any, cell::RefCell};
+use core::any::Any;
 use tracing::debug;
 
 use super::{
@@ -41,19 +41,19 @@ impl Default for Config {
 
 pub(crate) struct Request {
     registry: Rc<Registry>,
-    context: Rc<RefCell<Context>>,
+    context: Context,
 }
 
 impl Request {
     #[inline]
     #[must_use]
-    pub(crate) const fn new(registry: Rc<Registry>, context: Rc<RefCell<Context>>) -> Self {
+    pub(crate) const fn new(registry: Rc<Registry>, context: Context) -> Self {
         Self { registry, context }
     }
 }
 
 pub(crate) type BoxedCloneInstantiator<DepsErr, FactoryErr> =
-    BoxCloneService<Request, Box<dyn Any>, InstantiatorErrorKind<DepsErr, FactoryErr>>;
+    BoxCloneService<Request, (Box<dyn Any>, Context), InstantiatorErrorKind<DepsErr, FactoryErr>>;
 
 #[must_use]
 pub(crate) fn boxed_instantiator_factory<Inst, Deps>(instantiator: Inst) -> BoxedCloneInstantiator<Deps::Error, Inst::Error>
@@ -63,7 +63,7 @@ where
 {
     BoxCloneService(Box::new(service_fn({
         move |Request { registry, context }| {
-            let dependencies = match Deps::resolve(registry, context) {
+            let (dependencies, context) = match Deps::resolve(registry, context) {
                 Ok(dependencies) => dependencies,
                 Err(err) => return Err(InstantiatorErrorKind::Deps(err)),
             };
@@ -74,7 +74,7 @@ where
 
             debug!("Resolved");
 
-            Ok(Box::new(dependency) as _)
+            Ok((Box::new(dependency) as _, context))
         }
     })))
 }
@@ -120,10 +120,7 @@ mod tests {
         rc::Rc,
         string::{String, ToString as _},
     };
-    use core::{
-        cell::RefCell,
-        sync::atomic::{AtomicU8, Ordering},
-    };
+    use core::sync::atomic::{AtomicU8, Ordering};
     use tracing::debug;
     use tracing_test::traced_test;
 
@@ -175,12 +172,10 @@ mod tests {
         } else {
             panic!("registries len (is 0) should be >= 1");
         };
-        let context = Rc::new(RefCell::new(Context::default()));
+        let context = Context::new();
 
-        let response_1 = instantiator_response
-            .call(super::Request::new(registry.clone(), context.clone()))
-            .unwrap();
-        let response_2 = instantiator_response.call(super::Request::new(registry, context)).unwrap();
+        let (response_1, context) = instantiator_response.call(super::Request::new(registry.clone(), context)).unwrap();
+        let (response_2, _) = instantiator_response.call(super::Request::new(registry, context)).unwrap();
 
         assert!(response_1.downcast::<Response>().unwrap().0);
         assert!(response_2.downcast::<Response>().unwrap().0);
@@ -224,15 +219,11 @@ mod tests {
         } else {
             panic!("registries len (is 0) should be >= 1");
         };
-        let context = Rc::new(RefCell::new(Context::default()));
+        let context = Context::new();
 
-        let response_1 = instantiator_response
-            .call(super::Request::new(registry.clone(), context.clone()))
-            .unwrap();
-        let response_2 = instantiator_response
-            .call(super::Request::new(registry.clone(), context.clone()))
-            .unwrap();
-        let response_3 = instantiator_response.call(super::Request::new(registry, context)).unwrap();
+        let (response_1, context) = instantiator_response.call(super::Request::new(registry.clone(), context)).unwrap();
+        let (response_2, context) = instantiator_response.call(super::Request::new(registry.clone(), context)).unwrap();
+        let (response_3, _) = instantiator_response.call(super::Request::new(registry, context)).unwrap();
 
         assert!(response_1.downcast::<Response>().unwrap().0);
         assert!(response_2.downcast::<Response>().unwrap().0);
