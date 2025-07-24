@@ -1,5 +1,5 @@
 lint:
-    cargo clippy --all --fix --all-features --allow-dirty --allow-staged -- -W clippy::pedantic
+    cargo clippy --all --all-features -- -W clippy::pedantic
 
 format:
     cargo fmt --all

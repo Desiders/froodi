@@ -23,6 +23,12 @@ pub struct RegistriesBuilder<S> {
     finalizers: BTreeMap<TypeId, BoxedCloneFinalizer>,
 }
 
+impl<S> Default for RegistriesBuilder<S> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<S> RegistriesBuilder<S> {
     #[inline]
     #[must_use]
