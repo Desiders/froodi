@@ -1,4 +1,4 @@
-use alloc::{boxed::Box, rc::Rc, sync::Arc};
+use alloc::{boxed::Box, sync::Arc};
 use parking_lot::Mutex;
 use tracing::debug;
 
@@ -15,8 +15,8 @@ use crate::{
 #[cfg_attr(feature = "debug", derive(Debug))]
 pub struct Container {
     context: Context,
-    root_registry: Rc<Registry>,
-    child_registries: Box<[Rc<Registry>]>,
+    root_registry: Arc<Registry>,
+    child_registries: Box<[Arc<Registry>]>,
     parent: Option<Box<Container>>,
     close_parent: bool,
 }
@@ -24,14 +24,14 @@ pub struct Container {
 #[cfg(feature = "eq")]
 impl PartialEq for Container {
     fn eq(&self, other: &Self) -> bool {
-        Rc::ptr_eq(&self.root_registry, &other.root_registry)
+        Arc::ptr_eq(&self.root_registry, &other.root_registry)
             && self.context == other.context
             && self.child_registries.len() == other.child_registries.len()
             && self
                 .child_registries
                 .iter()
                 .zip(other.child_registries.iter())
-                .all(|(a, b)| Rc::ptr_eq(a, b))
+                .all(|(a, b)| Arc::ptr_eq(a, b))
             && self.parent == other.parent
     }
 }
@@ -48,7 +48,7 @@ impl Container {
     pub fn new<S: Scope>(registries_builder: RegistriesBuilder<S>) -> Self {
         let mut registries = registries_builder.build().into_iter();
         let (root_registry, child_registries) = if let Some(root_registry) = registries.next() {
-            (Rc::new(root_registry), registries.map(Rc::new).collect())
+            (Arc::new(root_registry), registries.map(Arc::new).collect())
         } else {
             panic!("registries len (is 0) should be >= 1");
         };
@@ -83,10 +83,16 @@ impl Container {
     /// Creates child container and builds it with next non-skipped scope
     ///
     /// # Warning
-    /// This method requires `self` instead of `&self` because it consumes the container,
-    /// so be careful when want to clone container before calling this method,
-    /// because these containers will be different and using different state like context,
-    /// so `close` will not work as expected for parent container that was cloned to create child container and used after.
+    /// - This method requires `self` instead of `&self` because it consumes the container,
+    ///   so be careful when want to clone container before calling this method,
+    ///   because these containers will be different and using different state like context,
+    ///   so `close` will not work as expected for parent container that was cloned to create child container and used after.
+    /// - This method skips skipped scopes, if you want to use one of them, use [`ChildContainerBuiler::with_scope`]
+    /// - If you want to use specific scope, use [`ChildContainerBuiler::with_scope`]
+    ///
+    /// # Errors
+    /// - Returns [`ScopeErrorKind::NoChildRegistries`] if there are no registries
+    /// - Returns [`ScopeErrorKind::NoNonSkippedRegistries`] if there are no non-skipped registries
     #[inline]
     pub fn child_build(self) -> Result<Container, ScopeErrorKind> {
         self.child().build()
@@ -99,7 +105,7 @@ impl Container {
     /// so it should be used for dependencies that are cached or shared,
     /// and with optional finalizer.
     #[allow(clippy::missing_errors_doc)]
-    pub fn get<Dep: 'static>(&mut self) -> Result<Rc<Dep>, ResolveErrorKind> {
+    pub fn get<Dep: Send + Sync + 'static>(&mut self) -> Result<Arc<Dep>, ResolveErrorKind> {
         match Inject::resolve(self.root_registry.clone(), self.context.clone()) {
             Ok((Inject(dep), context)) => {
                 self.context = context;
@@ -355,7 +361,7 @@ where
 impl Container {
     #[inline]
     #[must_use]
-    fn init_child_with_context(&self, context: Context, root_registry: Rc<Registry>, child_registries: Box<[Rc<Registry>]>) -> Container {
+    fn init_child_with_context(&self, context: Context, root_registry: Arc<Registry>, child_registries: Box<[Arc<Registry>]>) -> Container {
         Container {
             context,
             root_registry,
@@ -367,7 +373,7 @@ impl Container {
 
     #[inline]
     #[must_use]
-    fn init_child(&self, root_registry: Rc<Registry>, child_registries: Box<[Rc<Registry>]>) -> Container {
+    fn init_child(&self, root_registry: Arc<Registry>, child_registries: Box<[Arc<Registry>]>) -> Container {
         self.init_child_with_context(self.context.child(), root_registry, child_registries)
     }
 }
@@ -377,99 +383,116 @@ impl Container {
     /// This is useful for scenarios where you want to share the container data.
     #[inline]
     #[must_use]
-    pub fn shared(self) -> ContainerShared {
-        ContainerShared {
+    pub fn shared(self) -> ContainerHandle {
+        ContainerHandle {
             inner: Arc::new(Mutex::new(self)),
         }
     }
 }
 
-#[derive(Clone)]
-pub struct ContainerShared {
-    inner: Arc<Mutex<Container>>,
+#[cfg(feature = "handle")]
+mod handle {
+    use alloc::sync::Arc;
+    use parking_lot::Mutex;
+
+    use crate::{container::ChildContainerBuiler, Container, ResolveErrorKind, ScopeErrorKind};
+
+    #[derive(Clone)]
+    pub struct ContainerHandle {
+        pub(crate) inner: Arc<Mutex<Container>>,
+    }
+
+    impl ContainerHandle {
+        /// Creates child container builder
+        ///
+        /// # Warning
+        /// - The container is cloned before creating a child container,
+        ///   so the child container will have its own state like context,
+        ///   so `close` will not work as expected for the container that was cloned to create child container and used after.
+        /// - `self` instead of `&self` is used to warn about this behavior
+        #[inline]
+        #[must_use]
+        pub fn child(self) -> ChildContainerBuiler {
+            self.inner.lock().clone().child()
+        }
+
+        /// Creates child container and builds it with next non-skipped scope
+        ///
+        /// # Warning
+        /// - The container is cloned before creating a child container,
+        ///   so the child container will have its own state like context,
+        ///   so `close` will not work as expected for the container that was cloned to create child container and used after.
+        /// - `self` instead of `&self` is used to warn about this behavior
+        /// - This method skips skipped scopes, if you want to use one of them, use [`ChildContainerBuiler::with_scope`]
+        /// - If you want to use specific scope, use [`ChildContainerBuiler::with_scope`]
+        ///
+        /// /// # Errors
+        /// - Returns [`ScopeErrorKind::NoChildRegistries`] if there are no registries
+        /// - Returns [`ScopeErrorKind::NoNonSkippedRegistries`] if there are no non-skipped registries
+        #[inline]
+        #[allow(clippy::missing_errors_doc)]
+        pub fn child_build(self) -> Result<Container, ScopeErrorKind> {
+            self.inner.lock().clone().child_build()
+        }
+
+        /// Gets a scoped dependency from the container
+        ///
+        /// # Notes
+        /// This method resolves a dependency from the container,
+        /// so it should be used for dependencies that are cached or shared,
+        /// and with optional finalizer.
+        #[inline]
+        #[allow(clippy::missing_errors_doc)]
+        pub fn get<Dep: Send + Sync + 'static>(&self) -> Result<Arc<Dep>, ResolveErrorKind> {
+            self.inner.lock().get()
+        }
+
+        /// Gets a transient dependency from the container
+        ///
+        /// # Notes
+        /// This method resolves a new instance of the dependency each time it is called,
+        /// so it should be used for dependencies that are not cached or shared, and without finalizer.
+        #[inline]
+        #[allow(clippy::missing_errors_doc)]
+        pub fn get_transient<Dep: 'static>(&self) -> Result<Dep, ResolveErrorKind> {
+            self.inner.lock().get_transient()
+        }
+
+        /// Closes the container, calling finalizers for resolved dependencies in LIFO order.
+        ///
+        /// # Warning
+        /// - This method can be called multiple times, but it will only call finalizers for dependencies that were resolved since the last call
+        ///
+        /// - If the container has a parent, it will also close the parent container if [`Self::close_parent`] is set to `true`
+        #[inline]
+        pub fn close(&self) {
+            self.inner.lock().close();
+        }
+    }
 }
 
-impl ContainerShared {
-    /// Creates child container builder
-    ///
-    /// # Warning
-    /// - The container is cloned before creating a child container,
-    /// so the child container will have its own state like context,
-    /// so `close` will not work as expected for the container that was cloned to create child container and used after.
-    ///
-    /// - `self` instead of `&self` is used to warn about this behavior
-    #[inline]
-    #[must_use]
-    pub fn child(self) -> ChildContainerBuiler {
-        self.inner.lock().clone().child()
-    }
-
-    /// Creates child container and builds it with next non-skipped scope
-    ///
-    /// # Warning
-    /// - The container is cloned before creating a child container,
-    /// so the child container will have its own state like context,
-    /// so `close` will not work as expected for the container that was cloned to create child container and used after.
-    ///
-    /// - `self` instead of `&self` is used to warn about this behavior
-    #[inline]
-    pub fn child_build(self) -> Result<Container, ScopeErrorKind> {
-        self.inner.lock().clone().child_build()
-    }
-
-    /// Gets a scoped dependency from the container
-    ///
-    /// # Notes
-    /// This method resolves a dependency from the container,
-    /// so it should be used for dependencies that are cached or shared,
-    /// and with optional finalizer.
-    #[inline]
-    pub fn get<Dep: 'static>(&self) -> Result<Rc<Dep>, ResolveErrorKind> {
-        self.inner.lock().get()
-    }
-
-    /// Gets a transient dependency from the container
-    ///
-    /// # Notes
-    /// This method resolves a new instance of the dependency each time it is called,
-    /// so it should be used for dependencies that are not cached or shared, and without finalizer.
-    #[inline]
-    pub fn get_transient<Dep: 'static>(&self) -> Result<Dep, ResolveErrorKind> {
-        self.inner.lock().get_transient()
-    }
-
-    /// Closes the container, calling finalizers for resolved dependencies in LIFO order.
-    ///
-    /// # Warning
-    /// - This method can be called multiple times, but it will only call finalizers for dependencies that were resolved since the last call
-    ///
-    /// - If the container has a parent, it will also close the parent container if [`Self::close_parent`] is set to `true`
-    #[inline]
-    pub fn close(&self) {
-        self.inner.lock().close();
-    }
-}
+pub use handle::ContainerHandle;
 
 #[cfg(test)]
 mod tests {
     extern crate std;
 
     use super::{Container, Inject, InjectTransient, RegistriesBuilder};
-    use crate::{scope::DefaultScope::*, Scope};
+    use crate::{scope::DefaultScope::*, ContainerHandle, Scope};
 
     use alloc::{
         boxed::Box,
         format,
-        rc::Rc,
         string::{String, ToString as _},
+        sync::Arc,
     };
     use core::sync::atomic::{AtomicU8, Ordering};
     use tracing::debug;
     use tracing_test::traced_test;
 
     struct Request1;
-    struct Request2(Rc<Request1>);
-    struct Request3(Rc<Request1>, Rc<Request2>);
+    struct Request2(Arc<Request1>);
+    struct Request3(Arc<Request1>, Arc<Request2>);
 
     #[test]
     #[traced_test]
@@ -487,9 +510,9 @@ mod tests {
         let request_2 = container.get::<Request2>().unwrap();
         let request_3 = container.get::<Request3>().unwrap();
 
-        assert!(Rc::ptr_eq(&request_1, &request_2.0));
-        assert!(Rc::ptr_eq(&request_1, &request_3.0));
-        assert!(Rc::ptr_eq(&request_2, &request_3.1));
+        assert!(Arc::ptr_eq(&request_1, &request_2.0));
+        assert!(Arc::ptr_eq(&request_1, &request_3.0));
+        assert!(Arc::ptr_eq(&request_2, &request_3.1));
     }
 
     struct RequestTransient1;
@@ -542,7 +565,7 @@ mod tests {
         assert_eq!(app_container.parent, Some(Box::new(runtime_container.clone())));
         assert_eq!(app_container.child_registries.len(), 4);
         assert_eq!(app_container.root_registry.scope.priority, App.priority());
-        assert!(Rc::ptr_eq(&app_container.root_registry, &runtime_container.child_registries[0]));
+        assert!(Arc::ptr_eq(&app_container.root_registry, &runtime_container.child_registries[0]));
 
         // Session scope is skipped by default, but it is still present in the child registries
         assert_eq!(
@@ -552,17 +575,17 @@ mod tests {
         assert_eq!(request_container.child_registries.len(), 2);
         assert_eq!(request_container.root_registry.scope.priority, Request.priority());
         // Session scope is skipped by default, so it is not the first child registry
-        assert!(Rc::ptr_eq(&request_container.root_registry, &app_container.child_registries[1]));
+        assert!(Arc::ptr_eq(&request_container.root_registry, &app_container.child_registries[1]));
 
         assert_eq!(action_container.parent, Some(Box::new(request_container.clone())));
         assert_eq!(action_container.child_registries.len(), 1);
         assert_eq!(action_container.root_registry.scope.priority, Action.priority());
-        assert!(Rc::ptr_eq(&action_container.root_registry, &request_container.child_registries[0]));
+        assert!(Arc::ptr_eq(&action_container.root_registry, &request_container.child_registries[0]));
 
         assert_eq!(step_container.parent, Some(Box::new(action_container.clone())));
         assert_eq!(step_container.child_registries.len(), 0);
         assert_eq!(step_container.root_registry.scope.priority, Step.priority());
-        assert!(Rc::ptr_eq(&step_container.root_registry, &action_container.child_registries[0]));
+        assert!(Arc::ptr_eq(&step_container.root_registry, &action_container.child_registries[0]));
     }
 
     #[test]
@@ -590,35 +613,38 @@ mod tests {
         assert_eq!(app_container.parent, Some(Box::new(runtime_container.clone())));
         assert_eq!(app_container.child_registries.len(), 4);
         assert_eq!(app_container.root_registry.scope.priority, App.priority());
-        assert!(Rc::ptr_eq(&app_container.root_registry, &runtime_container.child_registries[0]));
+        assert!(Arc::ptr_eq(&app_container.root_registry, &runtime_container.child_registries[0]));
 
         assert_eq!(session_container.parent, Some(Box::new(app_container.clone())));
         assert_eq!(session_container.child_registries.len(), 3);
         assert_eq!(session_container.root_registry.scope.priority, Session.priority());
-        assert!(Rc::ptr_eq(&session_container.root_registry, &app_container.child_registries[0]));
+        assert!(Arc::ptr_eq(&session_container.root_registry, &app_container.child_registries[0]));
 
         assert_eq!(request_container.parent, Some(Box::new(session_container.clone())));
         assert_eq!(request_container.child_registries.len(), 2);
         assert_eq!(request_container.root_registry.scope.priority, Request.priority());
-        assert!(Rc::ptr_eq(&request_container.root_registry, &session_container.child_registries[0]));
+        assert!(Arc::ptr_eq(
+            &request_container.root_registry,
+            &session_container.child_registries[0]
+        ));
 
         assert_eq!(action_container.parent, Some(Box::new(request_container.clone())));
         assert_eq!(action_container.child_registries.len(), 1);
         assert_eq!(action_container.root_registry.scope.priority, Action.priority());
-        assert!(Rc::ptr_eq(&action_container.root_registry, &request_container.child_registries[0]));
+        assert!(Arc::ptr_eq(&action_container.root_registry, &request_container.child_registries[0]));
 
         assert_eq!(step_container.parent, Some(Box::new(action_container.clone())));
         assert_eq!(step_container.child_registries.len(), 0);
         assert_eq!(step_container.root_registry.scope.priority, Step.priority());
-        assert!(Rc::ptr_eq(&step_container.root_registry, &action_container.child_registries[0]));
+        assert!(Arc::ptr_eq(&step_container.root_registry, &action_container.child_registries[0]));
     }
 
     #[test]
     #[traced_test]
     fn test_close_for_unresolved() {
-        let finalizer_1_request_call_count = Rc::new(AtomicU8::new(0));
-        let finalizer_2_request_call_count = Rc::new(AtomicU8::new(0));
-        let finalizer_3_request_call_count = Rc::new(AtomicU8::new(0));
+        let finalizer_1_request_call_count = Arc::new(AtomicU8::new(0));
+        let finalizer_2_request_call_count = Arc::new(AtomicU8::new(0));
+        let finalizer_3_request_call_count = Arc::new(AtomicU8::new(0));
 
         let registry = RegistriesBuilder::new()
             .provide(|| Ok(()), Runtime)
@@ -626,19 +652,19 @@ mod tests {
             .provide(|| Ok(((), (), (), ())), Request)
             .add_finalizer({
                 let finalizer_1_request_call_count = finalizer_1_request_call_count.clone();
-                move |_: Rc<()>| {
+                move |_: Arc<()>| {
                     finalizer_1_request_call_count.fetch_add(1, Ordering::SeqCst);
                 }
             })
             .add_finalizer({
                 let finalizer_2_request_call_count = finalizer_2_request_call_count.clone();
-                move |_: Rc<((), ())>| {
+                move |_: Arc<((), ())>| {
                     finalizer_2_request_call_count.fetch_add(1, Ordering::SeqCst);
                 }
             })
             .add_finalizer({
                 let finalizer_3_request_call_count = finalizer_3_request_call_count.clone();
-                move |_: Rc<((), (), (), ())>| {
+                move |_: Arc<((), (), (), ())>| {
                     finalizer_3_request_call_count.fetch_add(1, Ordering::SeqCst);
                 }
             });
@@ -659,16 +685,16 @@ mod tests {
     #[test]
     #[traced_test]
     fn test_close_for_resolved() {
-        let request_call_count = Rc::new(AtomicU8::new(0));
+        let request_call_count = Arc::new(AtomicU8::new(0));
 
-        let finalizer_1_request_call_count = Rc::new(AtomicU8::new(0));
-        let finalizer_1_request_call_position = Rc::new(AtomicU8::new(0));
-        let finalizer_2_request_call_count = Rc::new(AtomicU8::new(0));
-        let finalizer_2_request_call_position = Rc::new(AtomicU8::new(0));
-        let finalizer_3_request_call_count = Rc::new(AtomicU8::new(0));
-        let finalizer_3_request_call_position = Rc::new(AtomicU8::new(0));
-        let finalizer_4_request_call_count = Rc::new(AtomicU8::new(0));
-        let finalizer_4_request_call_position = Rc::new(AtomicU8::new(0));
+        let finalizer_1_request_call_count = Arc::new(AtomicU8::new(0));
+        let finalizer_1_request_call_position = Arc::new(AtomicU8::new(0));
+        let finalizer_2_request_call_count = Arc::new(AtomicU8::new(0));
+        let finalizer_2_request_call_position = Arc::new(AtomicU8::new(0));
+        let finalizer_3_request_call_count = Arc::new(AtomicU8::new(0));
+        let finalizer_3_request_call_position = Arc::new(AtomicU8::new(0));
+        let finalizer_4_request_call_count = Arc::new(AtomicU8::new(0));
+        let finalizer_4_request_call_position = Arc::new(AtomicU8::new(0));
 
         let registry = RegistriesBuilder::new()
             .provide(|| Ok(()), Runtime)
@@ -679,7 +705,7 @@ mod tests {
                 let request_call_count = request_call_count.clone();
                 let finalizer_1_request_call_position = finalizer_1_request_call_position.clone();
                 let finalizer_1_request_call_count = finalizer_1_request_call_count.clone();
-                move |_: Rc<()>| {
+                move |_: Arc<()>| {
                     request_call_count.fetch_add(1, Ordering::SeqCst);
                     finalizer_1_request_call_position.store(request_call_count.load(Ordering::SeqCst), Ordering::SeqCst);
                     finalizer_1_request_call_count.fetch_add(1, Ordering::SeqCst);
@@ -691,7 +717,7 @@ mod tests {
                 let request_call_count = request_call_count.clone();
                 let finalizer_2_request_call_position = finalizer_2_request_call_position.clone();
                 let finalizer_2_request_call_count = finalizer_2_request_call_count.clone();
-                move |_: Rc<((), ())>| {
+                move |_: Arc<((), ())>| {
                     request_call_count.fetch_add(1, Ordering::SeqCst);
                     finalizer_2_request_call_position.store(request_call_count.load(Ordering::SeqCst), Ordering::SeqCst);
                     finalizer_2_request_call_count.fetch_add(1, Ordering::SeqCst);
@@ -703,7 +729,7 @@ mod tests {
                 let request_call_count = request_call_count.clone();
                 let finalizer_3_request_call_position = finalizer_3_request_call_position.clone();
                 let finalizer_3_request_call_count = finalizer_3_request_call_count.clone();
-                move |_: Rc<((), (), (), ())>| {
+                move |_: Arc<((), (), (), ())>| {
                     request_call_count.fetch_add(1, Ordering::SeqCst);
                     finalizer_3_request_call_position.store(request_call_count.load(Ordering::SeqCst), Ordering::SeqCst);
                     finalizer_3_request_call_count.fetch_add(1, Ordering::SeqCst);
@@ -715,7 +741,7 @@ mod tests {
                 let request_call_count = request_call_count.clone();
                 let finalizer_4_request_call_position = finalizer_4_request_call_position.clone();
                 let finalizer_4_request_call_count = finalizer_4_request_call_count.clone();
-                move |_: Rc<((), (), (), (), ())>| {
+                move |_: Arc<((), (), (), (), ())>| {
                     request_call_count.fetch_add(1, Ordering::SeqCst);
                     finalizer_4_request_call_position.store(request_call_count.load(Ordering::SeqCst), Ordering::SeqCst);
                     finalizer_4_request_call_count.fetch_add(1, Ordering::SeqCst);
@@ -766,9 +792,9 @@ mod tests {
     #[test]
     #[traced_test]
     fn test_shared_container_close_for_resolved() {
-        let finalizer_1_request_call_count = Rc::new(AtomicU8::new(0));
-        let finalizer_2_request_call_count = Rc::new(AtomicU8::new(0));
-        let finalizer_3_request_call_count = Rc::new(AtomicU8::new(0));
+        let finalizer_1_request_call_count = Arc::new(AtomicU8::new(0));
+        let finalizer_2_request_call_count = Arc::new(AtomicU8::new(0));
+        let finalizer_3_request_call_count = Arc::new(AtomicU8::new(0));
 
         let registry = RegistriesBuilder::new()
             .provide(|| Ok(()), Runtime)
@@ -776,7 +802,7 @@ mod tests {
             .provide(|| Ok(((), (), (), ())), Request)
             .add_finalizer({
                 let finalizer_1_request_call_count = finalizer_1_request_call_count.clone();
-                move |_: Rc<()>| {
+                move |_: Arc<()>| {
                     finalizer_1_request_call_count.fetch_add(1, Ordering::SeqCst);
 
                     debug!("Finalizer 1 called");
@@ -784,7 +810,7 @@ mod tests {
             })
             .add_finalizer({
                 let finalizer_2_request_call_count = finalizer_2_request_call_count.clone();
-                move |_: Rc<((), ())>| {
+                move |_: Arc<((), ())>| {
                     finalizer_2_request_call_count.fetch_add(1, Ordering::SeqCst);
 
                     debug!("Finalizer 2 called");
@@ -792,7 +818,7 @@ mod tests {
             })
             .add_finalizer({
                 let finalizer_3_request_call_count = finalizer_3_request_call_count.clone();
-                move |_: Rc<((), (), (), ())>| {
+                move |_: Arc<((), (), (), ())>| {
                     finalizer_3_request_call_count.fetch_add(1, Ordering::SeqCst);
 
                     debug!("Finalizer 3 called");
@@ -812,5 +838,13 @@ mod tests {
         assert_eq!(finalizer_1_request_call_count.load(Ordering::SeqCst), 1);
         assert_eq!(finalizer_2_request_call_count.load(Ordering::SeqCst), 1);
         assert_eq!(finalizer_3_request_call_count.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn test_bounds() {
+        fn impl_bounds<T: Send + Sync + 'static>() {}
+
+        impl_bounds::<Container>();
+        impl_bounds::<ContainerHandle>();
     }
 }

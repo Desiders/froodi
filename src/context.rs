@@ -1,4 +1,4 @@
-use alloc::{boxed::Box, rc::Rc};
+use alloc::{boxed::Box, sync::Arc};
 use core::any::TypeId;
 
 use crate::dependency_resolver::{Resolved, ResolvedSet};
@@ -50,15 +50,15 @@ impl Context {
     }
 
     #[inline]
-    pub fn insert<T: 'static>(&mut self, value: T) -> Option<Rc<T>> {
+    pub fn insert<T: Send + Sync + 'static>(&mut self, value: T) -> Option<Arc<T>> {
         self.map
             .get_or_insert_with(Box::default)
-            .insert(TypeId::of::<T>(), Rc::new(value))
+            .insert(TypeId::of::<T>(), Arc::new(value))
             .and_then(|boxed| boxed.downcast().ok())
     }
 
     #[inline]
-    pub fn insert_rc<T: 'static>(&mut self, value: Rc<T>) -> Option<Rc<T>> {
+    pub fn insert_rc<T: Send + Sync + 'static>(&mut self, value: Arc<T>) -> Option<Arc<T>> {
         self.map
             .get_or_insert_with(Box::default)
             .insert(TypeId::of::<T>(), value)
@@ -89,7 +89,7 @@ impl Context {
     }
 
     #[must_use]
-    pub(crate) fn get<T: 'static>(&self, type_id: &TypeId) -> Option<Rc<T>> {
+    pub(crate) fn get<T: Send + Sync + 'static>(&self, type_id: &TypeId) -> Option<Arc<T>> {
         self.map
             .as_ref()
             .and_then(|map| map.get(type_id))
@@ -116,8 +116,8 @@ impl Context {
 }
 
 mod any {
-    use alloc::{collections::BTreeMap, rc::Rc};
+    use alloc::{collections::BTreeMap, sync::Arc};
     use core::any::{Any, TypeId};
 
-    pub(super) type Map = BTreeMap<TypeId, Rc<dyn Any>>;
+    pub(super) type Map = BTreeMap<TypeId, Arc<dyn Any + Send + Sync>>;
 }

@@ -44,7 +44,7 @@ impl<S> RegistriesBuilder<S> {
     #[must_use]
     pub fn provide<Inst, Deps>(mut self, instantiator: Inst, scope: S) -> Self
     where
-        Inst: Instantiator<Deps, Error = InstantiateErrorKind>,
+        Inst: Instantiator<Deps, Error = InstantiateErrorKind> + Send + Sync,
         Deps: DependencyResolver<Error = ResolveErrorKind>,
     {
         self.add_instantiator::<Inst::Provides>(boxed_instantiator_factory(instantiator), scope);
@@ -56,7 +56,7 @@ impl<S> RegistriesBuilder<S> {
     #[must_use]
     pub fn provide_with_config<Inst, Deps>(mut self, instantiator: Inst, config: Config, scope: S) -> Self
     where
-        Inst: Instantiator<Deps, Error = InstantiateErrorKind>,
+        Inst: Instantiator<Deps, Error = InstantiateErrorKind> + Send + Sync,
         Deps: DependencyResolver<Error = ResolveErrorKind>,
     {
         self.add_instantiator_with_config::<Inst::Provides>(boxed_instantiator_factory(instantiator), config, scope);
@@ -76,8 +76,8 @@ impl<S> RegistriesBuilder<S> {
     #[must_use]
     pub fn add_finalizer<Dep, Fin>(mut self, finalizer: Fin) -> Self
     where
-        Dep: 'static,
-        Fin: Finalizer<Dep>,
+        Dep: Send + Sync + 'static,
+        Fin: Finalizer<Dep> + Send + Sync,
     {
         self.finalizers.insert(TypeId::of::<Dep>(), boxed_finalizer_factory(finalizer));
         self
@@ -207,7 +207,7 @@ mod tests {
     use super::RegistriesBuilder;
     use crate::scope::DefaultScope::{self, *};
 
-    use alloc::rc::Rc;
+    use alloc::sync::Arc;
     use core::any::TypeId;
 
     #[test]
@@ -253,8 +253,8 @@ mod tests {
             .provide(|| Ok(1i16), Runtime)
             .provide(|| Ok(1i32), App)
             .provide(|| Ok(1i64), App)
-            .add_finalizer(|_: Rc<i8>| {})
-            .add_finalizer(|_: Rc<i32>| {})
+            .add_finalizer(|_: Arc<i8>| {})
+            .add_finalizer(|_: Arc<i32>| {})
             .build();
 
         let i8_type_id = TypeId::of::<i8>();
