@@ -57,9 +57,18 @@ impl<S> RegistriesBuilder<S> {
         self
     }
 
+    /// Adds a finalizer for the given a non transient dependency type.
+    /// The finalizer will be called when the container is being closed in LIFO order of their usage (not the order of registration).
+    ///
+    /// # Warning
+    /// - The finalizer can only be used for non-transient dependencies, because the transient doesn't have a lifetime and isn't cached.
+    ///
+    /// - [`Drop`] trait isn't a equivalent of a finalizer, because:
+    ///     1. The finalizer is called in LIFO order of their usage, while [`Drop`] is called in the order of registration.
+    ///     2. The finalized used for life cycle management, while [`Drop`] is used for resource management.
     #[inline]
     #[must_use]
-    pub(crate) fn add_finalizer<Dep, Fin>(mut self, finalizer: Fin) -> Self
+    pub fn add_finalizer<Dep, Fin>(mut self, finalizer: Fin) -> Self
     where
         Dep: 'static,
         Fin: Finalizer<Dep>,
