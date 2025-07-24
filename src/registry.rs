@@ -7,6 +7,7 @@ use super::{
 };
 use crate::{
     dependency_resolver::DependencyResolver,
+    finalizer::{boxed_finalizer_factory, BoxedCloneFinalizer, Finalizer},
     instantiator::{boxed_instantiator_factory, Instantiator},
     scope::Scope,
 };
@@ -19,6 +20,7 @@ pub(crate) struct InstantiatorData<S> {
 
 pub struct RegistriesBuilder<S> {
     instantiators: BTreeMap<TypeId, InstantiatorData<S>>,
+    finalizers: BTreeMap<TypeId, BoxedCloneFinalizer>,
 }
 
 impl<S> RegistriesBuilder<S> {
@@ -27,6 +29,7 @@ impl<S> RegistriesBuilder<S> {
     pub const fn new() -> Self {
         Self {
             instantiators: BTreeMap::new(),
+            finalizers: BTreeMap::new(),
         }
     }
 
@@ -53,24 +56,30 @@ impl<S> RegistriesBuilder<S> {
         self.add_instantiator_with_config::<Inst::Provides>(boxed_instantiator_factory(instantiator), config, scope);
         self
     }
+
+    #[inline]
+    #[must_use]
+    pub(crate) fn add_finalizer<Dep, Fin>(mut self, finalizer: Fin) -> Self
+    where
+        Dep: 'static,
+        Fin: Finalizer<Dep>,
+    {
+        self.finalizers.insert(TypeId::of::<Dep>(), boxed_finalizer_factory(finalizer));
+        self
+    }
 }
 
 impl<S> RegistriesBuilder<S> {
+    #[inline]
     pub(crate) fn add_instantiator<Dep: 'static>(
         &mut self,
         instantiator: BoxedCloneInstantiator<ResolveErrorKind, InstantiateErrorKind>,
         scope: S,
     ) -> Option<InstantiatorData<S>> {
-        self.instantiators.insert(
-            TypeId::of::<Dep>(),
-            InstantiatorData {
-                instantiator,
-                scope,
-                config: Config::default(),
-            },
-        )
+        self.add_instantiator_with_config::<Dep>(instantiator, Config::default(), scope)
     }
 
+    #[inline]
     pub(crate) fn add_instantiator_with_config<Dep: 'static>(
         &mut self,
         instantiator: BoxedCloneInstantiator<ResolveErrorKind, InstantiateErrorKind>,
@@ -92,7 +101,7 @@ impl<S> RegistriesBuilder<S>
 where
     S: Scope,
 {
-    pub(crate) fn build(self) -> Vec<Registry> {
+    pub(crate) fn build(mut self) -> Vec<Registry> {
         use alloc::collections::btree_map::Entry::{Occupied, Vacant};
 
         let mut scopes_instantiators: BTreeMap<S, Vec<(TypeId, InstantiatorInnerData)>> = BTreeMap::new();
@@ -105,12 +114,28 @@ where
             },
         ) in self.instantiators
         {
+            let finalizer = self.finalizers.remove(&type_id);
+
             match scopes_instantiators.entry(scope) {
                 Vacant(entry) => {
-                    entry.insert(vec![(type_id, InstantiatorInnerData { instantiator, config })]);
+                    entry.insert(vec![(
+                        type_id,
+                        InstantiatorInnerData {
+                            instantiator,
+                            finalizer,
+                            config,
+                        },
+                    )]);
                 }
                 Occupied(entry) => {
-                    entry.into_mut().push((type_id, InstantiatorInnerData { instantiator, config }));
+                    entry.into_mut().push((
+                        type_id,
+                        InstantiatorInnerData {
+                            instantiator,
+                            finalizer,
+                            config,
+                        },
+                    ));
                 }
             }
         }
@@ -140,6 +165,7 @@ pub(crate) struct ScopeInnerData {
 #[cfg_attr(feature = "debug", derive(Debug))]
 pub(crate) struct InstantiatorInnerData {
     pub(crate) instantiator: BoxedCloneInstantiator<ResolveErrorKind, InstantiateErrorKind>,
+    pub(crate) finalizer: Option<BoxedCloneFinalizer>,
     pub(crate) config: Config,
 }
 
@@ -150,14 +176,14 @@ pub(crate) struct Registry {
 }
 
 impl Registry {
-    #[must_use]
-    pub(crate) fn get_instantiator<Dep: 'static>(&self) -> Option<BoxedCloneInstantiator<ResolveErrorKind, InstantiateErrorKind>> {
-        self.instantiators.get(&TypeId::of::<Dep>()).map(|data| data.instantiator.clone())
+    #[inline]
+    pub(crate) fn get_instantiator(&self, type_id: &TypeId) -> Option<BoxedCloneInstantiator<ResolveErrorKind, InstantiateErrorKind>> {
+        self.instantiators.get(type_id).map(|data| data.instantiator.clone())
     }
 
-    #[must_use]
-    pub(crate) fn get_instantiator_data<Dep: 'static>(&self) -> Option<InstantiatorInnerData> {
-        self.instantiators.get(&TypeId::of::<Dep>()).cloned()
+    #[inline]
+    pub(crate) fn get_instantiator_data(&self, type_id: &TypeId) -> Option<InstantiatorInnerData> {
+        self.instantiators.get(type_id).cloned()
     }
 }
 
@@ -165,6 +191,9 @@ impl Registry {
 mod tests {
     use super::RegistriesBuilder;
     use crate::scope::DefaultScope::{self, *};
+
+    use alloc::rc::Rc;
+    use core::any::TypeId;
 
     #[test]
     fn test_build_empty() {
@@ -199,6 +228,41 @@ mod tests {
 
         for registry in registries {
             assert_eq!(registry.instantiators.len(), 2);
+        }
+    }
+
+    #[test]
+    fn test_add_finalizer() {
+        let registries = RegistriesBuilder::new()
+            .provide(|| Ok(1i8), Runtime)
+            .provide(|| Ok(1i16), Runtime)
+            .provide(|| Ok(1i32), App)
+            .provide(|| Ok(1i64), App)
+            .add_finalizer(|_: Rc<i8>| {})
+            .add_finalizer(|_: Rc<i32>| {})
+            .build();
+
+        let i8_type_id = TypeId::of::<i8>();
+        let i16_type_id = TypeId::of::<i16>();
+        let i32_type_id = TypeId::of::<i32>();
+        let i64_type_id = TypeId::of::<i64>();
+
+        for registry in registries {
+            if let Some(data) = registry.instantiators.get(&i8_type_id) {
+                assert!(data.finalizer.is_some());
+                continue;
+            }
+            if let Some(data) = registry.instantiators.get(&i16_type_id) {
+                assert!(data.finalizer.is_none());
+                continue;
+            }
+            if let Some(data) = registry.instantiators.get(&i32_type_id) {
+                assert!(data.finalizer.is_some());
+                continue;
+            }
+            if let Some(data) = registry.instantiators.get(&i64_type_id) {
+                assert!(data.finalizer.is_none());
+            }
         }
     }
 }
