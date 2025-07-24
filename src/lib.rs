@@ -21,6 +21,7 @@ pub(crate) mod r#async;
 pub use container::Container;
 pub use context::Context;
 pub use errors::{InstantiateErrorKind, InstantiatorErrorKind, ResolveErrorKind, ScopeErrorKind, ScopeWithErrorKind};
+pub use finalizer::Finalizer;
 pub use instantiator::Config;
 pub use registry::RegistriesBuilder;
 pub use scope::{DefaultScope, Scope};

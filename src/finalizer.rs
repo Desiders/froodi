@@ -3,7 +3,7 @@ use core::any::Any;
 
 use crate::service::{service_fn, BoxCloneService};
 
-pub(crate) trait Finalizer<Dep>: Clone + 'static {
+pub trait Finalizer<Dep>: Clone + 'static {
     fn finalize(&mut self, dependency: Rc<Dep>);
 }
 
