@@ -113,10 +113,12 @@ impl Container {
         }
     }
 
-    /// Closes the container, calling finalizers for resolved dependencies
+    /// Closes the container, calling finalizers for resolved dependencies in LIFO order.
     ///
     /// # Warning
-    /// This method can be called multiple times, but it will only call finalizers for dependencies that were resolved since the last call
+    /// - This method can be called multiple times, but it will only call finalizers for dependencies that were resolved since the last call
+    ///
+    /// - If the container has a parent, it will also close the parent container if [`Self::close_parent`] is set to `true`
     pub fn close(&mut self) {
         while let Some(Resolved { type_id, dependency }) = self.context.get_resolved_set_mut().0.pop_back() {
             let InstantiatorInnerData { finalizer, .. } = self
