@@ -17,6 +17,7 @@ pub(crate) mod service;
 
 pub use container::{Container, ContainerHandle};
 pub use context::Context;
+pub use dependency_resolver::{Inject, InjectTransient};
 pub use errors::{InstantiateErrorKind, InstantiatorErrorKind, ResolveErrorKind, ScopeErrorKind, ScopeWithErrorKind};
 pub use finalizer::Finalizer;
 pub use instantiator::Config;

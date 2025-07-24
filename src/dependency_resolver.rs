@@ -17,7 +17,7 @@ pub(crate) trait DependencyResolver: Sized {
     fn resolve(registry: Arc<Registry>, context: Context) -> Result<(Self, Context), Self::Error>;
 }
 
-pub(crate) struct Inject<Dep>(pub(crate) Arc<Dep>);
+pub struct Inject<Dep>(pub Arc<Dep>);
 
 impl<Dep: Send + Sync + 'static> DependencyResolver for Inject<Dep> {
     type Error = ResolveErrorKind;
@@ -83,7 +83,7 @@ impl<Dep: Send + Sync + 'static> DependencyResolver for Inject<Dep> {
     }
 }
 
-pub(crate) struct InjectTransient<Dep>(pub(crate) Dep);
+pub struct InjectTransient<Dep>(pub Dep);
 
 impl<Dep: 'static> DependencyResolver for InjectTransient<Dep> {
     type Error = ResolveErrorKind;
