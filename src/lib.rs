@@ -15,9 +15,6 @@ pub(crate) mod registry;
 pub(crate) mod scope;
 pub(crate) mod service;
 
-#[cfg(feature = "async")]
-pub(crate) mod r#async;
-
 pub use container::{Container, ContainerHandle};
 pub use context::Context;
 pub use errors::{InstantiateErrorKind, InstantiatorErrorKind, ResolveErrorKind, ScopeErrorKind, ScopeWithErrorKind};
