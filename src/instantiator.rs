@@ -1,4 +1,4 @@
-use alloc::{boxed::Box, rc::Rc};
+use alloc::{boxed::Box, sync::Arc};
 use core::any::Any;
 use tracing::debug;
 
@@ -40,14 +40,14 @@ impl Default for Config {
 }
 
 pub(crate) struct Request {
-    registry: Rc<Registry>,
+    registry: Arc<Registry>,
     context: Context,
 }
 
 impl Request {
     #[inline]
     #[must_use]
-    pub(crate) const fn new(registry: Rc<Registry>, context: Context) -> Self {
+    pub(crate) const fn new(registry: Arc<Registry>, context: Context) -> Self {
         Self { registry, context }
     }
 }
@@ -58,7 +58,7 @@ pub(crate) type BoxedCloneInstantiator<DepsErr, FactoryErr> =
 #[must_use]
 pub(crate) fn boxed_instantiator_factory<Inst, Deps>(instantiator: Inst) -> BoxedCloneInstantiator<Deps::Error, Inst::Error>
 where
-    Inst: Instantiator<Deps>,
+    Inst: Instantiator<Deps> + Send + Sync,
     Deps: DependencyResolver,
 {
     BoxCloneService(Box::new(service_fn({
@@ -117,8 +117,8 @@ mod tests {
 
     use alloc::{
         format,
-        rc::Rc,
         string::{String, ToString as _},
+        sync::Arc,
     };
     use core::sync::atomic::{AtomicU8, Ordering};
     use tracing::debug;
@@ -139,8 +139,8 @@ mod tests {
     #[test]
     #[traced_test]
     fn test_boxed_instantiator_factory() {
-        let instantiator_request_call_count = Rc::new(AtomicU8::new(0));
-        let instantiator_response_call_count = Rc::new(AtomicU8::new(0));
+        let instantiator_request_call_count = Arc::new(AtomicU8::new(0));
+        let instantiator_response_call_count = Arc::new(AtomicU8::new(0));
 
         let instantiator_request = boxed_instantiator_factory({
             let instantiator_request_call_count = instantiator_request_call_count.clone();
@@ -168,7 +168,7 @@ mod tests {
 
         let mut registries = registries_builder.build().into_iter();
         let registry = if let Some(root_registry) = registries.next() {
-            Rc::new(root_registry)
+            Arc::new(root_registry)
         } else {
             panic!("registries len (is 0) should be >= 1");
         };
@@ -186,8 +186,8 @@ mod tests {
     #[test]
     #[traced_test]
     fn test_boxed_instantiator_cached_factory() {
-        let instantiator_request_call_count = Rc::new(AtomicU8::new(0));
-        let instantiator_response_call_count = Rc::new(AtomicU8::new(0));
+        let instantiator_request_call_count = Arc::new(AtomicU8::new(0));
+        let instantiator_response_call_count = Arc::new(AtomicU8::new(0));
 
         let instantiator_request = boxed_instantiator_factory({
             let instantiator_request_call_count = instantiator_request_call_count.clone();
@@ -215,7 +215,7 @@ mod tests {
 
         let mut registries = registries_builder.build().into_iter();
         let registry = if let Some(root_registry) = registries.next() {
-            Rc::new(root_registry)
+            Arc::new(root_registry)
         } else {
             panic!("registries len (is 0) should be >= 1");
         };
