@@ -65,7 +65,7 @@ impl<Dep: 'static> DependencyResolver for Inject<Dep> {
                 Err(incorrect_type) => {
                     let err = ResolveErrorKind::IncorrectType {
                         expected: type_id,
-                        actual: incorrect_type.type_id(),
+                        actual: (*incorrect_type).type_id(),
                     };
                     error!("{}", err);
                     Err(err)
@@ -106,7 +106,7 @@ impl<Dep: 'static> DependencyResolver for InjectTransient<Dep> {
                 Err(incorrect_type) => {
                     let err = ResolveErrorKind::IncorrectType {
                         expected: type_id,
-                        actual: incorrect_type.type_id(),
+                        actual: (*incorrect_type).type_id(),
                     };
                     error!("{}", err);
                     Err(err)

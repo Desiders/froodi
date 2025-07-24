@@ -34,6 +34,12 @@ impl PartialEq for Context {
 #[cfg(feature = "eq")]
 impl Eq for Context {}
 
+impl Default for Context {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Context {
     #[must_use]
     pub const fn new() -> Self {
@@ -97,6 +103,7 @@ impl Context {
 
     #[inline]
     #[must_use]
+    #[cfg(test)]
     pub(crate) const fn get_resolved_set(&self) -> &ResolvedSet {
         &self.resolved
     }
