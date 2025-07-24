@@ -21,6 +21,11 @@ handle = ["lock"]
 
 [dev-dependencies]
 tracing-test = { version = "0.2", default-features = false }
+criterion = { version = "0.6" }
 
 [profile.test]
 opt-level = 3
+
+[[bench]]
+name = "container"
+harness = false
