@@ -1,28 +1,30 @@
 use alloc::{boxed::Box, rc::Rc};
-use core::cell::RefCell;
+use tracing::debug;
 
 use super::{context::Context, dependency_resolver::DependencyResolver, registry::RegistriesBuilder};
 use crate::{
-    dependency_resolver::{Inject, InjectTransient},
+    dependency_resolver::{Inject, InjectTransient, Resolved},
     errors::{ResolveErrorKind, ScopeErrorKind, ScopeWithErrorKind},
-    registry::Registry,
+    registry::{InstantiatorInnerData, Registry},
     scope::Scope,
+    service::Service as _,
 };
 
 #[derive(Clone)]
 #[cfg_attr(feature = "debug", derive(Debug))]
 pub struct Container {
-    context: Rc<RefCell<Context>>,
+    context: Context,
     root_registry: Rc<Registry>,
     child_registries: Box<[Rc<Registry>]>,
     parent: Option<Box<Container>>,
+    close_parent: bool,
 }
 
 #[cfg(feature = "eq")]
 impl PartialEq for Container {
     fn eq(&self, other: &Self) -> bool {
         Rc::ptr_eq(&self.root_registry, &other.root_registry)
-            && Rc::ptr_eq(&self.context, &other.context)
+            && self.context == other.context
             && self.child_registries.len() == other.child_registries.len()
             && self
                 .child_registries
@@ -51,11 +53,17 @@ impl Container {
         };
 
         Self {
-            context: Rc::new(RefCell::new(Context::new())),
+            context: Context::new(),
             root_registry,
             child_registries,
             parent: None,
+            close_parent: true,
         }
+    }
+
+    #[inline]
+    pub fn set_close_parent(&mut self, close_parent: bool) {
+        self.close_parent = close_parent;
     }
 
     /// Creates child container builder
@@ -71,25 +79,62 @@ impl Container {
         self.child().build()
     }
 
-    pub fn get<Dep: 'static>(&self) -> Result<Rc<Dep>, ResolveErrorKind> {
-        match Inject::resolve(self.root_registry.clone(), self.context.clone()).map(|Inject(dep)| dep) {
-            Ok(dep) => Ok(dep),
-            Err(err @ ResolveErrorKind::NoInstantiator) => match &self.parent {
-                Some(parent) => parent.get(),
+    pub fn get<Dep: 'static>(&mut self) -> Result<Rc<Dep>, ResolveErrorKind> {
+        match Inject::resolve(self.root_registry.clone(), self.context.clone()) {
+            Ok((Inject(dep), context)) => {
+                self.context = context;
+                Ok(dep)
+            }
+            Err(err @ ResolveErrorKind::NoInstantiator) => match &mut self.parent {
+                Some(parent) => {
+                    debug!("No instantiator found, trying parent container");
+                    parent.get()
+                }
                 None => Err(err),
             },
             Err(err) => Err(err),
         }
     }
 
-    pub fn get_transient<Dep: 'static>(&self) -> Result<Dep, ResolveErrorKind> {
-        match InjectTransient::resolve(self.root_registry.clone(), self.context.clone()).map(|InjectTransient(dep)| dep) {
-            Ok(dep) => Ok(dep),
-            Err(err @ ResolveErrorKind::NoInstantiator) => match &self.parent {
-                Some(parent) => parent.get_transient(),
+    pub fn get_transient<Dep: 'static>(&mut self) -> Result<Dep, ResolveErrorKind> {
+        match InjectTransient::resolve(self.root_registry.clone(), self.context.clone()) {
+            Ok((InjectTransient(dep), context)) => {
+                self.context = context;
+                Ok(dep)
+            }
+            Err(err @ ResolveErrorKind::NoInstantiator) => match &mut self.parent {
+                Some(parent) => {
+                    debug!("No instantiator found, trying parent container");
+                    parent.get_transient()
+                }
                 None => Err(err),
             },
             Err(err) => Err(err),
+        }
+    }
+
+    /// Closes the container, calling finalizers for resolved dependencies
+    ///
+    /// # Warning
+    /// This method can be called multiple times, but it will only call finalizers for dependencies that were resolved since the last call
+    pub fn close(&mut self) {
+        while let Some(Resolved { type_id, dependency }) = self.context.get_resolved_set_mut().0.pop_back() {
+            let InstantiatorInnerData { finalizer, .. } = self
+                .root_registry
+                .get_instantiator_data(&type_id)
+                .expect("Instantiator should be present for resolved type");
+
+            if let Some(mut finalizer) = finalizer {
+                let _ = finalizer.call(dependency);
+                debug!(?type_id, "Finalizer called");
+            }
+        }
+
+        if self.close_parent {
+            if let Some(parent) = &mut self.parent {
+                parent.close();
+                debug!("Parent container closed");
+            }
         }
     }
 }
@@ -230,11 +275,7 @@ impl ChildContainerWithContext {
             let mut iter = child.child_registries.iter();
             let registry = iter.next().ok_or(NoNonSkippedRegistries)?;
 
-            child = child.init_child_with_context(
-                Rc::new(RefCell::new(self.context.clone())),
-                registry.clone(),
-                iter.cloned().collect(),
-            );
+            child = child.init_child_with_context(self.context.clone(), registry.clone(), iter.cloned().collect());
         }
 
         Ok(child)
@@ -275,11 +316,7 @@ where
                 priority,
             })?;
 
-            child = child.init_child_with_context(
-                Rc::new(RefCell::new(self.context.clone())),
-                registry.clone(),
-                iter.cloned().collect(),
-            );
+            child = child.init_child_with_context(self.context.clone(), registry.clone(), iter.cloned().collect());
         }
 
         Ok(child)
@@ -289,24 +326,20 @@ where
 impl Container {
     #[inline]
     #[must_use]
-    fn init_child_with_context(
-        &self,
-        context: Rc<RefCell<Context>>,
-        root_registry: Rc<Registry>,
-        child_registries: Box<[Rc<Registry>]>,
-    ) -> Container {
+    fn init_child_with_context(&self, context: Context, root_registry: Rc<Registry>, child_registries: Box<[Rc<Registry>]>) -> Container {
         Container {
             context,
             root_registry,
             child_registries,
             parent: Some(Box::new(self.clone())),
+            close_parent: self.close_parent,
         }
     }
 
     #[inline]
     #[must_use]
     fn init_child(&self, root_registry: Rc<Registry>, child_registries: Box<[Rc<Registry>]>) -> Container {
-        self.init_child_with_context(self.context.clone(), root_registry, child_registries)
+        self.init_child_with_context(self.context.child(), root_registry, child_registries)
     }
 }
 
@@ -323,6 +356,8 @@ mod tests {
         rc::Rc,
         string::{String, ToString as _},
     };
+    use core::sync::atomic::{AtomicU8, Ordering};
+    use tracing::debug;
     use tracing_test::traced_test;
 
     struct Request1;
@@ -339,7 +374,7 @@ mod tests {
                 |Inject(req_1): Inject<Request1>, Inject(req_2): Inject<Request2>| Ok(Request3(req_1, req_2)),
                 Runtime,
             );
-        let container = Container::new(registry);
+        let mut container = Container::new(registry);
 
         let request_1 = container.get::<Request1>().unwrap();
         let request_2 = container.get::<Request2>().unwrap();
@@ -369,7 +404,7 @@ mod tests {
                 },
                 Runtime,
             );
-        let container = Container::new(registry);
+        let mut container = Container::new(registry);
 
         container.get_transient::<RequestTransient1>().unwrap();
         container.get_transient::<RequestTransient2>().unwrap();
@@ -469,5 +504,155 @@ mod tests {
         assert_eq!(step_container.child_registries.len(), 0);
         assert_eq!(step_container.root_registry.scope.priority, Step.priority());
         assert!(Rc::ptr_eq(&step_container.root_registry, &action_container.child_registries[0]));
+    }
+
+    #[test]
+    #[traced_test]
+    fn test_close_for_unresolved() {
+        let finalizer_1_request_call_count = Rc::new(AtomicU8::new(0));
+        let finalizer_2_request_call_count = Rc::new(AtomicU8::new(0));
+        let finalizer_3_request_call_count = Rc::new(AtomicU8::new(0));
+
+        let registry = RegistriesBuilder::new()
+            .provide(|| Ok(()), Runtime)
+            .provide(|| Ok(((), ())), App)
+            .provide(|| Ok(((), (), (), ())), Request)
+            .add_finalizer({
+                let finalizer_1_request_call_count = finalizer_1_request_call_count.clone();
+                move |_: Rc<()>| {
+                    finalizer_1_request_call_count.fetch_add(1, Ordering::SeqCst);
+                }
+            })
+            .add_finalizer({
+                let finalizer_2_request_call_count = finalizer_2_request_call_count.clone();
+                move |_: Rc<((), ())>| {
+                    finalizer_2_request_call_count.fetch_add(1, Ordering::SeqCst);
+                }
+            })
+            .add_finalizer({
+                let finalizer_3_request_call_count = finalizer_3_request_call_count.clone();
+                move |_: Rc<((), (), (), ())>| {
+                    finalizer_3_request_call_count.fetch_add(1, Ordering::SeqCst);
+                }
+            });
+
+        let mut runtime_container = Container::new(registry);
+        let mut app_container = runtime_container.child().with_scope(App).build().unwrap();
+        let mut request_container = app_container.child().with_scope(Request).build().unwrap();
+
+        request_container.close();
+        app_container.close();
+        runtime_container.close();
+
+        assert_eq!(finalizer_1_request_call_count.load(Ordering::SeqCst), 0);
+        assert_eq!(finalizer_2_request_call_count.load(Ordering::SeqCst), 0);
+        assert_eq!(finalizer_3_request_call_count.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    #[traced_test]
+    fn test_close_for_resolved() {
+        let request_call_count = Rc::new(AtomicU8::new(0));
+
+        let finalizer_1_request_call_count = Rc::new(AtomicU8::new(0));
+        let finalizer_1_request_call_position = Rc::new(AtomicU8::new(0));
+        let finalizer_2_request_call_count = Rc::new(AtomicU8::new(0));
+        let finalizer_2_request_call_position = Rc::new(AtomicU8::new(0));
+        let finalizer_3_request_call_count = Rc::new(AtomicU8::new(0));
+        let finalizer_3_request_call_position = Rc::new(AtomicU8::new(0));
+        let finalizer_4_request_call_count = Rc::new(AtomicU8::new(0));
+        let finalizer_4_request_call_position = Rc::new(AtomicU8::new(0));
+
+        let registry = RegistriesBuilder::new()
+            .provide(|| Ok(()), Runtime)
+            .provide(|| Ok(((), ())), App)
+            .provide(|| Ok(((), (), (), ())), Request)
+            .provide(|| Ok(((), (), (), (), ())), Request)
+            .add_finalizer({
+                let request_call_count = request_call_count.clone();
+                let finalizer_1_request_call_position = finalizer_1_request_call_position.clone();
+                let finalizer_1_request_call_count = finalizer_1_request_call_count.clone();
+                move |_: Rc<()>| {
+                    request_call_count.fetch_add(1, Ordering::SeqCst);
+                    finalizer_1_request_call_position.store(request_call_count.load(Ordering::SeqCst), Ordering::SeqCst);
+                    finalizer_1_request_call_count.fetch_add(1, Ordering::SeqCst);
+
+                    debug!("Finalizer 1 called");
+                }
+            })
+            .add_finalizer({
+                let request_call_count = request_call_count.clone();
+                let finalizer_2_request_call_position = finalizer_2_request_call_position.clone();
+                let finalizer_2_request_call_count = finalizer_2_request_call_count.clone();
+                move |_: Rc<((), ())>| {
+                    request_call_count.fetch_add(1, Ordering::SeqCst);
+                    finalizer_2_request_call_position.store(request_call_count.load(Ordering::SeqCst), Ordering::SeqCst);
+                    finalizer_2_request_call_count.fetch_add(1, Ordering::SeqCst);
+
+                    debug!("Finalizer 2 called");
+                }
+            })
+            .add_finalizer({
+                let request_call_count = request_call_count.clone();
+                let finalizer_3_request_call_position = finalizer_3_request_call_position.clone();
+                let finalizer_3_request_call_count = finalizer_3_request_call_count.clone();
+                move |_: Rc<((), (), (), ())>| {
+                    request_call_count.fetch_add(1, Ordering::SeqCst);
+                    finalizer_3_request_call_position.store(request_call_count.load(Ordering::SeqCst), Ordering::SeqCst);
+                    finalizer_3_request_call_count.fetch_add(1, Ordering::SeqCst);
+
+                    debug!("Finalizer 3 called");
+                }
+            })
+            .add_finalizer({
+                let request_call_count = request_call_count.clone();
+                let finalizer_4_request_call_position = finalizer_4_request_call_position.clone();
+                let finalizer_4_request_call_count = finalizer_4_request_call_count.clone();
+                move |_: Rc<((), (), (), (), ())>| {
+                    request_call_count.fetch_add(1, Ordering::SeqCst);
+                    finalizer_4_request_call_position.store(request_call_count.load(Ordering::SeqCst), Ordering::SeqCst);
+                    finalizer_4_request_call_count.fetch_add(1, Ordering::SeqCst);
+
+                    debug!("Finalizer 4 called");
+                }
+            });
+
+        let runtime_container = Container::new(registry);
+        let app_container = runtime_container.child().with_scope(App).build().unwrap();
+        let mut request_container = app_container.child().with_scope(Request).build().unwrap();
+
+        let _ = request_container.get::<()>().unwrap();
+        let _ = request_container.get::<((), ())>().unwrap();
+        let _ = request_container.get::<((), (), (), (), ())>().unwrap();
+        let _ = request_container.get::<((), (), (), ())>().unwrap();
+
+        let runtime_container_resolved_set_count = request_container
+            .parent
+            .as_ref()
+            .unwrap()
+            .parent
+            .as_ref()
+            .unwrap()
+            .context
+            .get_resolved_set()
+            .0
+            .len();
+        let app_container_resolved_set_count = request_container.parent.as_ref().unwrap().context.get_resolved_set().0.len();
+        let request_container_resolved_set_count = request_container.context.get_resolved_set().0.len();
+
+        request_container.close();
+
+        assert_eq!(runtime_container_resolved_set_count, 1);
+        assert_eq!(app_container_resolved_set_count, 1);
+        assert_eq!(request_container_resolved_set_count, 2);
+
+        assert_eq!(finalizer_1_request_call_count.load(Ordering::SeqCst), 1);
+        assert_eq!(finalizer_1_request_call_position.load(Ordering::SeqCst), 4);
+        assert_eq!(finalizer_2_request_call_count.load(Ordering::SeqCst), 1);
+        assert_eq!(finalizer_2_request_call_position.load(Ordering::SeqCst), 3);
+        assert_eq!(finalizer_3_request_call_count.load(Ordering::SeqCst), 1);
+        assert_eq!(finalizer_3_request_call_position.load(Ordering::SeqCst), 1);
+        assert_eq!(finalizer_4_request_call_count.load(Ordering::SeqCst), 1);
+        assert_eq!(finalizer_4_request_call_position.load(Ordering::SeqCst), 2);
     }
 }
