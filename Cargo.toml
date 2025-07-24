@@ -7,15 +7,20 @@ edition = "2021"
 anyhow = { version = "1.0", default-features = false }
 thiserror = { version = "2.0", default-features = false }
 tracing = { version = "0.1", default-features = false }
-parking_lot = { version = "0.12", default-features = false, features = ["default"] }
+parking_lot = { version = "0.12", default-features = false, features = ["default"], optional = true }
 tokio = { version = "1.43", default-features = false, optional = true, features = ["sync"] }
 tower = { version = "0.5", default-features = false, optional = true, features = ["util"] }
 futures-util = { version = "0.3", default-features = false, optional = true }
 
 [features]
+default = ["handle"]
+
 debug = []
 eq = []
-test = ["debug", "eq"]
+test = ["debug", "eq", "handle"]
+
+lock = ["parking_lot"]
+handle = ["lock"]
 
 async = ["futures-util", "tower"]
 async_tokio = ["async", "tokio"]
