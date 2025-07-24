@@ -57,7 +57,7 @@ impl Container {
             root_registry,
             child_registries,
             parent: None,
-            close_parent: true,
+            close_parent: false,
         }
     }
 
@@ -335,7 +335,7 @@ impl Container {
             root_registry,
             child_registries,
             parent: Some(Box::new(self.clone())),
-            close_parent: self.close_parent,
+            close_parent: true,
         }
     }
 
