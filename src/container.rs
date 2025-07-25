@@ -76,7 +76,7 @@ impl Container {
     /// so `close` will not work as expected for parent container that was cloned to create child container and used after.
     #[inline]
     #[must_use]
-    pub fn child(self) -> ChildContainerBuiler {
+    pub fn enter(self) -> ChildContainerBuiler {
         ChildContainerBuiler { container: self }
     }
 
@@ -94,8 +94,8 @@ impl Container {
     /// - Returns [`ScopeErrorKind::NoChildRegistries`] if there are no registries
     /// - Returns [`ScopeErrorKind::NoNonSkippedRegistries`] if there are no non-skipped registries
     #[inline]
-    pub fn child_build(self) -> Result<Container, ScopeErrorKind> {
-        self.child().build()
+    pub fn enter_build(self) -> Result<Container, ScopeErrorKind> {
+        self.enter().build()
     }
 
     /// Gets a scoped dependency from the container
@@ -412,8 +412,8 @@ mod handle {
         /// - `self` instead of `&self` is used to warn about this behavior
         #[inline]
         #[must_use]
-        pub fn child(self) -> ChildContainerBuiler {
-            self.inner.lock().clone().child()
+        pub fn enter(self) -> ChildContainerBuiler {
+            self.inner.lock().clone().enter()
         }
 
         /// Creates child container and builds it with next non-skipped scope
@@ -431,8 +431,8 @@ mod handle {
         /// - Returns [`ScopeErrorKind::NoNonSkippedRegistries`] if there are no non-skipped registries
         #[inline]
         #[allow(clippy::missing_errors_doc)]
-        pub fn child_build(self) -> Result<Container, ScopeErrorKind> {
-            self.inner.lock().clone().child_build()
+        pub fn enter_build(self) -> Result<Container, ScopeErrorKind> {
+            self.inner.lock().clone().enter_build()
         }
 
         /// Gets a scoped dependency from the container
@@ -566,10 +566,10 @@ mod tests {
             .provide(|| Ok(((), (), (), (), (), ())), Step);
 
         let runtime_container = Container::new(registry);
-        let app_container = runtime_container.clone().child_build().unwrap();
-        let request_container = app_container.clone().child_build().unwrap();
-        let action_container = request_container.clone().child_build().unwrap();
-        let step_container = action_container.clone().child_build().unwrap();
+        let app_container = runtime_container.clone().enter_build().unwrap();
+        let request_container = app_container.clone().enter_build().unwrap();
+        let action_container = request_container.clone().enter_build().unwrap();
+        let step_container = action_container.clone().enter_build().unwrap();
 
         assert_eq!(runtime_container.parent, None);
         assert_eq!(runtime_container.child_registries.len(), 5);
@@ -613,11 +613,11 @@ mod tests {
             .provide(|| Ok(((), (), (), (), (), ())), Step);
 
         let runtime_container = Container::new(registry);
-        let app_container = runtime_container.clone().child().with_scope(App).build().unwrap();
-        let session_container = runtime_container.clone().child().with_scope(Session).build().unwrap();
-        let request_container = app_container.clone().child().with_scope(Request).build().unwrap();
-        let action_container = request_container.clone().child().with_scope(Action).build().unwrap();
-        let step_container = action_container.clone().child().with_scope(Step).build().unwrap();
+        let app_container = runtime_container.clone().enter().with_scope(App).build().unwrap();
+        let session_container = runtime_container.clone().enter().with_scope(Session).build().unwrap();
+        let request_container = app_container.clone().enter().with_scope(Request).build().unwrap();
+        let action_container = request_container.clone().enter().with_scope(Action).build().unwrap();
+        let step_container = action_container.clone().enter().with_scope(Step).build().unwrap();
 
         assert_eq!(runtime_container.parent, None);
         assert_eq!(runtime_container.child_registries.len(), 5);
@@ -683,8 +683,8 @@ mod tests {
             });
 
         let mut runtime_container = Container::new(registry);
-        let mut app_container = runtime_container.clone().child().with_scope(App).build().unwrap();
-        let mut request_container = app_container.clone().child().with_scope(Request).build().unwrap();
+        let mut app_container = runtime_container.clone().enter().with_scope(App).build().unwrap();
+        let mut request_container = app_container.clone().enter().with_scope(Request).build().unwrap();
 
         request_container.close();
         app_container.close();
@@ -764,8 +764,8 @@ mod tests {
             });
 
         let runtime_container = Container::new(registry);
-        let app_container = runtime_container.child().with_scope(App).build().unwrap();
-        let mut request_container = app_container.child().with_scope(Request).build().unwrap();
+        let app_container = runtime_container.enter().with_scope(App).build().unwrap();
+        let mut request_container = app_container.enter().with_scope(Request).build().unwrap();
 
         let _ = request_container.get::<()>().unwrap();
         let _ = request_container.get::<((), ())>().unwrap();
@@ -839,8 +839,8 @@ mod tests {
             });
 
         let runtime_container = Container::new(registry).shared();
-        let app_container = runtime_container.child().with_scope(App).build().unwrap().shared();
-        let request_container = app_container.child().with_scope(Request).build().unwrap().shared();
+        let app_container = runtime_container.enter().with_scope(App).build().unwrap().shared();
+        let request_container = app_container.enter().with_scope(Request).build().unwrap().shared();
 
         let _ = request_container.get::<()>().unwrap();
         let _ = request_container.get::<((), ())>().unwrap();
