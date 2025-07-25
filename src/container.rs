@@ -379,8 +379,7 @@ impl Container {
 }
 
 impl Container {
-    /// Creates a shared container that can be used across threads.
-    /// This is useful for scenarios where you want to share the container data.
+    /// Creates a container that can be used in concurrent scenarios
     #[inline]
     #[must_use]
     pub fn shared(self) -> ContainerHandle {
