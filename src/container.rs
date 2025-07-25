@@ -1,10 +1,13 @@
 use alloc::{boxed::Box, sync::Arc};
+use core::mem;
 use parking_lot::Mutex;
 use tracing::debug;
 
-use super::{context::Context, dependency_resolver::DependencyResolver, registry::RegistriesBuilder};
+use super::{cache::Cache, dependency_resolver::DependencyResolver, registry::RegistriesBuilder};
 use crate::{
-    dependency_resolver::{Inject, InjectTransient, Resolved},
+    cache::Resolved,
+    context::Context,
+    dependency_resolver::{Inject, InjectTransient},
     errors::{ResolveErrorKind, ScopeErrorKind, ScopeWithErrorKind},
     registry::{InstantiatorInnerData, Registry},
     scope::Scope,
@@ -14,6 +17,7 @@ use crate::{
 #[derive(Clone)]
 #[cfg_attr(feature = "debug", derive(Debug))]
 pub struct Container {
+    cache: Cache,
     context: Context,
     root_registry: Arc<Registry>,
     child_registries: Box<[Arc<Registry>]>,
@@ -25,6 +29,7 @@ pub struct Container {
 impl PartialEq for Container {
     fn eq(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.root_registry, &other.root_registry)
+            && self.cache == other.cache
             && self.context == other.context
             && self.child_registries.len() == other.child_registries.len()
             && self
@@ -54,6 +59,7 @@ impl Container {
         };
 
         Self {
+            cache: Cache::new(),
             context: Context::new(),
             root_registry,
             child_registries,
@@ -72,7 +78,7 @@ impl Container {
     /// # Warning
     /// This method requires `self` instead of `&self` because it consumes the container,
     /// so be careful when want to clone container before calling this method,
-    /// because these containers will be different and using different state like context,
+    /// because these containers will be different and using different state like cache,
     /// so `close` will not work as expected for parent container that was cloned to create child container and used after.
     #[inline]
     #[must_use]
@@ -85,7 +91,7 @@ impl Container {
     /// # Warning
     /// - This method requires `self` instead of `&self` because it consumes the container,
     ///   so be careful when want to clone container before calling this method,
-    ///   because these containers will be different and using different state like context,
+    ///   because these containers will be different and using different state like cache,
     ///   so `close` will not work as expected for parent container that was cloned to create child container and used after.
     /// - This method skips skipped scopes, if you want to use one of them, use [`ChildContainerBuiler::with_scope`]
     /// - If you want to use specific scope, use [`ChildContainerBuiler::with_scope`]
@@ -106,9 +112,9 @@ impl Container {
     /// and with optional finalizer.
     #[allow(clippy::missing_errors_doc)]
     pub fn get<Dep: Send + Sync + 'static>(&mut self) -> Result<Arc<Dep>, ResolveErrorKind> {
-        match Inject::resolve(self.root_registry.clone(), self.context.clone()) {
-            Ok((Inject(dep), context)) => {
-                self.context = context;
+        match Inject::resolve(self.root_registry.clone(), self.cache.clone()) {
+            Ok((Inject(dep), cache)) => {
+                self.cache = cache;
                 Ok(dep)
             }
             Err(err @ ResolveErrorKind::NoInstantiator) => match &mut self.parent {
@@ -129,9 +135,9 @@ impl Container {
     /// so it should be used for dependencies that are not cached or shared, and without finalizer.
     #[allow(clippy::missing_errors_doc)]
     pub fn get_transient<Dep: 'static>(&mut self) -> Result<Dep, ResolveErrorKind> {
-        match InjectTransient::resolve(self.root_registry.clone(), self.context.clone()) {
-            Ok((InjectTransient(dep), context)) => {
-                self.context = context;
+        match InjectTransient::resolve(self.root_registry.clone(), self.cache.clone()) {
+            Ok((InjectTransient(dep), cache)) => {
+                self.cache = cache;
                 Ok(dep)
             }
             Err(err @ ResolveErrorKind::NoInstantiator) => match &mut self.parent {
@@ -153,7 +159,7 @@ impl Container {
     /// - If the container has a parent, it will also close the parent container if [`Self::close_parent`] is set to `true`
     #[allow(clippy::missing_panics_doc)]
     pub fn close(&mut self) {
-        while let Some(Resolved { type_id, dependency }) = self.context.get_resolved_set_mut().0.pop_back() {
+        while let Some(Resolved { type_id, dependency }) = self.cache.get_resolved_set_mut().0.pop_back() {
             let InstantiatorInnerData { finalizer, .. } = self
                 .root_registry
                 .get_instantiator_data(&type_id)
@@ -164,6 +170,9 @@ impl Container {
                 debug!(?type_id, "Finalizer called");
             }
         }
+
+        // We need to clear cache and fill it with the context as in start of the container usage
+        self.cache.map = self.context.map.clone();
 
         if self.close_parent {
             if let Some(parent) = &mut self.parent {
@@ -217,14 +226,16 @@ impl ChildContainerBuiler {
         use ScopeErrorKind::{NoChildRegistries, NoNonSkippedRegistries};
 
         let mut iter = self.container.child_registries.iter();
-        let registry = iter.next().ok_or(NoChildRegistries)?;
+        let registry = (*iter.next().ok_or(NoChildRegistries)?).clone();
+        let child_registries = iter.cloned().collect();
 
-        let mut child = self.container.init_child(registry.clone(), iter.cloned().collect());
+        let mut child = self.container.init_child(registry, child_registries);
         while child.root_registry.scope.is_skipped_by_default {
             let mut iter = child.child_registries.iter();
-            let registry = iter.next().ok_or(NoNonSkippedRegistries)?;
+            let registry = (*iter.next().ok_or(NoNonSkippedRegistries)?).clone();
+            let child_registries = iter.cloned().collect();
 
-            child = child.init_child(registry.clone(), iter.cloned().collect());
+            child = child.init_child(registry.clone(), child_registries);
         }
 
         Ok(child)
@@ -264,17 +275,20 @@ where
         let priority = self.scope.priority();
 
         let mut iter = self.container.child_registries.iter();
-        let registry = iter.next().ok_or(NoChildRegistries)?;
+        let registry = (*iter.next().ok_or(NoChildRegistries)?).clone();
+        let child_registries = iter.cloned().collect();
 
-        let mut child = self.container.init_child(registry.clone(), iter.cloned().collect());
+        let mut child = self.container.init_child(registry, child_registries);
         while child.root_registry.scope.priority != priority {
             let mut iter = child.child_registries.iter();
-            let registry = iter.next().ok_or(NoChildRegistriesWithScope {
+            let registry = (*iter.next().ok_or(NoChildRegistriesWithScope {
                 name: self.scope.name(),
                 priority,
-            })?;
+            })?)
+            .clone();
+            let child_registries = iter.cloned().collect();
 
-            child = child.init_child(registry.clone(), iter.cloned().collect());
+            child = child.init_child(registry, child_registries);
         }
 
         Ok(child)
@@ -306,18 +320,22 @@ impl ChildContainerWithContext {
     /// # Warning
     /// - This method skips skipped scopes, if you want to use one of them, use [`ChildContainerBuiler::with_scope`]
     /// - If you want to use specific scope, use [`ChildContainerBuiler::with_scope`]
-    pub fn build(self) -> Result<Container, ScopeErrorKind> {
+    pub fn build(mut self) -> Result<Container, ScopeErrorKind> {
         use ScopeErrorKind::{NoChildRegistries, NoNonSkippedRegistries};
 
-        let mut iter = self.container.child_registries.iter();
-        let registry = iter.next().ok_or(NoChildRegistries)?;
+        let context = mem::take(&mut self.context);
 
-        let mut child = self.container.init_child(registry.clone(), iter.cloned().collect());
+        let mut iter = self.container.child_registries.iter();
+        let registry = (*iter.next().ok_or(NoChildRegistries)?).clone();
+        let child_registries = iter.cloned().collect();
+
+        let mut child = self.container.init_child(registry, child_registries);
         while child.root_registry.scope.is_skipped_by_default {
             let mut iter = child.child_registries.iter();
-            let registry = iter.next().ok_or(NoNonSkippedRegistries)?;
+            let registry = (*iter.next().ok_or(NoNonSkippedRegistries)?).clone();
+            let child_registries = iter.cloned().collect();
 
-            child = child.init_child_with_context(self.context.clone(), registry.clone(), iter.cloned().collect());
+            child = child.init_child_with_context(context.clone(), registry, child_registries);
         }
 
         Ok(child)
@@ -342,23 +360,27 @@ where
     ///
     /// # Warning
     /// If you want just to use next non-skipped scope, use [`ChildContainerBuiler::with_scope`]
-    pub fn build(self) -> Result<Container, ScopeWithErrorKind> {
+    pub fn build(mut self) -> Result<Container, ScopeWithErrorKind> {
         use ScopeWithErrorKind::{NoChildRegistries, NoChildRegistriesWithScope};
 
         let priority = self.scope.priority();
+        let context = mem::take(&mut self.context);
 
         let mut iter = self.container.child_registries.iter();
-        let registry = iter.next().ok_or(NoChildRegistries)?;
+        let registry = (*iter.next().ok_or(NoChildRegistries)?).clone();
+        let child_registries = iter.cloned().collect();
 
-        let mut child = self.container.init_child(registry.clone(), iter.cloned().collect());
+        let mut child = self.container.init_child(registry, child_registries);
         while child.root_registry.scope.priority != priority {
             let mut iter = child.child_registries.iter();
-            let registry = iter.next().ok_or(NoChildRegistriesWithScope {
+            let registry = (*iter.next().ok_or(NoChildRegistriesWithScope {
                 name: self.scope.name(),
                 priority,
-            })?;
+            })?)
+            .clone();
+            let child_registries = iter.cloned().collect();
 
-            child = child.init_child_with_context(self.context.clone(), registry.clone(), iter.cloned().collect());
+            child = child.init_child_with_context(context.clone(), registry, child_registries);
         }
 
         Ok(child)
@@ -368,20 +390,35 @@ where
 impl Container {
     #[inline]
     #[must_use]
-    fn init_child_with_context(&self, context: Context, root_registry: Arc<Registry>, child_registries: Box<[Arc<Registry>]>) -> Container {
+    fn init_child_with_context(self, context: Context, root_registry: Arc<Registry>, child_registries: Box<[Arc<Registry>]>) -> Container {
+        let mut cache = self.cache.child();
+        cache.append_context(&context);
+
         Container {
+            cache,
             context,
             root_registry,
             child_registries,
-            parent: Some(Box::new(self.clone())),
+            parent: Some(Box::new(self)),
             close_parent: true,
         }
     }
 
     #[inline]
     #[must_use]
-    fn init_child(&self, root_registry: Arc<Registry>, child_registries: Box<[Arc<Registry>]>) -> Container {
-        self.init_child_with_context(self.context.child(), root_registry, child_registries)
+    fn init_child(mut self, root_registry: Arc<Registry>, child_registries: Box<[Arc<Registry>]>) -> Container {
+        let context = mem::take(&mut self.context);
+        let mut cache = self.cache.child();
+        cache.append_context(&context);
+
+        Container {
+            cache,
+            context,
+            root_registry,
+            child_registries,
+            parent: Some(Box::new(self)),
+            close_parent: true,
+        }
     }
 }
 
@@ -413,7 +450,7 @@ mod handle {
         ///
         /// # Warning
         /// - The container is cloned before creating a child container,
-        ///   so the child container will have its own state like context,
+        ///   so the child container will have its own state like cache,
         ///   so `close` will not work as expected for the container that was cloned to create child container and used after.
         /// - `self` instead of `&self` is used to warn about this behavior
         #[inline]
@@ -426,7 +463,7 @@ mod handle {
         ///
         /// # Warning
         /// - The container is cloned before creating a child container,
-        ///   so the child container will have its own state like context,
+        ///   so the child container will have its own state like cache,
         ///   so `close` will not work as expected for the container that was cloned to create child container and used after.
         /// - `self` instead of `&self` is used to warn about this behavior
         /// - This method skips skipped scopes, if you want to use one of them, use [`ChildContainerBuiler::with_scope`]
@@ -785,12 +822,12 @@ mod tests {
             .parent
             .as_ref()
             .unwrap()
-            .context
+            .cache
             .get_resolved_set()
             .0
             .len();
-        let app_container_resolved_set_count = request_container.parent.as_ref().unwrap().context.get_resolved_set().0.len();
-        let request_container_resolved_set_count = request_container.context.get_resolved_set().0.len();
+        let app_container_resolved_set_count = request_container.parent.as_ref().unwrap().cache.get_resolved_set().0.len();
+        let request_container_resolved_set_count = request_container.cache.get_resolved_set().0.len();
 
         request_container.close();
 

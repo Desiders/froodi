@@ -3,7 +3,7 @@ use core::any::Any;
 use tracing::debug;
 
 use super::{
-    context::Context,
+    cache::Cache,
     dependency_resolver::DependencyResolver,
     errors::{InstantiateErrorKind, InstantiatorErrorKind},
     service::{service_fn, BoxCloneService},
@@ -41,19 +41,19 @@ impl Default for Config {
 
 pub(crate) struct Request {
     registry: Arc<Registry>,
-    context: Context,
+    cache: Cache,
 }
 
 impl Request {
     #[inline]
     #[must_use]
-    pub(crate) const fn new(registry: Arc<Registry>, context: Context) -> Self {
-        Self { registry, context }
+    pub(crate) const fn new(registry: Arc<Registry>, cache: Cache) -> Self {
+        Self { registry, cache }
     }
 }
 
 pub(crate) type BoxedCloneInstantiator<DepsErr, FactoryErr> =
-    BoxCloneService<Request, (Box<dyn Any>, Context), InstantiatorErrorKind<DepsErr, FactoryErr>>;
+    BoxCloneService<Request, (Box<dyn Any>, Cache), InstantiatorErrorKind<DepsErr, FactoryErr>>;
 
 #[must_use]
 pub(crate) fn boxed_instantiator_factory<Inst, Deps>(instantiator: Inst) -> BoxedCloneInstantiator<Deps::Error, Inst::Error>
@@ -62,8 +62,8 @@ where
     Deps: DependencyResolver,
 {
     BoxCloneService(Box::new(service_fn({
-        move |Request { registry, context }| {
-            let (dependencies, context) = match Deps::resolve(registry, context) {
+        move |Request { registry, cache }| {
+            let (dependencies, cache) = match Deps::resolve(registry, cache) {
                 Ok(dependencies) => dependencies,
                 Err(err) => return Err(InstantiatorErrorKind::Deps(err)),
             };
@@ -74,7 +74,7 @@ where
 
             debug!("Resolved");
 
-            Ok((Box::new(dependency) as _, context))
+            Ok((Box::new(dependency) as _, cache))
         }
     })))
 }
@@ -116,7 +116,7 @@ pub const fn instance<T: Clone + 'static>(val: T) -> impl Instantiator<(), Error
 mod tests {
     extern crate std;
 
-    use super::{boxed_instantiator_factory, Context, DependencyResolver, InstantiateErrorKind, Instantiator};
+    use super::{boxed_instantiator_factory, Cache, DependencyResolver, InstantiateErrorKind, Instantiator};
     use crate::{
         dependency_resolver::{Inject, InjectTransient},
         scope::DefaultScope::*,
@@ -181,10 +181,10 @@ mod tests {
         } else {
             panic!("registries len (is 0) should be >= 1");
         };
-        let context = Context::new();
+        let cache = Cache::new();
 
-        let (response_1, context) = instantiator_response.call(super::Request::new(registry.clone(), context)).unwrap();
-        let (response_2, _) = instantiator_response.call(super::Request::new(registry, context)).unwrap();
+        let (response_1, cache) = instantiator_response.call(super::Request::new(registry.clone(), cache)).unwrap();
+        let (response_2, _) = instantiator_response.call(super::Request::new(registry, cache)).unwrap();
 
         assert!(response_1.downcast::<Response>().unwrap().0);
         assert!(response_2.downcast::<Response>().unwrap().0);
@@ -228,11 +228,11 @@ mod tests {
         } else {
             panic!("registries len (is 0) should be >= 1");
         };
-        let context = Context::new();
+        let cache = Cache::new();
 
-        let (response_1, context) = instantiator_response.call(super::Request::new(registry.clone(), context)).unwrap();
-        let (response_2, context) = instantiator_response.call(super::Request::new(registry.clone(), context)).unwrap();
-        let (response_3, _) = instantiator_response.call(super::Request::new(registry, context)).unwrap();
+        let (response_1, cache) = instantiator_response.call(super::Request::new(registry.clone(), cache)).unwrap();
+        let (response_2, cache) = instantiator_response.call(super::Request::new(registry.clone(), cache)).unwrap();
+        let (response_3, _) = instantiator_response.call(super::Request::new(registry, cache)).unwrap();
 
         assert!(response_1.downcast::<Response>().unwrap().0);
         assert!(response_2.downcast::<Response>().unwrap().0);

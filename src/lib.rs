@@ -5,6 +5,8 @@ extern crate alloc;
 #[macro_use]
 pub(crate) mod macros;
 
+pub(crate) mod any;
+pub(crate) mod cache;
 pub(crate) mod container;
 pub(crate) mod context;
 pub(crate) mod dependency_resolver;
