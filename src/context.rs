@@ -1,13 +1,12 @@
 use alloc::{boxed::Box, sync::Arc};
 use core::any::TypeId;
 
-use crate::dependency_resolver::{Resolved, ResolvedSet};
+use crate::any;
 
 #[derive(Clone)]
 #[cfg_attr(feature = "debug", derive(Debug))]
 pub struct Context {
-    map: Option<Box<any::Map>>,
-    resolved: ResolvedSet,
+    pub(crate) map: Option<Box<any::Map>>,
 }
 
 #[cfg(feature = "eq")]
@@ -41,12 +40,10 @@ impl Default for Context {
 }
 
 impl Context {
+    #[inline]
     #[must_use]
     pub const fn new() -> Self {
-        Self {
-            map: None,
-            resolved: ResolvedSet::new(),
-        }
+        Self { map: None }
     }
 
     #[inline]
@@ -64,60 +61,4 @@ impl Context {
             .insert(TypeId::of::<T>(), value)
             .and_then(|boxed| boxed.downcast().ok())
     }
-
-    #[inline]
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.map.as_ref().is_none_or(|map| map.is_empty())
-    }
-
-    #[inline]
-    #[must_use]
-    pub fn len(&self) -> usize {
-        self.map.as_ref().map_or(0, |map| map.len())
-    }
-}
-
-impl Context {
-    #[inline]
-    #[must_use]
-    pub(crate) fn child(&self) -> Self {
-        Self {
-            map: self.map.clone(),
-            resolved: ResolvedSet::new(),
-        }
-    }
-
-    #[must_use]
-    pub(crate) fn get<T: Send + Sync + 'static>(&self, type_id: &TypeId) -> Option<Arc<T>> {
-        self.map
-            .as_ref()
-            .and_then(|map| map.get(type_id))
-            .and_then(|boxed| boxed.clone().downcast().ok())
-    }
-
-    #[inline]
-    pub(crate) fn push_resolved(&mut self, resolved: Resolved) {
-        self.resolved.push(resolved);
-    }
-
-    #[inline]
-    #[must_use]
-    #[cfg(test)]
-    pub(crate) const fn get_resolved_set(&self) -> &ResolvedSet {
-        &self.resolved
-    }
-
-    #[inline]
-    #[must_use]
-    pub(crate) const fn get_resolved_set_mut(&mut self) -> &mut ResolvedSet {
-        &mut self.resolved
-    }
-}
-
-mod any {
-    use alloc::{collections::BTreeMap, sync::Arc};
-    use core::any::{Any, TypeId};
-
-    pub(super) type Map = BTreeMap<TypeId, Arc<dyn Any + Send + Sync>>;
 }

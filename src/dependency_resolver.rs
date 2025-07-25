@@ -1,20 +1,22 @@
-use alloc::{boxed::Box, collections::vec_deque::VecDeque, sync::Arc};
-use core::any::{type_name, Any, TypeId};
+use alloc::{boxed::Box, sync::Arc};
+use core::any::{type_name, TypeId};
 use tracing::{debug, debug_span, error, warn};
 
-use crate::registry::{InstantiatorInnerData, Registry};
-
 use super::{
-    context::Context,
+    cache::Cache,
     errors::{InstantiatorErrorKind, ResolveErrorKind},
     instantiator::Request,
     service::Service as _,
+};
+use crate::{
+    cache::Resolved,
+    registry::{InstantiatorInnerData, Registry},
 };
 
 pub(crate) trait DependencyResolver: Sized {
     type Error: Into<ResolveErrorKind>;
 
-    fn resolve(registry: Arc<Registry>, context: Context) -> Result<(Self, Context), Self::Error>;
+    fn resolve(registry: Arc<Registry>, cache: Cache) -> Result<(Self, Cache), Self::Error>;
 }
 
 pub struct Inject<Dep>(pub Arc<Dep>);
@@ -22,17 +24,17 @@ pub struct Inject<Dep>(pub Arc<Dep>);
 impl<Dep: Send + Sync + 'static> DependencyResolver for Inject<Dep> {
     type Error = ResolveErrorKind;
 
-    fn resolve(registry: Arc<Registry>, context: Context) -> Result<(Self, Context), Self::Error> {
+    fn resolve(registry: Arc<Registry>, cache: Cache) -> Result<(Self, Cache), Self::Error> {
         let span = debug_span!("resolve", dependency = type_name::<Dep>());
         let _guard = span.enter();
 
         let type_id = TypeId::of::<Dep>();
 
-        if let Some(dependency) = context.get(&type_id) {
-            debug!("Found in context");
-            return Ok((Self(dependency), context));
+        if let Some(dependency) = cache.get(&type_id) {
+            debug!("Found in cache");
+            return Ok((Self(dependency), cache));
         }
-        debug!("Not found in context");
+        debug!("Not found in cache");
 
         let Some(InstantiatorInnerData {
             mut instantiator,
@@ -45,22 +47,22 @@ impl<Dep: Send + Sync + 'static> DependencyResolver for Inject<Dep> {
             return Err(err);
         };
 
-        match instantiator.call(Request::new(registry, context)) {
-            Ok((dependency, mut context)) => match dependency.downcast::<Dep>() {
+        match instantiator.call(Request::new(registry, cache)) {
+            Ok((dependency, mut cache)) => match dependency.downcast::<Dep>() {
                 Ok(dependency) => {
                     let dependency = Arc::new(*dependency);
                     if config.cache_provides {
-                        context.insert_rc(dependency.clone());
+                        cache.insert_rc(dependency.clone());
                         debug!("Cached");
                     }
                     if finalizer.is_some() {
-                        context.push_resolved(Resolved {
+                        cache.push_resolved(Resolved {
                             type_id,
                             dependency: dependency.clone(),
                         });
                         debug!("Pushed to resolved set");
                     }
-                    Ok((Self(dependency), context))
+                    Ok((Self(dependency), cache))
                 }
                 Err(incorrect_type) => {
                     let err = ResolveErrorKind::IncorrectType {
@@ -88,7 +90,7 @@ pub struct InjectTransient<Dep>(pub Dep);
 impl<Dep: 'static> DependencyResolver for InjectTransient<Dep> {
     type Error = ResolveErrorKind;
 
-    fn resolve(registry: Arc<Registry>, context: Context) -> Result<(Self, Context), Self::Error> {
+    fn resolve(registry: Arc<Registry>, cache: Cache) -> Result<(Self, Cache), Self::Error> {
         let span = debug_span!("resolve", dependency = type_name::<Dep>());
         let _guard = span.enter();
 
@@ -100,9 +102,9 @@ impl<Dep: 'static> DependencyResolver for InjectTransient<Dep> {
             return Err(err);
         };
 
-        match instantiator.call(Request::new(registry, context)) {
-            Ok((dependency, context)) => match dependency.downcast::<Dep>() {
-                Ok(dependency) => Ok((Self(*dependency as _), context)),
+        match instantiator.call(Request::new(registry, cache)) {
+            Ok((dependency, cache)) => match dependency.downcast::<Dep>() {
+                Ok(dependency) => Ok((Self(*dependency as _), cache)),
                 Err(incorrect_type) => {
                     let err = ResolveErrorKind::IncorrectType {
                         expected: type_id,
@@ -137,19 +139,19 @@ macro_rules! impl_dependency_resolver {
 
             #[inline]
             #[allow(unused_variables)]
-            fn resolve(registry: Arc<Registry>, context: Context) -> Result<(Self, Context), Self::Error> {
-                let mut context = context;
+            fn resolve(registry: Arc<Registry>, cache: Cache) -> Result<(Self, Cache), Self::Error> {
+                let mut cache = cache;
                 Ok((
                     (
                         $(
                             {
-                                let ($ty, updated_context) = $ty::resolve(registry.clone(), context).map_err(Into::into)?;
-                                context = updated_context;
+                                let ($ty, updated_cache) = $ty::resolve(registry.clone(), cache).map_err(Into::into)?;
+                                cache = updated_cache;
                                 $ty
                             }
                         ,)*
                     ),
-                    context,
+                    cache,
                 ))
             }
         }
@@ -158,32 +160,11 @@ macro_rules! impl_dependency_resolver {
 
 all_the_tuples!(impl_dependency_resolver);
 
-#[derive(Clone)]
-#[cfg_attr(feature = "debug", derive(Debug))]
-pub(crate) struct Resolved {
-    pub(crate) type_id: TypeId,
-    pub(crate) dependency: Arc<dyn Any + Send + Sync>,
-}
-
-#[derive(Clone)]
-#[cfg_attr(feature = "debug", derive(Debug))]
-pub(crate) struct ResolvedSet(pub(crate) VecDeque<Resolved>);
-
-impl ResolvedSet {
-    pub(crate) const fn new() -> Self {
-        Self(VecDeque::new())
-    }
-
-    pub(crate) fn push(&mut self, resolved: Resolved) {
-        self.0.push_back(resolved);
-    }
-}
-
 #[cfg(test)]
 mod tests {
     extern crate std;
 
-    use super::{Context, DependencyResolver, Inject, InjectTransient};
+    use super::{Cache, DependencyResolver, Inject, InjectTransient};
     use crate::{errors::InstantiateErrorKind, instance, scope::DefaultScope::*, RegistriesBuilder};
 
     use alloc::{
@@ -238,11 +219,11 @@ mod tests {
             panic!("registries len (is 0) should be >= 1");
         };
 
-        let context = Context::new();
+        let cache = Cache::new();
 
-        let (request_1, context) = Inject::<Request>::resolve(registry.clone(), context).unwrap();
-        let (request_2, context) = Inject::<Request>::resolve(registry.clone(), context).unwrap();
-        let (_, _) = Inject::<Instance>::resolve(registry, context).unwrap();
+        let (request_1, cache) = Inject::<Request>::resolve(registry.clone(), cache).unwrap();
+        let (request_2, cache) = Inject::<Request>::resolve(registry.clone(), cache).unwrap();
+        let (_, _) = Inject::<Instance>::resolve(registry, cache).unwrap();
 
         assert!(Arc::ptr_eq(&request_1.0, &request_2.0));
         assert_eq!(instantiator_request_call_count.load(Ordering::SeqCst), 1);
@@ -272,10 +253,10 @@ mod tests {
         } else {
             panic!("registries len (is 0) should be >= 1");
         };
-        let context = Context::new();
+        let cache = Cache::new();
 
-        let (_, context) = InjectTransient::<Request>::resolve(registry.clone(), context).unwrap();
-        InjectTransient::<Request>::resolve(registry, context).unwrap();
+        let (_, cache) = InjectTransient::<Request>::resolve(registry.clone(), cache).unwrap();
+        InjectTransient::<Request>::resolve(registry, cache).unwrap();
 
         assert_eq!(instantiator_request_call_count.load(Ordering::SeqCst), 2);
     }
