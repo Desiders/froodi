@@ -174,6 +174,13 @@ impl Container {
     }
 }
 
+impl Drop for Container {
+    fn drop(&mut self) {
+        self.close();
+        debug!("Container closed on drop");
+    }
+}
+
 pub struct ChildContainerBuiler {
     container: Container,
 }
