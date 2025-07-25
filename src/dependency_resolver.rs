@@ -184,7 +184,7 @@ mod tests {
     extern crate std;
 
     use super::{Context, DependencyResolver, Inject, InjectTransient};
-    use crate::{errors::InstantiateErrorKind, scope::DefaultScope, RegistriesBuilder};
+    use crate::{errors::InstantiateErrorKind, instance, scope::DefaultScope::*, RegistriesBuilder};
 
     use alloc::{
         format,
@@ -196,6 +196,9 @@ mod tests {
     use tracing_test::traced_test;
 
     struct Request;
+
+    #[derive(Clone)]
+    struct Instance;
 
     #[test]
     #[allow(dead_code)]
@@ -213,18 +216,20 @@ mod tests {
     fn test_scoped_resolve() {
         let instantiator_request_call_count = Arc::new(AtomicU8::new(0));
 
-        let registries_builder = RegistriesBuilder::new().provide(
-            {
-                let instantiator_request_call_count = instantiator_request_call_count.clone();
-                move || {
-                    instantiator_request_call_count.fetch_add(1, Ordering::SeqCst);
+        let registries_builder = RegistriesBuilder::new()
+            .provide(
+                {
+                    let instantiator_request_call_count = instantiator_request_call_count.clone();
+                    move || {
+                        instantiator_request_call_count.fetch_add(1, Ordering::SeqCst);
 
-                    debug!("Call instantiator request");
-                    Ok::<_, InstantiateErrorKind>(Request)
-                }
-            },
-            DefaultScope::App,
-        );
+                        debug!("Call instantiator request");
+                        Ok::<_, InstantiateErrorKind>(Request)
+                    }
+                },
+                App,
+            )
+            .provide(instance(Instance), App);
 
         let mut registries = registries_builder.build().into_iter();
         let registry = if let Some(root_registry) = registries.next() {
@@ -236,7 +241,8 @@ mod tests {
         let context = Context::new();
 
         let (request_1, context) = Inject::<Request>::resolve(registry.clone(), context).unwrap();
-        let (request_2, _) = Inject::<Request>::resolve(registry, context).unwrap();
+        let (request_2, context) = Inject::<Request>::resolve(registry.clone(), context).unwrap();
+        let (_, _) = Inject::<Instance>::resolve(registry, context).unwrap();
 
         assert!(Arc::ptr_eq(&request_1.0, &request_2.0));
         assert_eq!(instantiator_request_call_count.load(Ordering::SeqCst), 1);
@@ -257,7 +263,7 @@ mod tests {
                     Ok::<_, InstantiateErrorKind>(Request)
                 }
             },
-            DefaultScope::App,
+            App,
         );
 
         let mut registries = registries_builder.build().into_iter();
