@@ -34,20 +34,20 @@ fn container_new_with_registries_builder() -> Container {
 
 #[inline]
 fn container_child_with_scope(runtime_container: Container) {
-    let app_container = runtime_container.child().with_scope(App).build().unwrap();
-    let session_container = app_container.child().with_scope(Session).build().unwrap();
-    let request_container = session_container.child().with_scope(Request).build().unwrap();
-    let action_container = request_container.child().with_scope(Action).build().unwrap();
-    let _ = action_container.child().with_scope(Step).build().unwrap();
+    let app_container = runtime_container.enter().with_scope(App).build().unwrap();
+    let session_container = app_container.enter().with_scope(Session).build().unwrap();
+    let request_container = session_container.enter().with_scope(Request).build().unwrap();
+    let action_container = request_container.enter().with_scope(Action).build().unwrap();
+    let _ = action_container.enter().with_scope(Step).build().unwrap();
 }
 
 #[inline]
 fn container_child_with_hierarchy(runtime_container: Container) {
-    let app_container = runtime_container.child().with_scope(App).build().unwrap();
-    let session_container = app_container.child().with_scope(Session).build().unwrap();
-    let request_container = session_container.child().with_scope(Request).build().unwrap();
-    let action_container = request_container.child().with_scope(Action).build().unwrap();
-    let _ = action_container.child().with_scope(Step).build().unwrap();
+    let app_container = runtime_container.enter().with_scope(App).build().unwrap();
+    let session_container = app_container.enter().with_scope(Session).build().unwrap();
+    let request_container = session_container.enter().with_scope(Request).build().unwrap();
+    let action_container = request_container.enter().with_scope(Action).build().unwrap();
+    let _ = action_container.enter().with_scope(Step).build().unwrap();
 }
 
 #[inline]
