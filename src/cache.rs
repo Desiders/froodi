@@ -53,9 +53,8 @@ impl Cache {
 
     #[inline]
     pub(crate) fn append_context(&mut self, context: &Context) {
-        match (&mut self.map, context.map.as_ref()) {
-            (Some(cache), Some(context)) => cache.append(&mut (*context).clone()),
-            _ => {}
+        if let (Some(cache), Some(context)) = (&mut self.map, context.map.as_ref()) {
+            cache.append(&mut (*context).clone());
         }
     }
 

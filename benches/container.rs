@@ -51,12 +51,12 @@ fn container_child_with_hierarchy(runtime_container: Container) {
 }
 
 #[inline]
-fn container_get(container: &mut Container) {
+fn container_get(container: &Container) {
     let _ = container.get::<A>().unwrap();
 }
 
 #[inline]
-fn container_close(container: &mut Container) {
+fn container_close(container: &Container) {
     let _ = container.get::<A>().unwrap();
 
     container.close();
