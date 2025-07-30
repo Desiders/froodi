@@ -1,17 +1,18 @@
-use alloc::{boxed::Box, sync::Arc};
-use core::mem;
-use parking_lot::Mutex;
-use tracing::debug;
+use core::any::{type_name, TypeId};
 
-use super::{cache::Cache, dependency_resolver::DependencyResolver, registry::RegistriesBuilder};
+use alloc::{boxed::Box, sync::Arc};
+use parking_lot::Mutex;
+use tracing::{debug, debug_span, error, warn};
+
+use super::{cache::Cache, registry::RegistriesBuilder};
 use crate::{
     cache::Resolved,
     context::Context,
-    dependency_resolver::{Inject, InjectTransient},
     errors::{ResolveErrorKind, ScopeErrorKind, ScopeWithErrorKind},
     registry::{InstantiatorInnerData, Registry},
     scope::Scope,
     service::Service as _,
+    InstantiatorErrorKind,
 };
 
 #[derive(Clone)]
@@ -23,6 +24,40 @@ struct ContainerInner {
     child_registries: Box<[Arc<Registry>]>,
     parent: Option<Container>,
     close_parent: bool,
+}
+
+impl ContainerInner {
+    /// Closes the container, calling finalizers for resolved dependencies in LIFO order.
+    ///
+    /// # Warning
+    /// This method can be called multiple times, but it will only call finalizers for dependencies that were resolved since the last call
+    #[allow(clippy::missing_panics_doc)]
+    pub fn close(&mut self) {
+        while let Some(Resolved { type_id, dependency }) = self.cache.get_resolved_set_mut().0.pop_back() {
+            let InstantiatorInnerData { finalizer, .. } = self
+                .root_registry
+                .get_instantiator_data(&type_id)
+                .expect("Instantiator should be present for resolved type");
+
+            if let Some(mut finalizer) = finalizer {
+                let _ = finalizer.call(dependency);
+                debug!(?type_id, "Finalizer called");
+            }
+        }
+
+        // We need to clear cache and fill it with the context as in start of the container usage
+        #[allow(clippy::assigning_clones)]
+        {
+            self.cache.map = self.context.map.clone();
+        }
+
+        if self.close_parent {
+            if let Some(parent) = &self.parent {
+                parent.close();
+                debug!("Parent container closed");
+            }
+        }
+    }
 }
 
 #[cfg(feature = "eq")]
@@ -43,6 +78,13 @@ impl PartialEq for ContainerInner {
 
 #[cfg(feature = "eq")]
 impl Eq for ContainerInner {}
+
+impl Drop for ContainerInner {
+    fn drop(&mut self) {
+        self.close();
+        debug!("Container closed on drop");
+    }
+}
 
 #[derive(Clone)]
 #[cfg_attr(feature = "debug", derive(Debug))]
@@ -116,21 +158,80 @@ impl Container {
     /// and with optional finalizer.
     #[allow(clippy::missing_errors_doc)]
     pub fn get<Dep: Send + Sync + 'static>(&self) -> Result<Arc<Dep>, ResolveErrorKind> {
-        let mut inner = self.inner.lock();
+        let span = debug_span!("resolve", dependency = type_name::<Dep>());
+        let _guard = span.enter();
 
-        match Inject::resolve(inner.root_registry.clone(), inner.cache.clone()) {
-            Ok((Inject(dep), cache)) => {
-                inner.cache = cache;
-                Ok(dep)
+        let type_id = TypeId::of::<Dep>();
+
+        if let Some(dependency) = self.inner.lock().cache.get(&type_id) {
+            debug!("Found in cache");
+            return Ok(dependency);
+        }
+        debug!("Not found in cache");
+
+        let guard = self.inner.lock();
+        let Some(InstantiatorInnerData {
+            mut instantiator,
+            finalizer,
+            config,
+        }) = guard.root_registry.get_instantiator_data(&type_id)
+        else {
+            if let Some(parent) = &guard.parent {
+                debug!("No instantiator found, trying parent container");
+                return match parent.get::<Dep>() {
+                    Ok(dependency) => {
+                        drop(guard);
+                        let mut guard = self.inner.lock();
+                        guard.cache.insert_rc(dependency.clone());
+                        Ok(dependency)
+                    }
+                    Err(err) => Err(err),
+                };
             }
-            Err(err @ ResolveErrorKind::NoInstantiator) => match &inner.parent {
-                Some(parent) => {
-                    debug!("No instantiator found, trying parent container");
-                    parent.get()
+            drop(guard);
+
+            let err = ResolveErrorKind::NoInstantiator;
+            warn!("{}", err);
+            return Err(err);
+        };
+        drop(guard);
+
+        match instantiator.call(self.clone()) {
+            Ok(dependency) => match dependency.downcast::<Dep>() {
+                Ok(dependency) => {
+                    let dependency = Arc::new(*dependency);
+                    let mut guard = self.inner.lock();
+                    if config.cache_provides {
+                        guard.cache.insert_rc(dependency.clone());
+                        debug!("Cached");
+                    }
+                    if finalizer.is_some() {
+                        guard.cache.push_resolved(Resolved {
+                            type_id,
+                            dependency: dependency.clone(),
+                        });
+                        debug!("Pushed to resolved set");
+                    }
+                    drop(guard);
+                    Ok(dependency)
                 }
-                None => Err(err),
+                Err(incorrect_type) => {
+                    let err = ResolveErrorKind::IncorrectType {
+                        expected: type_id,
+                        actual: (*incorrect_type).type_id(),
+                    };
+                    error!("{}", err);
+                    Err(err)
+                }
             },
-            Err(err) => Err(err),
+            Err(InstantiatorErrorKind::Deps(err)) => {
+                error!("{}", err);
+                Err(ResolveErrorKind::Instantiator(InstantiatorErrorKind::Deps(Box::new(err))))
+            }
+            Err(InstantiatorErrorKind::Factory(err)) => {
+                error!("{}", err);
+                Err(ResolveErrorKind::Instantiator(InstantiatorErrorKind::Factory(err)))
+            }
         }
     }
 
@@ -141,58 +242,54 @@ impl Container {
     /// so it should be used for dependencies that are not cached or shared, and without finalizer.
     #[allow(clippy::missing_errors_doc)]
     pub fn get_transient<Dep: 'static>(&self) -> Result<Dep, ResolveErrorKind> {
-        let mut inner = self.inner.lock();
+        let span = debug_span!("resolve", dependency = type_name::<Dep>());
+        let _guard = span.enter();
 
-        match InjectTransient::resolve(inner.root_registry.clone(), inner.cache.clone()) {
-            Ok((InjectTransient(dep), cache)) => {
-                inner.cache = cache;
-                Ok(dep)
+        let type_id = TypeId::of::<Dep>();
+
+        let guard = self.inner.lock();
+        let Some(mut instantiator) = guard.root_registry.get_instantiator(&type_id) else {
+            if let Some(parent) = &guard.parent {
+                debug!("No instantiator found, trying parent container");
+                return parent.get_transient();
             }
-            Err(err @ ResolveErrorKind::NoInstantiator) => match &inner.parent {
-                Some(parent) => {
-                    debug!("No instantiator found, trying parent container");
-                    parent.get_transient()
+            drop(guard);
+
+            let err = ResolveErrorKind::NoInstantiator;
+            warn!("{}", err);
+            return Err(err);
+        };
+        drop(guard);
+
+        match instantiator.call(self.clone()) {
+            Ok(dependency) => match dependency.downcast::<Dep>() {
+                Ok(dependency) => Ok(*dependency),
+                Err(incorrect_type) => {
+                    let err = ResolveErrorKind::IncorrectType {
+                        expected: type_id,
+                        actual: (*incorrect_type).type_id(),
+                    };
+                    error!("{}", err);
+                    Err(err)
                 }
-                None => Err(err),
             },
-            Err(err) => Err(err),
+            Err(InstantiatorErrorKind::Deps(err)) => {
+                error!("{}", err);
+                Err(ResolveErrorKind::Instantiator(InstantiatorErrorKind::Deps(Box::new(err))))
+            }
+            Err(InstantiatorErrorKind::Factory(err)) => {
+                error!("{}", err);
+                Err(ResolveErrorKind::Instantiator(InstantiatorErrorKind::Factory(err)))
+            }
         }
     }
 
     /// Closes the container, calling finalizers for resolved dependencies in LIFO order.
     ///
     /// # Warning
-    /// - This method can be called multiple times, but it will only call finalizers for dependencies that were resolved since the last call
-    ///
-    /// - If the container has a parent, it will also close the parent container if [`Self::close_parent`] is set to `true`
-    #[allow(clippy::missing_panics_doc)]
+    /// This method can be called multiple times, but it will only call finalizers for dependencies that were resolved since the last call
     pub fn close(&self) {
-        let mut inner = self.inner.lock();
-
-        while let Some(Resolved { type_id, dependency }) = inner.cache.get_resolved_set_mut().0.pop_back() {
-            let InstantiatorInnerData { finalizer, .. } = inner
-                .root_registry
-                .get_instantiator_data(&type_id)
-                .expect("Instantiator should be present for resolved type");
-
-            if let Some(mut finalizer) = finalizer {
-                let _ = finalizer.call(dependency);
-                debug!(?type_id, "Finalizer called");
-            }
-        }
-
-        // We need to clear cache and fill it with the context as in start of the container usage
-        #[allow(clippy::assigning_clones)]
-        {
-            inner.cache.map = inner.context.map.clone();
-        }
-
-        if inner.close_parent {
-            if let Some(parent) = &inner.parent {
-                parent.close();
-                debug!("Parent container closed");
-            }
-        }
+        self.inner.lock().close();
     }
 }
 
@@ -228,10 +325,10 @@ impl Container {
     #[inline]
     #[must_use]
     fn init_child(self, root_registry: Arc<Registry>, child_registries: Box<[Arc<Registry>]>, close_parent: bool) -> Container {
-        let mut inner = self.inner.lock();
+        let inner = self.inner.lock();
 
-        let context = mem::take(&mut inner.context);
         let mut cache = inner.cache.child();
+        let context = inner.context.clone();
         cache.append_context(&context);
 
         drop(inner);
@@ -246,13 +343,6 @@ impl Container {
                 close_parent,
             })),
         }
-    }
-}
-
-impl Drop for Container {
-    fn drop(&mut self) {
-        self.close();
-        debug!("Container closed on drop");
     }
 }
 
@@ -493,8 +583,8 @@ where
 mod tests {
     extern crate std;
 
-    use super::{Container, Inject, InjectTransient, RegistriesBuilder};
-    use crate::{container::ContainerInner, scope::DefaultScope::*, Scope};
+    use super::{Container, RegistriesBuilder};
+    use crate::{container::ContainerInner, scope::DefaultScope::*, Inject, InjectTransient, Scope};
 
     use alloc::{
         format,
@@ -522,24 +612,28 @@ mod tests {
         struct CAAAAA;
 
         let registry = RegistriesBuilder::new()
-            .provide(|| (Ok(CAAAAA)), Request)
-            .provide(|Inject(caaaaa): Inject<CAAAAA>| Ok(CAAAA(caaaaa)), Request)
-            .provide(|Inject(caaaa): Inject<CAAAA>| Ok(CAAA(caaaa)), Request)
+            .provide(|| (Ok(CAAAAA)), Runtime)
+            .provide(|Inject(caaaaa): Inject<CAAAAA>| Ok(CAAAA(caaaaa)), App)
+            .provide(|Inject(caaaa): Inject<CAAAA>| Ok(CAAA(caaaa)), Session)
             .provide(|Inject(caaa): Inject<CAAA>| Ok(CAA(caaa)), Request)
             .provide(|Inject(caa): Inject<CAA>| Ok(CA(caa)), Request)
-            .provide(|Inject(ca): Inject<CA>| Ok(C(ca)), Request)
-            .provide(|| Ok(B(2)), Request)
-            .provide(|Inject(b): Inject<B>, Inject(c): Inject<C>| Ok(A(b, c)), Request);
-        let container = Container::new(registry);
+            .provide(|Inject(ca): Inject<CA>| Ok(C(ca)), Action)
+            .provide(|| Ok(B(2)), App)
+            .provide(|Inject(b): Inject<B>, Inject(c): Inject<C>| Ok(A(b, c)), Step);
+        let runtime_container = Container::new(registry);
+        let app_container = runtime_container.clone().enter_build().unwrap();
+        let request_container = app_container.clone().enter_build().unwrap();
+        let action_container = request_container.clone().enter_build().unwrap();
+        let step_container = action_container.clone().enter_build().unwrap();
 
-        let _ = container.get::<A>().unwrap();
-        let _ = container.get::<CAAAAA>().unwrap();
-        let _ = container.get::<CAAAA>().unwrap();
-        let _ = container.get::<CAAA>().unwrap();
-        let _ = container.get::<CAA>().unwrap();
-        let _ = container.get::<CA>().unwrap();
-        let _ = container.get::<C>().unwrap();
-        let _ = container.get::<B>().unwrap();
+        let _ = step_container.get::<A>().unwrap();
+        let _ = step_container.get::<CAAAAA>().unwrap();
+        let _ = step_container.get::<CAAAA>().unwrap();
+        let _ = step_container.get::<CAAA>().unwrap();
+        let _ = step_container.get::<CAA>().unwrap();
+        let _ = step_container.get::<CA>().unwrap();
+        let _ = step_container.get::<C>().unwrap();
+        let _ = step_container.get::<B>().unwrap();
     }
 
     struct RequestTransient1;
@@ -550,22 +644,27 @@ mod tests {
     #[traced_test]
     fn test_transient_get() {
         let registry = RegistriesBuilder::new()
-            .provide(|| Ok(RequestTransient1), Runtime)
+            .provide(|| Ok(RequestTransient1), App)
             .provide(
                 |InjectTransient(req): InjectTransient<RequestTransient1>| Ok(RequestTransient2(req)),
-                Runtime,
+                Request,
             )
             .provide(
                 |InjectTransient(req_1): InjectTransient<RequestTransient1>, InjectTransient(req_2): InjectTransient<RequestTransient2>| {
                     Ok(RequestTransient3(req_1, req_2))
                 },
-                Runtime,
+                Request,
             );
-        let container = Container::new(registry);
+        let app_container = Container::new(registry);
+        let request_container = app_container.clone().enter().with_scope(Request).build().unwrap();
 
-        container.get_transient::<RequestTransient1>().unwrap();
-        container.get_transient::<RequestTransient2>().unwrap();
-        container.get_transient::<RequestTransient3>().unwrap();
+        assert!(app_container.get_transient::<RequestTransient1>().is_ok());
+        assert!(app_container.get_transient::<RequestTransient2>().is_err());
+        assert!(app_container.get_transient::<RequestTransient3>().is_err());
+
+        assert!(request_container.get_transient::<RequestTransient1>().is_ok());
+        assert!(request_container.get_transient::<RequestTransient2>().is_ok());
+        assert!(request_container.get_transient::<RequestTransient3>().is_ok());
     }
 
     #[test]

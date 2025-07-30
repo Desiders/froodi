@@ -1,14 +1,13 @@
-use alloc::{boxed::Box, sync::Arc};
+use alloc::boxed::Box;
 use core::any::Any;
 use tracing::debug;
 
 use super::{
-    cache::Cache,
     dependency_resolver::DependencyResolver,
     errors::{InstantiateErrorKind, InstantiatorErrorKind},
     service::{service_fn, BoxCloneService},
 };
-use crate::registry::Registry;
+use crate::Container;
 
 pub(crate) trait Instantiator<Deps>: Clone + 'static
 where
@@ -39,21 +38,8 @@ impl Default for Config {
     }
 }
 
-pub(crate) struct Request {
-    registry: Arc<Registry>,
-    cache: Cache,
-}
-
-impl Request {
-    #[inline]
-    #[must_use]
-    pub(crate) const fn new(registry: Arc<Registry>, cache: Cache) -> Self {
-        Self { registry, cache }
-    }
-}
-
 pub(crate) type BoxedCloneInstantiator<DepsErr, FactoryErr> =
-    BoxCloneService<Request, (Box<dyn Any>, Cache), InstantiatorErrorKind<DepsErr, FactoryErr>>;
+    BoxCloneService<Container, Box<dyn Any>, InstantiatorErrorKind<DepsErr, FactoryErr>>;
 
 #[must_use]
 pub(crate) fn boxed_instantiator_factory<Inst, Deps>(instantiator: Inst) -> BoxedCloneInstantiator<Deps::Error, Inst::Error>
@@ -62,8 +48,8 @@ where
     Deps: DependencyResolver,
 {
     BoxCloneService(Box::new(service_fn({
-        move |Request { registry, cache }| {
-            let (dependencies, cache) = match Deps::resolve(registry, cache) {
+        move |container| {
+            let dependencies = match Deps::resolve(container) {
                 Ok(dependencies) => dependencies,
                 Err(err) => return Err(InstantiatorErrorKind::Deps(err)),
             };
@@ -74,7 +60,7 @@ where
 
             debug!("Resolved");
 
-            Ok((Box::new(dependency) as _, cache))
+            Ok(Box::new(dependency) as _)
         }
     })))
 }
@@ -116,12 +102,12 @@ pub const fn instance<T: Clone + 'static>(val: T) -> impl Instantiator<(), Error
 mod tests {
     extern crate std;
 
-    use super::{boxed_instantiator_factory, Cache, DependencyResolver, InstantiateErrorKind, Instantiator};
+    use super::{boxed_instantiator_factory, DependencyResolver, InstantiateErrorKind, Instantiator};
     use crate::{
         dependency_resolver::{Inject, InjectTransient},
         scope::DefaultScope::*,
         service::Service as _,
-        RegistriesBuilder,
+        Container, RegistriesBuilder,
     };
 
     use alloc::{
@@ -175,16 +161,10 @@ mod tests {
         let mut registries_builder = RegistriesBuilder::new();
         registries_builder.add_instantiator::<Request>(instantiator_request, App);
 
-        let mut registries = registries_builder.build().into_iter();
-        let registry = if let Some(root_registry) = registries.next() {
-            Arc::new(root_registry)
-        } else {
-            panic!("registries len (is 0) should be >= 1");
-        };
-        let cache = Cache::new();
+        let container = Container::new(registries_builder);
 
-        let (response_1, cache) = instantiator_response.call(super::Request::new(registry.clone(), cache)).unwrap();
-        let (response_2, _) = instantiator_response.call(super::Request::new(registry, cache)).unwrap();
+        let response_1 = instantiator_response.call(container.clone()).unwrap();
+        let response_2 = instantiator_response.call(container).unwrap();
 
         assert!(response_1.downcast::<Response>().unwrap().0);
         assert!(response_2.downcast::<Response>().unwrap().0);
@@ -222,17 +202,11 @@ mod tests {
         let mut registries_builder = RegistriesBuilder::new();
         registries_builder.add_instantiator::<Request>(instantiator_request, App);
 
-        let mut registries = registries_builder.build().into_iter();
-        let registry = if let Some(root_registry) = registries.next() {
-            Arc::new(root_registry)
-        } else {
-            panic!("registries len (is 0) should be >= 1");
-        };
-        let cache = Cache::new();
+        let container = Container::new(registries_builder);
 
-        let (response_1, cache) = instantiator_response.call(super::Request::new(registry.clone(), cache)).unwrap();
-        let (response_2, cache) = instantiator_response.call(super::Request::new(registry.clone(), cache)).unwrap();
-        let (response_3, _) = instantiator_response.call(super::Request::new(registry, cache)).unwrap();
+        let response_1 = instantiator_response.call(container.clone()).unwrap();
+        let response_2 = instantiator_response.call(container.clone()).unwrap();
+        let response_3 = instantiator_response.call(container).unwrap();
 
         assert!(response_1.downcast::<Response>().unwrap().0);
         assert!(response_2.downcast::<Response>().unwrap().0);
