@@ -21,7 +21,6 @@ default = []
 
 debug = []
 eq = []
-test = ["debug", "eq"]
 
 axum = ["dep:axum", "axum/ws", "__async", "__tower"]
 http2-axum = ["dep:h2", "axum/http2"]
@@ -32,6 +31,9 @@ __tower = ["dep:tower-layer", "dep:tower-service"]
 [dev-dependencies]
 tracing-test = { version = "0.2", default-features = false }
 criterion = { version = "0.6" }
+axum = { version = "0.8" }
+axum-test = { version = "17.3", features = ["ws"] }
+tokio = { version = "1.47", features = ["macros"] }
 
 [profile.test]
 opt-level = 3
