@@ -7,17 +7,27 @@ edition = "2021"
 anyhow = { version = "1.0", default-features = false }
 thiserror = { version = "2.0", default-features = false }
 tracing = { version = "0.1", default-features = false }
-parking_lot = { version = "0.12", default-features = false, features = ["default"], optional = true }
+parking_lot = { version = "0.12", default-features = false, features = ["default"] }
+
+futures-core = { version = "0.3", default-features = false, optional = true }
+tower-layer = { version = "0.3", optional = true }
+tower-service = { version = "0.3", optional = true }
+h2 = { version = "0.4", optional = true }
+
+axum = { version = ">= 0.6, <= 0.8", default-features = false, optional = true }
 
 [features]
-default = ["handle"]
+default = []
 
 debug = []
 eq = []
-test = ["debug", "eq", "handle"]
+test = ["debug", "eq"]
 
-lock = ["parking_lot"]
-handle = ["lock"]
+axum = ["dep:axum", "axum/ws", "__async", "__tower"]
+http2-axum = ["dep:h2", "axum/http2"]
+
+__async = ["dep:futures-core"]
+__tower = ["dep:tower-layer", "dep:tower-service"]
 
 [dev-dependencies]
 tracing-test = { version = "0.2", default-features = false }
