@@ -1,9 +1,15 @@
-use alloc::boxed::Box;
+use alloc::{
+    boxed::Box,
+    string::{String, ToString},
+};
 use axum::{
-    http::{header, request::Parts, HeaderMap, HeaderName, Method, Request, Version},
+    extract::FromRequestParts,
+    http::{header, request::Parts, HeaderMap, HeaderName, Method, Request, StatusCode, Version},
+    response::{IntoResponse, Response},
     Router,
 };
 use core::{
+    future::Future,
     str::from_utf8,
     task::{Context, Poll},
 };
@@ -12,7 +18,7 @@ use tower_layer::Layer;
 use tower_service::Service;
 use tracing::error;
 
-use crate::{Container, Scope};
+use crate::{Container, Inject, InjectTransient, ResolveErrorKind, Scope};
 
 #[derive(Clone)]
 struct ContainerLayer<HScope, WSScope> {
@@ -152,6 +158,73 @@ fn header_eq(headers: &HeaderMap, key: &HeaderName, value: &'static str) -> bool
     }
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum InjectErrorKind {
+    #[error("Container not found in extensions")]
+    ContainerNotFound,
+    #[error(transparent)]
+    Resolve(ResolveErrorKind),
+}
+
+impl InjectErrorKind {
+    #[inline]
+    const fn status(&self) -> StatusCode {
+        StatusCode::INTERNAL_SERVER_ERROR
+    }
+
+    #[inline]
+    fn body(&self) -> String {
+        self.to_string()
+    }
+}
+
+impl IntoResponse for InjectErrorKind {
+    fn into_response(self) -> Response {
+        let status = self.status();
+        let body = self.body();
+
+        (status, body).into_response()
+    }
+}
+
+impl<S, Dep> FromRequestParts<S> for Inject<Dep>
+where
+    Dep: Send + Sync + 'static,
+{
+    type Rejection = InjectErrorKind;
+
+    fn from_request_parts(parts: &mut Parts, _state: &S) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
+        async move {
+            match parts.extensions.get::<Container>() {
+                Some(container) => match container.get() {
+                    Ok(dep) => Ok(Self(dep)),
+                    Err(err) => Err(Self::Rejection::Resolve(err)),
+                },
+                None => Err(Self::Rejection::ContainerNotFound),
+            }
+        }
+    }
+}
+
+impl<S, Dep> FromRequestParts<S> for InjectTransient<Dep>
+where
+    Dep: Send + Sync + 'static,
+{
+    type Rejection = InjectErrorKind;
+
+    fn from_request_parts(parts: &mut Parts, _state: &S) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
+        async move {
+            match parts.extensions.get::<Container>() {
+                Some(container) => match container.get_transient() {
+                    Ok(dep) => Ok(Self(dep)),
+                    Err(err) => Err(Self::Rejection::Resolve(err)),
+                },
+                None => Err(Self::Rejection::ContainerNotFound),
+            }
+        }
+    }
+}
+
 #[inline]
 pub fn setup<S, HScope, WSScope>(router: Router<S>, container: Container, http_scope: HScope, ws_scope: WSScope) -> Router<S>
 where
@@ -184,7 +257,7 @@ mod tests {
     use crate::{
         Container,
         DefaultScope::{App, Request, Session},
-        Inject, RegistriesBuilder,
+        Inject, InjectTransient, RegistriesBuilder,
     };
 
     use alloc::{
@@ -268,5 +341,34 @@ mod tests {
 
         ws.send_text("Some").await;
         ws.assert_receive_text("Test").await;
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_dep_inject() {
+        #[derive(Clone)]
+        struct Config {
+            num: i32,
+        }
+
+        #[allow(clippy::unused_async)]
+        async fn handler(Inject(_config): Inject<Config>, InjectTransient(num): InjectTransient<i32>) -> Box<str> {
+            num.to_string().into_boxed_str()
+        }
+
+        let container = Container::new(
+            RegistriesBuilder::new()
+                .provide(|| Ok(Config { num: 1 }), App)
+                .provide(|Inject(cfg): Inject<Config>| Ok(cfg.num + 1), Request),
+        );
+
+        let router = setup_default(Router::new().route("/", get(handler)), container);
+
+        let server = TestServer::builder().http_transport().build(router).unwrap();
+
+        let response = server.get("/").await;
+
+        response.assert_status_ok();
+        response.assert_text("2");
     }
 }
