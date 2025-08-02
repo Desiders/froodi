@@ -8,3 +8,6 @@ fmt: format
 
 test:
     cargo test --all-features
+
+bench:
+    cargo bench --all-features
