@@ -60,7 +60,6 @@ impl<Scope> RegistriesBuilder<Scope> {
 
 impl<S> RegistriesBuilder<S> {
     #[inline]
-    #[allow(private_bounds)]
     #[must_use]
     pub fn provide<Inst, Deps>(mut self, instantiator: Inst, scope: S) -> Self
     where
@@ -72,7 +71,6 @@ impl<S> RegistriesBuilder<S> {
     }
 
     #[inline]
-    #[allow(private_bounds)]
     #[must_use]
     pub fn provide_with_config<Inst, Deps>(mut self, instantiator: Inst, config: Config, scope: S) -> Self
     where

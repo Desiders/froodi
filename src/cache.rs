@@ -83,13 +83,13 @@ impl Cache {
     #[inline]
     #[must_use]
     #[cfg(test)]
-    pub(crate) const fn get_resolved_set(&self) -> &ResolvedSet {
+    pub(crate) fn get_resolved_set(&self) -> &ResolvedSet {
         &self.resolved
     }
 
     #[inline]
     #[must_use]
-    pub(crate) const fn get_resolved_set_mut(&mut self) -> &mut ResolvedSet {
+    pub(crate) fn get_resolved_set_mut(&mut self) -> &mut ResolvedSet {
         &mut self.resolved
     }
 }

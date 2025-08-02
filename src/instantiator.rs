@@ -9,7 +9,7 @@ use super::{
 };
 use crate::Container;
 
-pub(crate) trait Instantiator<Deps>: Clone + 'static
+pub trait Instantiator<Deps>: Clone + 'static
 where
     Deps: DependencyResolver,
 {
@@ -92,7 +92,6 @@ all_the_tuples!(impl_instantiator);
 /// Wrapper to create an instantiator that just returns passed value.
 /// It can be used when the value was created outside the container.
 #[inline]
-#[allow(private_interfaces)]
 #[must_use]
 pub const fn instance<T: Clone + 'static>(val: T) -> impl Instantiator<(), Error = InstantiateErrorKind> {
     move || Ok(val.clone())

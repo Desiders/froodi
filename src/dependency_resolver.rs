@@ -3,7 +3,7 @@ use alloc::sync::Arc;
 use super::errors::ResolveErrorKind;
 use crate::Container;
 
-pub(crate) trait DependencyResolver: Sized {
+pub trait DependencyResolver: Sized {
     type Error: Into<ResolveErrorKind>;
 
     fn resolve(container: Container) -> Result<Self, Self::Error>;

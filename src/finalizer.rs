@@ -18,7 +18,7 @@ where
     BoxCloneService(Box::new(service_fn(move |dependency: Arc<dyn Any + Send + Sync>| {
         let dependency = dependency.downcast::<Dep>().expect("Failed to downcast value in finalizer factory");
         finalizer.finalize(dependency);
-        const { Ok(()) }
+        Ok(())
     })))
 }
 
