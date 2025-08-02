@@ -1,7 +1,15 @@
 [package]
 name = "froodi"
-version = "0.1.0"
+version = "1.0.0-beta.1"
 edition = "2021"
+authors = ["Desiders"]
+license = "Apache-2.0"
+repository = "https://github.com/Desiders/froodi"
+
+description = "An ergonomic Rust IoC container"
+keywords = ["ioc", "di", "dependency-injection"]
+categories = ["no_std", "development-tools", "config"]
+
 rust-version = "1.70.0"
 
 [dependencies]
