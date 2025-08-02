@@ -10,6 +10,7 @@ use crate::{
     finalizer::{boxed_finalizer_factory, BoxedCloneFinalizer, Finalizer},
     instantiator::{boxed_instantiator_factory, Instantiator},
     scope::Scope,
+    DefaultScope, Scopes as ScopesTrait,
 };
 
 pub(crate) struct InstantiatorData<S> {
@@ -18,27 +19,46 @@ pub(crate) struct InstantiatorData<S> {
     scope: S,
 }
 
-pub struct RegistriesBuilder<S> {
-    instantiators: BTreeMap<TypeId, InstantiatorData<S>>,
+pub struct RegistriesBuilder<Scope> {
+    instantiators: BTreeMap<TypeId, InstantiatorData<Scope>>,
     finalizers: BTreeMap<TypeId, BoxedCloneFinalizer>,
+    scopes: Vec<Scope>,
 }
 
-impl<S> Default for RegistriesBuilder<S> {
+impl Default for RegistriesBuilder<DefaultScope> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<S> RegistriesBuilder<S> {
+impl RegistriesBuilder<DefaultScope> {
     #[inline]
     #[must_use]
-    pub const fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             instantiators: BTreeMap::new(),
             finalizers: BTreeMap::new(),
+            scopes: Vec::from(DefaultScope::all()),
         }
     }
+}
 
+impl<Scope> RegistriesBuilder<Scope> {
+    #[inline]
+    #[must_use]
+    pub fn new_with_scopes<Scopes, const N: usize>() -> Self
+    where
+        Scopes: ScopesTrait<N, Scope = Scope>,
+    {
+        Self {
+            instantiators: BTreeMap::new(),
+            finalizers: BTreeMap::new(),
+            scopes: Vec::from(Scopes::all()),
+        }
+    }
+}
+
+impl<S> RegistriesBuilder<S> {
     #[inline]
     #[allow(private_bounds)]
     #[must_use]
@@ -119,7 +139,8 @@ where
     pub(crate) fn build(mut self) -> Vec<Registry> {
         use alloc::collections::btree_map::Entry::{Occupied, Vacant};
 
-        let mut scopes_instantiators: BTreeMap<S, Vec<(TypeId, InstantiatorInnerData)>> = BTreeMap::new();
+        let mut scopes_instantiators: BTreeMap<S, Vec<(TypeId, InstantiatorInnerData)>> =
+            BTreeMap::from_iter(self.scopes.into_iter().map(|scope| (scope, Vec::new())));
         for (
             type_id,
             InstantiatorData {
@@ -205,7 +226,10 @@ impl Registry {
 #[cfg(test)]
 mod tests {
     use super::RegistriesBuilder;
-    use crate::scope::DefaultScope::{self, *};
+    use crate::{
+        scope::DefaultScope::{self, *},
+        Scopes,
+    };
 
     use alloc::sync::Arc;
     use core::any::TypeId;
@@ -213,7 +237,7 @@ mod tests {
     #[test]
     fn test_build_empty() {
         let registries = RegistriesBuilder::<DefaultScope>::new().build();
-        assert!(registries.is_empty());
+        assert!(!registries.is_empty());
     }
 
     #[test]
@@ -224,10 +248,14 @@ mod tests {
             .provide(|| Ok(()), App)
             .provide(|| Ok(()), App)
             .build();
-        assert_eq!(registries.len(), 1);
+        assert_eq!(registries.len(), DefaultScope::all().len());
 
         for registry in registries {
-            assert_eq!(registry.instantiators.len(), 1);
+            if registry.scope.priority == 1 {
+                assert_eq!(registry.instantiators.len(), 1);
+            } else {
+                assert_eq!(registry.instantiators.len(), 0);
+            }
         }
     }
 
@@ -239,10 +267,14 @@ mod tests {
             .provide(|| Ok(1i32), App)
             .provide(|| Ok(1i64), App)
             .build();
-        assert_eq!(registries.len(), 2);
+        assert_eq!(registries.len(), DefaultScope::all().len());
 
         for registry in registries {
-            assert_eq!(registry.instantiators.len(), 2);
+            if registry.scope.priority == 0 || registry.scope.priority == 1 {
+                assert_eq!(registry.instantiators.len(), 2);
+            } else {
+                assert_eq!(registry.instantiators.len(), 0);
+            }
         }
     }
 
