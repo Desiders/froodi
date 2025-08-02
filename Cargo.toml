@@ -8,7 +8,7 @@ repository = "https://github.com/Desiders/froodi"
 
 description = "An ergonomic Rust IoC container"
 keywords = ["ioc", "di", "dependency-injection"]
-categories = ["no_std", "development-tools", "config"]
+categories = ["no-std", "development-tools", "config"]
 
 rust-version = "1.70.0"
 
