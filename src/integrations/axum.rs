@@ -168,6 +168,7 @@ pub enum InjectErrorKind {
 
 impl InjectErrorKind {
     #[inline]
+    #[allow(clippy::unused_self)]
     const fn status(&self) -> StatusCode {
         StatusCode::INTERNAL_SERVER_ERROR
     }
@@ -187,6 +188,7 @@ impl IntoResponse for InjectErrorKind {
     }
 }
 
+#[allow(clippy::manual_async_fn)]
 impl<S, Dep> FromRequestParts<S> for Inject<Dep>
 where
     Dep: Send + Sync + 'static,
@@ -206,6 +208,7 @@ where
     }
 }
 
+#[allow(clippy::manual_async_fn)]
 impl<S, Dep> FromRequestParts<S> for InjectTransient<Dep>
 where
     Dep: Send + Sync + 'static,

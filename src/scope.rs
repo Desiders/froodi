@@ -57,7 +57,7 @@ impl Scopes<6> for DefaultScope {
 
     #[inline]
     fn all() -> [Self; 6] {
-        use DefaultScope::*;
+        use DefaultScope::{Action, App, Request, Runtime, Session, Step};
 
         [Runtime, App, Session, Request, Action, Step]
     }

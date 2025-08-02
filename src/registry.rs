@@ -140,7 +140,7 @@ where
         use alloc::collections::btree_map::Entry::{Occupied, Vacant};
 
         let mut scopes_instantiators: BTreeMap<S, Vec<(TypeId, InstantiatorInnerData)>> =
-            BTreeMap::from_iter(self.scopes.into_iter().map(|scope| (scope, Vec::new())));
+            self.scopes.into_iter().map(|scope| (scope, Vec::new())).collect();
         for (
             type_id,
             InstantiatorData {

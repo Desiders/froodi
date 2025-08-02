@@ -159,6 +159,7 @@ impl Container {
     /// - Panics if specified start scope not found in scopes.
     #[inline]
     #[must_use]
+    #[allow(clippy::needless_pass_by_value)]
     pub fn new_with_start_scope<S: Scope>(registries_builder: RegistriesBuilder<S>, scope: S) -> Self {
         let mut registries = registries_builder.build().into_iter();
         let (root_registry, child_registries) = if let Some(root_registry) = registries.next() {
