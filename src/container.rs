@@ -93,21 +93,30 @@ pub struct Container {
 }
 
 impl Container {
+    /// Creates container and builds it with next non-skipped scope.
+    /// For example, in case of [`crate::scope::DefaultScope`], [`crate::scope::DefaultScope::Runtime`] will be skipped to [`crate::scope::DefaultScope::App`],
+    /// because the first flagged as skippable, but it will be in container as parent of current.
+    ///
+    /// # Warning
+    /// This method skips first skippable scopes, if you want to use one of them, use [`Self::new_with_start_scope`].
+    ///
     /// # Panics
-    /// Panics if registries builder doesn't create any registry.
-    /// This can occur if scopes are empty.
+    /// - Panics if registries builder doesn't create any registry.
+    ///   This can occur if scopes are empty.
+    /// - Panics if there are no child registries.
+    ///   This can occur if count of scopes is 1.
+    /// - Panics if all scopes except the first one are skipped by default.
     #[inline]
     #[must_use]
-    #[allow(clippy::new_ret_no_self)]
-    pub fn new<S: Scope>(registries_builder: RegistriesBuilder<S>) -> Container {
+    pub fn new<S: Scope>(registries_builder: RegistriesBuilder<S>) -> Self {
         let mut registries = registries_builder.build().into_iter();
         let (root_registry, child_registries) = if let Some(root_registry) = registries.next() {
             (Arc::new(root_registry), registries.map(Arc::new).collect())
         } else {
-            panic!("registries len (is 0) should be >= 1");
+            panic!("registries len (is 0) should be > 1");
         };
 
-        Self {
+        let mut container = Self {
             inner: Arc::new(Mutex::new(ContainerInner {
                 cache: Cache::new(),
                 context: Context::new(),
@@ -116,16 +125,92 @@ impl Container {
                 parent: None,
                 close_parent: false,
             })),
+        };
+
+        let mut inner = container.inner.lock();
+        let mut iter = inner.child_registries.iter();
+        let mut registry = (*iter.next().expect("registries len (is 1) should be > 1")).clone();
+        let mut child_registries = iter.cloned().collect();
+
+        let mut search_next = inner.root_registry.scope.is_skipped_by_default;
+        while search_next {
+            drop(inner);
+            container = container.init_child(registry, child_registries, true);
+            inner = container.inner.lock();
+
+            search_next = inner.root_registry.scope.is_skipped_by_default;
+            if search_next {
+                let mut iter = inner.child_registries.iter();
+                registry = (*iter.next().expect("last scope can't be skipped by default")).clone();
+                child_registries = iter.cloned().collect();
+            } else {
+                break;
+            }
         }
+        drop(inner);
+
+        container
+    }
+
+    /// Creates container with start scope
+    /// # Panics
+    /// - Panics if registries builder doesn't create any registry.
+    ///   This can occur if scopes are empty.
+    /// - Panics if specified start scope not found in scopes.
+    #[inline]
+    #[must_use]
+    pub fn new_with_start_scope<S: Scope>(registries_builder: RegistriesBuilder<S>, scope: S) -> Self {
+        let mut registries = registries_builder.build().into_iter();
+        let (root_registry, child_registries) = if let Some(root_registry) = registries.next() {
+            (Arc::new(root_registry), registries.map(Arc::new).collect())
+        } else {
+            panic!("registries len (is 0) should be > 1");
+        };
+
+        let container_priority = root_registry.scope.priority;
+        let priority = scope.priority();
+
+        let mut container = Self {
+            inner: Arc::new(Mutex::new(ContainerInner {
+                cache: Cache::new(),
+                context: Context::new(),
+                root_registry,
+                child_registries,
+                parent: None,
+                close_parent: false,
+            })),
+        };
+
+        if container_priority == priority {
+            return container;
+        }
+
+        let mut inner = container.inner.lock();
+        let mut iter = inner.child_registries.iter();
+        let mut registry = (*iter.next().expect("last scope can't be with another priority")).clone();
+        let mut child_registries = iter.cloned().collect();
+
+        let mut search_next = inner.root_registry.scope.priority != priority;
+        while search_next {
+            drop(inner);
+            container = container.init_child(registry, child_registries, true);
+            inner = container.inner.lock();
+
+            search_next = inner.root_registry.scope.priority != priority;
+            if search_next {
+                let mut iter = inner.child_registries.iter();
+                registry = (*iter.next().expect("last scope can't be with another priority")).clone();
+                child_registries = iter.cloned().collect();
+            } else {
+                break;
+            }
+        }
+        drop(inner);
+
+        container
     }
 
     /// Creates child container builder
-    ///
-    /// # Warning
-    /// This method requires `self` instead of `&self` because it consumes the container,
-    /// so be careful when want to clone container before calling this method,
-    /// because these containers will be different and using different state like cache,
-    /// so `close` will not work as expected for parent container that was cloned to create child container and used after.
     #[inline]
     #[must_use]
     pub fn enter(self) -> ChildContainerBuiler {
@@ -133,14 +218,11 @@ impl Container {
     }
 
     /// Creates child container and builds it with next non-skipped scope
+    /// For example, in case of [`crate::scope::DefaultScope`], [`crate::scope::DefaultScope::Runtime`] will be skipped to [`crate::scope::DefaultScope::App`],
+    /// because the first flagged as skippable, but it will be in container as parent of current.
     ///
     /// # Warning
-    /// - This method requires `self` instead of `&self` because it consumes the container,
-    ///   so be careful when want to clone container before calling this method,
-    ///   because these containers will be different and using different state like cache,
-    ///   so `close` will not work as expected for parent container that was cloned to create child container and used after.
-    /// - This method skips skipped scopes, if you want to use one of them, use [`ChildContainerBuiler::with_scope`]
-    /// - If you want to use specific scope, use [`ChildContainerBuiler::with_scope`]
+    /// This method skips skippable scopes, if you want to use one of them, use [`ChildContainerBuiler::with_scope`].
     ///
     /// # Errors
     /// - Returns [`ScopeErrorKind::NoChildRegistries`] if there are no registries
@@ -380,14 +462,15 @@ impl ChildContainerBuiler {
     }
 
     /// Creates child container with next non-skipped scope.
+    /// For example, in case of [`crate::scope::DefaultScope`], [`crate::scope::DefaultScope::Runtime`] will be skipped to [`crate::scope::DefaultScope::App`],
+    /// because the first flagged as skippable, but it will be in container as parent of current.
     ///
     /// # Errors
     /// - Returns [`ScopeErrorKind::NoChildRegistries`] if there are no registries
     /// - Returns [`ScopeErrorKind::NoNonSkippedRegistries`] if there are no non-skipped registries
     ///
     /// # Warning
-    /// - This method skips skipped scopes, if you want to use one of them, use [`ChildContainerBuiler::with_scope`]
-    /// - If you want to use specific scope, use [`ChildContainerBuiler::with_scope`]
+    /// This method skips first children skippable scopes, if you want to use one of them, use [`ChildContainerBuiler::with_scope`].
     pub fn build(self) -> Result<Container, ScopeErrorKind> {
         use ScopeErrorKind::{NoChildRegistries, NoNonSkippedRegistries};
 
@@ -496,8 +579,7 @@ impl ChildContainerWithContext {
     /// - Returns [`ScopeErrorKind::NoNonSkippedRegistries`] if there are no non-skipped registries
     ///
     /// # Warning
-    /// - This method skips skipped scopes, if you want to use one of them, use [`ChildContainerBuiler::with_scope`]
-    /// - If you want to use specific scope, use [`ChildContainerBuiler::with_scope`]
+    /// This method skips first children skippable scopes, if you want to use one of them, use [`ChildContainerBuiler::with_scope`]
     pub fn build(self) -> Result<Container, ScopeErrorKind> {
         use ScopeErrorKind::{NoChildRegistries, NoNonSkippedRegistries};
 
@@ -620,8 +702,7 @@ mod tests {
             .provide(|Inject(ca): Inject<CA>| Ok(C(ca)), Action)
             .provide(|| Ok(B(2)), App)
             .provide(|Inject(b): Inject<B>, Inject(c): Inject<C>| Ok(A(b, c)), Step);
-        let runtime_container = Container::new(registry);
-        let app_container = runtime_container.clone().enter_build().unwrap();
+        let app_container = Container::new(registry);
         let request_container = app_container.clone().enter_build().unwrap();
         let action_container = request_container.clone().enter_build().unwrap();
         let step_container = action_container.clone().enter_build().unwrap();
@@ -678,28 +759,29 @@ mod tests {
             .provide(|| Ok(((), (), (), (), ())), Action)
             .provide(|| Ok(((), (), (), (), (), ())), Step);
 
-        let runtime_container = Container::new(registry);
-        let app_container = runtime_container.clone().enter_build().unwrap();
+        let app_container = Container::new(registry);
         let request_container = app_container.clone().enter_build().unwrap();
         let action_container = request_container.clone().enter_build().unwrap();
         let step_container = action_container.clone().enter_build().unwrap();
 
-        let runtime_container_inner = runtime_container.inner.lock();
         let app_container_inner = app_container.inner.lock();
         let request_container_inner = request_container.inner.lock();
         let action_container_inner = action_container.inner.lock();
         let step_container_inner = step_container.inner.lock();
 
-        assert_eq!(runtime_container_inner.parent, None);
-        assert_eq!(runtime_container_inner.child_registries.len(), 5);
-        assert_eq!(runtime_container_inner.root_registry.scope.priority, Runtime.priority());
-        assert!(Arc::ptr_eq(
-            &app_container_inner.root_registry,
-            &runtime_container_inner.child_registries[0]
-        ));
-
-        drop(runtime_container_inner);
-
+        // Runtime scope is skipped by default, but it is still present in the parent
+        assert_eq!(
+            app_container_inner
+                .parent
+                .as_ref()
+                .unwrap()
+                .inner
+                .lock()
+                .root_registry
+                .scope
+                .priority,
+            Runtime.priority()
+        );
         assert_eq!(app_container_inner.child_registries.len(), 4);
         assert_eq!(app_container_inner.root_registry.scope.priority, App.priority());
 
@@ -750,7 +832,7 @@ mod tests {
             .provide(|| Ok(((), (), (), (), ())), Action)
             .provide(|| Ok(((), (), (), (), (), ())), Step);
 
-        let runtime_container = Container::new(registry);
+        let runtime_container = Container::new_with_start_scope(registry, Runtime);
         let app_container = runtime_container.clone().enter().with_scope(App).build().unwrap();
         let session_container = runtime_container.clone().enter().with_scope(Session).build().unwrap();
         let request_container = app_container.clone().enter().with_scope(Request).build().unwrap();
@@ -834,13 +916,11 @@ mod tests {
                 }
             });
 
-        let runtime_container = Container::new(registry);
-        let app_container = runtime_container.clone().enter().with_scope(App).build().unwrap();
+        let app_container = Container::new(registry);
         let request_container = app_container.clone().enter().with_scope(Request).build().unwrap();
 
         request_container.close();
         app_container.close();
-        runtime_container.close();
 
         assert_eq!(finalizer_1_request_call_count.load(Ordering::SeqCst), 0);
         assert_eq!(finalizer_2_request_call_count.load(Ordering::SeqCst), 0);
@@ -915,8 +995,7 @@ mod tests {
                 }
             });
 
-        let runtime_container = Container::new(registry);
-        let app_container = runtime_container.clone().enter().with_scope(App).build().unwrap();
+        let app_container = Container::new(registry);
         let request_container = app_container.clone().enter().with_scope(Request).build().unwrap();
 
         let _ = request_container.get::<()>().unwrap();
@@ -924,24 +1003,7 @@ mod tests {
         let _ = request_container.get::<((), (), (), (), ())>().unwrap();
         let _ = request_container.get::<((), (), (), ())>().unwrap();
 
-        let runtime_container_resolved_set_count = request_container
-            .inner
-            .lock()
-            .parent
-            .as_ref()
-            .unwrap()
-            .inner
-            .lock()
-            .parent
-            .as_ref()
-            .unwrap()
-            .inner
-            .lock()
-            .cache
-            .get_resolved_set()
-            .0
-            .len();
-        let app_container_resolved_set_count = request_container
+        let runtime_container_resolved_set_count = app_container
             .inner
             .lock()
             .parent
@@ -953,6 +1015,7 @@ mod tests {
             .get_resolved_set()
             .0
             .len();
+        let app_container_resolved_set_count = app_container.inner.lock().cache.get_resolved_set().0.len();
         let request_container_resolved_set_count = request_container.inner.lock().cache.get_resolved_set().0.len();
 
         request_container.close();
@@ -971,17 +1034,6 @@ mod tests {
         assert_eq!(finalizer_4_request_call_position.load(Ordering::SeqCst), 2);
 
         app_container.close();
-
-        assert_eq!(finalizer_1_request_call_count.load(Ordering::SeqCst), 0);
-        assert_eq!(finalizer_1_request_call_position.load(Ordering::SeqCst), 0);
-        assert_eq!(finalizer_2_request_call_count.load(Ordering::SeqCst), 1);
-        assert_eq!(finalizer_2_request_call_position.load(Ordering::SeqCst), 3);
-        assert_eq!(finalizer_3_request_call_count.load(Ordering::SeqCst), 1);
-        assert_eq!(finalizer_3_request_call_position.load(Ordering::SeqCst), 1);
-        assert_eq!(finalizer_4_request_call_count.load(Ordering::SeqCst), 1);
-        assert_eq!(finalizer_4_request_call_position.load(Ordering::SeqCst), 2);
-
-        runtime_container.close();
 
         assert_eq!(finalizer_1_request_call_count.load(Ordering::SeqCst), 1);
         assert_eq!(finalizer_1_request_call_position.load(Ordering::SeqCst), 4);
