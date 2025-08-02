@@ -11,6 +11,12 @@ pub trait Scope: Ord {
     }
 }
 
+pub trait Scopes<const N: usize> {
+    type Scope;
+
+    fn all() -> [Self::Scope; N];
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(u8)]
 pub enum DefaultScope {
@@ -43,5 +49,16 @@ impl Scope for DefaultScope {
     #[inline]
     fn is_skipped_by_default(&self) -> bool {
         matches!(self, DefaultScope::Runtime | DefaultScope::Session)
+    }
+}
+
+impl Scopes<6> for DefaultScope {
+    type Scope = Self;
+
+    #[inline]
+    fn all() -> [Self; 6] {
+        use DefaultScope::*;
+
+        [Runtime, App, Session, Request, Action, Step]
     }
 }
