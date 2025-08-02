@@ -339,8 +339,8 @@ mod tests {
 
         let mut ws = server.get_websocket("/").await.into_websocket().await;
 
-        ws.send_text("Some").await;
-        ws.assert_receive_text("Test").await;
+        ws.send_text("").await;
+        ws.assert_receive_text("2").await;
     }
 
     #[tokio::test]

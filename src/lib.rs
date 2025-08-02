@@ -25,7 +25,7 @@ pub use errors::{InstantiateErrorKind, InstantiatorErrorKind, ResolveErrorKind, 
 pub use finalizer::Finalizer;
 pub use instantiator::{instance, Config};
 pub use registry::RegistriesBuilder;
-pub use scope::{DefaultScope, Scope};
+pub use scope::{DefaultScope, Scope, Scopes};
 
 #[cfg(feature = "axum")]
-pub use integrations::axum::{setup as setup_axum, setup_default as setup_axum_default};
+pub use integrations::axum::{setup as setup_axum, setup_default as setup_axum_default, InjectErrorKind as AxumInjectErrorKind};
