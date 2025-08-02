@@ -25,7 +25,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         })
     })
     .bench_function("container_child_with_scope", |b| {
-        let runtime_container = Container::new(
+        let runtime_container = Container::new_with_start_scope(
             RegistriesBuilder::new()
                 .provide(|| Ok(()), Runtime)
                 .provide(|| Ok(((), ())), App)
@@ -33,6 +33,7 @@ fn criterion_benchmark(c: &mut Criterion) {
                 .provide(|| Ok(((), (), (), ())), Request)
                 .provide(|| Ok(((), (), (), (), ())), Action)
                 .provide(|| Ok(((), (), (), (), (), ())), Step),
+            Runtime,
         );
         b.iter(|| {
             let app_container = runtime_container.clone().enter().with_scope(App).build().unwrap();
@@ -43,7 +44,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         })
     })
     .bench_function("container_child_with_hierarchy", |b| {
-        let runtime_container = Container::new(
+        let app_container = Container::new(
             RegistriesBuilder::new()
                 .provide(|| Ok(()), Runtime)
                 .provide(|| Ok(((), ())), App)
@@ -53,11 +54,9 @@ fn criterion_benchmark(c: &mut Criterion) {
                 .provide(|| Ok(((), (), (), (), (), ())), Step),
         );
         b.iter(|| {
-            let app_container = runtime_container.clone().enter().with_scope(App).build().unwrap();
-            let session_container = app_container.enter().with_scope(Session).build().unwrap();
-            let request_container = session_container.enter().with_scope(Request).build().unwrap();
-            let action_container = request_container.enter().with_scope(Action).build().unwrap();
-            let _ = action_container.enter().with_scope(Step).build().unwrap();
+            let request_container = app_container.clone().enter_build().unwrap();
+            let action_container = request_container.enter_build().unwrap();
+            let _ = action_container.enter_build().unwrap();
         })
     })
     .bench_function("container_get_with_cache", |b| {
@@ -81,7 +80,8 @@ fn criterion_benchmark(c: &mut Criterion) {
                 .provide(|| Ok(B(2)), Request)
                 .provide(|Inject(b): Inject<B>, Inject(c): Inject<C>| Ok(A(b, c)), Request),
         );
-        b.iter(|| container.get::<A>().unwrap())
+        let request_container = container.enter_build().unwrap();
+        b.iter(|| request_container.get::<A>().unwrap())
     })
     .bench_function("container_get_without_cache", |b| {
         struct A(B, C);
@@ -107,7 +107,8 @@ fn criterion_benchmark(c: &mut Criterion) {
                     Request,
                 ),
         );
-        b.iter(|| container.get::<A>().unwrap())
+        let request_container = container.enter_build().unwrap();
+        b.iter(|| request_container.get::<A>().unwrap())
     });
 }
 
