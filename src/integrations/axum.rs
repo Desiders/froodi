@@ -125,7 +125,7 @@ fn is_websocket_request(parts: &Parts) -> bool {
         if parts
             .extensions
             .get::<h2::ext::Protocol>()
-            .is_none_or(|p| p.as_str() != "websocket")
+            .map_or(true, |p| p.as_str() != "websocket")
         {
             return false;
         }
