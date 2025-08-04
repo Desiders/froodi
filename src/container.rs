@@ -1047,6 +1047,97 @@ mod tests {
     }
 
     #[test]
+    #[traced_test]
+    fn test_close_on_drop() {
+        let call_count = Arc::new(AtomicU8::new(0));
+
+        let drop_call_count = Arc::new(AtomicU8::new(0));
+        let drop_call_position = Arc::new(AtomicU8::new(0));
+        let instantiator_call_count = Arc::new(AtomicU8::new(0));
+        let instantiator_call_position = Arc::new(AtomicU8::new(0));
+        let finalizer_1_call_count = Arc::new(AtomicU8::new(0));
+        let finalizer_1_call_position = Arc::new(AtomicU8::new(0));
+        let finalizer_2_call_count = Arc::new(AtomicU8::new(0));
+        let finalizer_2_call_position = Arc::new(AtomicU8::new(0));
+
+        struct Type1;
+        struct Type2(Arc<Type1>);
+
+        struct DropWrapper<T> {
+            val: T,
+            call_count: Arc<AtomicU8>,
+            drop_call_count: Arc<AtomicU8>,
+            drop_call_position: Arc<AtomicU8>,
+        }
+
+        impl<T> Drop for DropWrapper<T> {
+            fn drop(&mut self) {
+                self.call_count.fetch_add(1, Ordering::SeqCst);
+                self.drop_call_count.fetch_add(1, Ordering::SeqCst);
+                self.drop_call_position
+                    .store(self.call_count.load(Ordering::SeqCst), Ordering::SeqCst);
+
+                debug!("Drop called");
+            }
+        }
+
+        let registry = RegistriesBuilder::new()
+            .provide(|| Ok(Type1), App)
+            .provide(|Inject(type_1): Inject<Type1>| Ok(Type2(type_1)), Request)
+            .add_finalizer({
+                let call_count = call_count.clone();
+                let finalizer_1_call_count = finalizer_1_call_count.clone();
+                let finalizer_1_call_position = finalizer_1_call_position.clone();
+                move |_: Arc<Type1>| {
+                    call_count.fetch_add(1, Ordering::SeqCst);
+                    finalizer_1_call_position.store(call_count.load(Ordering::SeqCst), Ordering::SeqCst);
+                    finalizer_1_call_count.fetch_add(1, Ordering::SeqCst);
+
+                    debug!("Finalizer 1 called");
+                }
+            })
+            .add_finalizer({
+                let call_count = call_count.clone();
+                let finalizer_2_call_count = finalizer_2_call_count.clone();
+                let finalizer_2_call_position = finalizer_2_call_position.clone();
+                move |_: Arc<Type2>| {
+                    call_count.fetch_add(1, Ordering::SeqCst);
+                    finalizer_2_call_position.store(call_count.load(Ordering::SeqCst), Ordering::SeqCst);
+                    finalizer_2_call_count.fetch_add(1, Ordering::SeqCst);
+
+                    debug!("Finalizer 2 called");
+                }
+            });
+
+        let app_container = Container::new(registry);
+        let request_container = app_container.enter_build().unwrap();
+        DropWrapper {
+            val: request_container,
+            call_count: call_count.clone(),
+            drop_call_count: drop_call_count.clone(),
+            drop_call_position: drop_call_position.clone(),
+        }
+        .val
+        .get::<Type2>()
+        .unwrap();
+
+        instantiator_call_position.store(call_count.load(Ordering::SeqCst) + 1, Ordering::SeqCst);
+        instantiator_call_count.fetch_add(1, Ordering::SeqCst);
+
+        debug!("Instantiator called");
+
+        assert_eq!(call_count.load(Ordering::SeqCst), 3);
+        assert_eq!(finalizer_1_call_count.load(Ordering::SeqCst), 1);
+        assert_eq!(finalizer_1_call_position.load(Ordering::SeqCst), 3);
+        assert_eq!(finalizer_2_call_count.load(Ordering::SeqCst), 1);
+        assert_eq!(finalizer_2_call_position.load(Ordering::SeqCst), 2);
+        assert_eq!(instantiator_call_count.load(Ordering::SeqCst), 1);
+        assert_eq!(instantiator_call_position.load(Ordering::SeqCst), 4);
+        assert_eq!(drop_call_count.load(Ordering::SeqCst), 1);
+        assert_eq!(drop_call_position.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
     fn test_bounds() {
         fn impl_bounds<T: Send + Sync + 'static>() {}
 
