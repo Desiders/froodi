@@ -2,13 +2,13 @@
 
 [![Crates.io Version](https://img.shields.io/crates/v/froodi)](https://crates.io/crates/froodi)
 
-Froodi is a lightweight, ergonomic Inversion of Control (IoC) container for Rust that helps manage dependencies with clear scoping and lifecycle management in a simple manner.
+Froodi is a lightweight, ergonomic Inversion of Control (IoC) container for Rust that helps manage dependencies with clear scoping and lifecycle management in a simple manner
 
 ## Features
 
-- **Scoping**: Any object can have a lifespan for the entire app, a single request, or even more fractionally. 
-- **Finalization**: Some dependencies, like database connections, need not only to be created but also carefully released. Many frameworks lack this essential feature.
-- **Ergonomic API**: Only a few objects are needed to start using the library.
+- **Scoping**: Any object can have a lifespan for the entire app, a single request, or even more fractionally.
+- **Finalization**: Some dependencies, like database connections, need not only to be created but also carefully released. Many frameworks lack this essential feature
+- **Ergonomic API**: Only a few objects are needed to start using the library
 - **Speed**: Dependency resolving as fast as the speed of light thanks to the Rust
 - **Axum integration**: The popular framework for building web applications is supported out of the box
 - **Completely safe**: No unsafe code
@@ -24,9 +24,9 @@ use froodi::{
 };
 
 #[derive(Clone)]
+// define APP scoped dependency that will be alive throughout the application
 struct Config {
-    // define APP scoped dependency that will be alive throughout the application
-    greeting: String,
+    greeting: &'static str,
 }
 
 // define REQUEST scoped dependency that will be alive throughout the request
@@ -56,24 +56,28 @@ impl<R: UserRepo> CreateUser<R> {
 }
 
 fn create_container() -> Container {
+    // let's define the registry that stores your dependency factories
+    let registry = RegistriesBuilder::new()
+        .provide(
+            instance(Config {
+                greeting: "Hello, user!",
+            }),
+            App,
+        ) // provide APP scoped dependency simply as instance
+        .provide(|| Ok(PostgresUserRepo), Request)
+        .provide(
+            // setup factory for REQUEST scoped dependency that gets other dependencies through Inject
+            |Inject(repo): Inject<PostgresUserRepo>, Inject(config): Inject<Config>| {
+                Ok(CreateUser { repo, config })
+            },
+            Request,
+        )
+        .add_finalizer(|_dep: Arc<PostgresUserRepo>| println!("repository finalized"))
+        .add_finalizer(|_dep: Arc<Config>| println!("config finalized"));
+
     Container::new(
-        // define the container that stores your dependency factories
-        RegistriesBuilder::new()
-            .provide(
-                instance(Config {
-                    greeting: "Hello, user!".to_owned(),
-                }),
-                App,
-            ) // provide APP scoped dependency simply as instance
-            .provide(|| Ok(PostgresUserRepo), Request)
-            .provide(
-                // setup factory for REQUEST scoped dependency that gets other dependencies through Inject
-                |Inject(repo): Inject<PostgresUserRepo>, Inject(config): Inject<Config>| {
-                    Ok(CreateUser { repo, config })
-                },
-                Request,
-            )
-            .add_finalizer(|_dep: Arc<PostgresUserRepo>| println!("repository finalized")),
+        // define the container that stores registries
+        registry,
     )
 }
 
@@ -86,6 +90,11 @@ fn handler<R: UserRepo + Send + Sync + 'static>(container: Container) {
     interactor.handle();
 }
 
+// Output:
+// User created
+// Hello, user!
+// repository finalized
+// config finalized
 fn main() {
     let container = create_container();
     handler::<PostgresUserRepo>(container.clone());
