@@ -5,12 +5,8 @@ use syn::{
 
 use crate::attr_parsing::{parse_attrs, Combine};
 
-mod kw {
-    syn::custom_keyword!(instantiator);
-}
-
 #[derive(Default)]
-pub struct InstantiatorArgs {}
+pub(super) struct InstantiatorArgs {}
 
 impl Parse for InstantiatorArgs {
     fn parse(input: ParseStream) -> syn::Result<Self> {
@@ -30,6 +26,6 @@ impl Combine for InstantiatorArgs {
     }
 }
 
-pub(crate) fn parse_method_attrs(attrs: &[Attribute]) -> syn::Result<InstantiatorArgs> {
+pub(crate) fn parse_method_attrs(attrs: &[Attribute]) -> Option<syn::Result<InstantiatorArgs>> {
     parse_attrs("instantiator", attrs)
 }

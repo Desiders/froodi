@@ -50,15 +50,22 @@ pub(crate) trait Combine: Sized {
     fn combine(self, other: Self) -> syn::Result<Self>;
 }
 
-pub(crate) fn parse_attrs<T>(ident: &str, attrs: &[syn::Attribute]) -> syn::Result<T>
+pub(crate) fn parse_attrs<T>(ident: &str, attrs: &[syn::Attribute]) -> Option<syn::Result<T>>
 where
-    T: Combine + Default + Parse,
+    T: Combine + Parse,
 {
-    attrs
+    let mut iter = attrs
         .iter()
         .filter(|attr| attr.meta.path().is_ident(ident))
-        .map(|attr| attr.parse_args::<T>())
-        .try_fold(T::default(), |out, next| out.combine(next?))
+        .map(|attr| attr.parse_args::<T>());
+
+    let first = match iter.next() {
+        Some(Ok(first)) => first,
+        Some(Err(err)) => return Some(Err(err)),
+        None => return None,
+    };
+
+    Some(iter.try_fold(first, |out, next| out.combine(next?)))
 }
 
 pub(crate) fn combine_attribute<K, T>(a: &mut Option<(K, T)>, b: Option<(K, T)>) -> syn::Result<()>
