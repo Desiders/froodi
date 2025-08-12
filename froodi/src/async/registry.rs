@@ -8,7 +8,7 @@ use crate::{
     instantiator::{boxed_instantiator_factory, BoxedCloneInstantiator, Config, Instantiator},
     r#async::{
         dependency_resolver::DependencyResolver as AsyncDependencyResolver,
-        finalizer::BoxedCloneFinalizer,
+        finalizer::{boxed_finalizer_factory as boxed_async_finalizer_factory, BoxedCloneFinalizer, Finalizer as AsyncFinalizer},
         instantiator::{
             boxed_instantiator_factory as boxed_async_instantiator_factory, BoxedCloneInstantiator as BoxedCloneAsyncInstantiator,
             Instantiator as AsyncInstantiator,
@@ -129,6 +129,9 @@ impl<S> RegistriesBuilder<S> {
     /// Adds a finalizer for the given a non transient dependency type.
     /// The finalizer will be called when the container is being closed in LIFO order of their usage (not the order of registration).
     ///
+    /// # Notes
+    /// Calls to async finalizers precede calls to sync finalizers
+    ///
     /// # Warning
     /// - The finalizer can only be used for non-transient dependencies, because the transient doesn't have a lifetime and isn't cached.
     ///
@@ -143,6 +146,30 @@ impl<S> RegistriesBuilder<S> {
         Fin: Finalizer<Dep> + Send + Sync,
     {
         self.sync_finalizers.insert(TypeId::of::<Dep>(), boxed_finalizer_factory(finalizer));
+        self
+    }
+
+    /// Adds an async finalizer for the given a non transient dependency type.
+    /// The finalizer will be called when the container is being closed in LIFO order of their usage (not the order of registration).
+    ///
+    /// # Notes
+    /// Calls to async finalizers precede calls to sync finalizers
+    ///
+    /// # Warning
+    /// - The finalizer can only be used for non-transient dependencies, because the transient doesn't have a lifetime and isn't cached.
+    ///
+    /// - [`Drop`] trait isn't a equivalent of a finalizer, because:
+    ///     1. The finalizer is called in LIFO order of their usage, while [`Drop`] is called in the order of registration.
+    ///     2. The finalized used for life cycle management, while [`Drop`] is used for resource management.
+    #[inline]
+    #[must_use]
+    pub fn add_async_finalizer<Dep, Fin>(mut self, finalizer: Fin) -> Self
+    where
+        Dep: Send + Sync + 'static,
+        Fin: AsyncFinalizer<Dep> + Send + Sync,
+    {
+        self.finalizers
+            .insert(TypeId::of::<Dep>(), boxed_async_finalizer_factory(finalizer));
         self
     }
 }
