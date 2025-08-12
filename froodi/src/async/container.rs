@@ -959,7 +959,11 @@ mod tests {
     extern crate std;
 
     use super::{Container, ContainerInner, RegistriesBuilder};
-    use crate::{scope::DefaultScope::*, Inject, InjectTransient, Scope};
+    use crate::{
+        r#async::{Inject, InjectTransient},
+        scope::DefaultScope::*,
+        Inject as SyncInject, InjectTransient as SyncInjectTransient, Scope,
+    };
 
     use alloc::{
         format,
@@ -988,13 +992,49 @@ mod tests {
 
         let registry = RegistriesBuilder::new()
             .provide(|| (Ok(CAAAAA)), Runtime)
-            .provide(|Inject(caaaaa): Inject<CAAAAA>| Ok(CAAAA(caaaaa)), App)
-            .provide(|Inject(caaaa): Inject<CAAAA>| Ok(CAAA(caaaa)), Session)
-            .provide(|Inject(caaa): Inject<CAAA>| Ok(CAA(caaa)), Request)
-            .provide(|Inject(caa): Inject<CAA>| Ok(CA(caa)), Request)
-            .provide(|Inject(ca): Inject<CA>| Ok(C(ca)), Action)
+            .provide(|SyncInject(caaaaa): SyncInject<CAAAAA>| Ok(CAAAA(caaaaa)), App)
+            .provide(|SyncInject(caaaa): SyncInject<CAAAA>| Ok(CAAA(caaaa)), Session)
+            .provide(|SyncInject(caaa): SyncInject<CAAA>| Ok(CAA(caaa)), Request)
+            .provide(|SyncInject(caa): SyncInject<CAA>| Ok(CA(caa)), Request)
+            .provide(|SyncInject(ca): SyncInject<CA>| Ok(C(ca)), Action)
             .provide(|| Ok(B(2)), App)
-            .provide(|Inject(b): Inject<B>, Inject(c): Inject<C>| Ok(A(b, c)), Step);
+            .provide(|SyncInject(b): SyncInject<B>, SyncInject(c): SyncInject<C>| Ok(A(b, c)), Step);
+        let app_container = Container::new(registry);
+        let request_container = app_container.clone().enter_build().await.unwrap();
+        let action_container = request_container.clone().enter_build().await.unwrap();
+        let step_container = action_container.clone().enter_build().await.unwrap();
+
+        let _ = step_container.get::<A>().await.unwrap();
+        let _ = step_container.get::<CAAAAA>().await.unwrap();
+        let _ = step_container.get::<CAAAA>().await.unwrap();
+        let _ = step_container.get::<CAAA>().await.unwrap();
+        let _ = step_container.get::<CAA>().await.unwrap();
+        let _ = step_container.get::<CA>().await.unwrap();
+        let _ = step_container.get::<C>().await.unwrap();
+        let _ = step_container.get::<B>().await.unwrap();
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_async_scoped_get() {
+        struct A(Arc<B>, Arc<C>);
+        struct B(i32);
+        struct C(Arc<CA>);
+        struct CA(Arc<CAA>);
+        struct CAA(Arc<CAAA>);
+        struct CAAA(Arc<CAAAA>);
+        struct CAAAA(Arc<CAAAAA>);
+        struct CAAAAA;
+
+        let registry = RegistriesBuilder::new()
+            .provide_async(async || (Ok(CAAAAA)), Runtime)
+            .provide_async(async |Inject(caaaaa): Inject<CAAAAA>| Ok(CAAAA(caaaaa)), App)
+            .provide_async(async |Inject(caaaa): Inject<CAAAA>| Ok(CAAA(caaaa)), Session)
+            .provide_async(async |Inject(caaa): Inject<CAAA>| Ok(CAA(caaa)), Request)
+            .provide_async(async |Inject(caa): Inject<CAA>| Ok(CA(caa)), Request)
+            .provide_async(async |Inject(ca): Inject<CA>| Ok(C(ca)), Action)
+            .provide_async(async || Ok(B(2)), App)
+            .provide_async(async |Inject(b): Inject<B>, Inject(c): Inject<C>| Ok(A(b, c)), Step);
         let app_container = Container::new(registry);
         let request_container = app_container.clone().enter_build().await.unwrap();
         let action_container = request_container.clone().enter_build().await.unwrap();
@@ -1020,11 +1060,12 @@ mod tests {
         let registry = RegistriesBuilder::new()
             .provide(|| Ok(RequestTransient1), App)
             .provide(
-                |InjectTransient(req): InjectTransient<RequestTransient1>| Ok(RequestTransient2(req)),
+                |SyncInjectTransient(req): SyncInjectTransient<RequestTransient1>| Ok(RequestTransient2(req)),
                 Request,
             )
             .provide(
-                |InjectTransient(req_1): InjectTransient<RequestTransient1>, InjectTransient(req_2): InjectTransient<RequestTransient2>| {
+                |SyncInjectTransient(req_1): SyncInjectTransient<RequestTransient1>,
+                 SyncInjectTransient(req_2): SyncInjectTransient<RequestTransient2>| {
                     Ok(RequestTransient3(req_1, req_2))
                 },
                 Request,
@@ -1043,14 +1084,40 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
+    async fn test_async_transient_get() {
+        let registry = RegistriesBuilder::new()
+            .provide_async(async || Ok(RequestTransient1), App)
+            .provide_async(
+                async |InjectTransient(req): InjectTransient<RequestTransient1>| Ok(RequestTransient2(req)),
+                Request,
+            )
+            .provide_async(
+                async |InjectTransient(req_1): InjectTransient<RequestTransient1>,
+                       InjectTransient(req_2): InjectTransient<RequestTransient2>| { Ok(RequestTransient3(req_1, req_2)) },
+                Request,
+            );
+        let app_container = Container::new(registry);
+        let request_container = app_container.clone().enter().with_scope(Request).build().await.unwrap();
+
+        assert!(app_container.get_transient::<RequestTransient1>().await.is_ok());
+        assert!(app_container.get_transient::<RequestTransient2>().await.is_err());
+        assert!(app_container.get_transient::<RequestTransient3>().await.is_err());
+
+        assert!(request_container.get_transient::<RequestTransient1>().await.is_ok());
+        assert!(request_container.get_transient::<RequestTransient2>().await.is_ok());
+        assert!(request_container.get_transient::<RequestTransient3>().await.is_ok());
+    }
+
+    #[tokio::test]
+    #[traced_test]
     async fn test_scope_hierarchy() {
         let registry = RegistriesBuilder::new()
-            .provide(|| Ok(()), Runtime)
-            .provide(|| Ok(((), ())), App)
-            .provide(|| Ok(((), (), ())), Session)
-            .provide(|| Ok(((), (), (), ())), Request)
-            .provide(|| Ok(((), (), (), (), ())), Action)
-            .provide(|| Ok(((), (), (), (), (), ())), Step);
+            .provide_async(async || Ok(()), Runtime)
+            .provide_async(async || Ok(((), ())), App)
+            .provide_async(async || Ok(((), (), ())), Session)
+            .provide_async(async || Ok(((), (), (), ())), Request)
+            .provide_async(async || Ok(((), (), (), (), ())), Action)
+            .provide_async(async || Ok(((), (), (), (), (), ())), Step);
 
         let app_container = Container::new(registry);
         let request_container = app_container.clone().enter_build().await.unwrap();
@@ -1120,12 +1187,12 @@ mod tests {
     #[traced_test]
     async fn test_scope_with_hierarchy() {
         let registry = RegistriesBuilder::new()
-            .provide(|| Ok(()), Runtime)
-            .provide(|| Ok(((), ())), App)
-            .provide(|| Ok(((), (), ())), Session)
-            .provide(|| Ok(((), (), (), ())), Request)
-            .provide(|| Ok(((), (), (), (), ())), Action)
-            .provide(|| Ok(((), (), (), (), (), ())), Step);
+            .provide_async(async || Ok(()), Runtime)
+            .provide_async(async || Ok(((), ())), App)
+            .provide_async(async || Ok(((), (), ())), Session)
+            .provide_async(async || Ok(((), (), (), ())), Request)
+            .provide_async(async || Ok(((), (), (), (), ())), Action)
+            .provide_async(async || Ok(((), (), (), (), (), ())), Step);
 
         let runtime_container = Container::new_with_start_scope(registry, Runtime);
         let app_container = runtime_container.clone().enter().with_scope(App).build().await.unwrap();
@@ -1187,10 +1254,12 @@ mod tests {
         let finalizer_1_request_call_count = Arc::new(AtomicU8::new(0));
         let finalizer_2_request_call_count = Arc::new(AtomicU8::new(0));
         let finalizer_3_request_call_count = Arc::new(AtomicU8::new(0));
+        let finalizer_4_request_call_count = Arc::new(AtomicU8::new(0));
 
         let registry = RegistriesBuilder::new()
             .provide(|| Ok(()), Runtime)
             .provide(|| Ok(((), ())), App)
+            .provide_async(async || Ok(((), (), ())), Session)
             .provide(|| Ok(((), (), (), ())), Request)
             .add_finalizer({
                 let finalizer_1_request_call_count = finalizer_1_request_call_count.clone();
@@ -1204,22 +1273,34 @@ mod tests {
                     finalizer_2_request_call_count.fetch_add(1, Ordering::SeqCst);
                 }
             })
-            .add_finalizer({
+            .add_async_finalizer({
                 let finalizer_3_request_call_count = finalizer_3_request_call_count.clone();
+                move |_: Arc<((), (), ())>| {
+                    let finalizer_3_request_call_count = finalizer_3_request_call_count.clone();
+                    async move {
+                        finalizer_3_request_call_count.fetch_add(1, Ordering::SeqCst);
+                    }
+                }
+            })
+            .add_finalizer({
+                let finalizer_4_request_call_count = finalizer_4_request_call_count.clone();
                 move |_: Arc<((), (), (), ())>| {
-                    finalizer_3_request_call_count.fetch_add(1, Ordering::SeqCst);
+                    finalizer_4_request_call_count.fetch_add(1, Ordering::SeqCst);
                 }
             });
 
         let app_container = Container::new(registry);
+        let session_container = app_container.clone().enter().with_scope(Session).build().await.unwrap();
         let request_container = app_container.clone().enter().with_scope(Request).build().await.unwrap();
 
+        session_container.close().await;
         request_container.close().await;
         app_container.close().await;
 
         assert_eq!(finalizer_1_request_call_count.load(Ordering::SeqCst), 0);
         assert_eq!(finalizer_2_request_call_count.load(Ordering::SeqCst), 0);
         assert_eq!(finalizer_3_request_call_count.load(Ordering::SeqCst), 0);
+        assert_eq!(finalizer_4_request_call_count.load(Ordering::SeqCst), 0);
     }
 
     #[tokio::test]
@@ -1235,10 +1316,13 @@ mod tests {
         let finalizer_3_request_call_position = Arc::new(AtomicU8::new(0));
         let finalizer_4_request_call_count = Arc::new(AtomicU8::new(0));
         let finalizer_4_request_call_position = Arc::new(AtomicU8::new(0));
+        let finalizer_5_request_call_count = Arc::new(AtomicU8::new(0));
+        let finalizer_5_request_call_position = Arc::new(AtomicU8::new(0));
 
         let registry = RegistriesBuilder::new()
             .provide(|| Ok(()), Runtime)
             .provide(|| Ok(((), ())), App)
+            .provide_async(async || Ok(((), (), ())), App)
             .provide(|| Ok(((), (), (), ())), Request)
             .provide(|| Ok(((), (), (), (), ())), Request)
             .add_finalizer({
@@ -1265,28 +1349,45 @@ mod tests {
                     debug!("Finalizer 2 called");
                 }
             })
-            .add_finalizer({
+            .add_async_finalizer({
                 let request_call_count = request_call_count.clone();
                 let finalizer_3_request_call_position = finalizer_3_request_call_position.clone();
                 let finalizer_3_request_call_count = finalizer_3_request_call_count.clone();
-                move |_: Arc<((), (), (), ())>| {
-                    request_call_count.fetch_add(1, Ordering::SeqCst);
-                    finalizer_3_request_call_position.store(request_call_count.load(Ordering::SeqCst), Ordering::SeqCst);
-                    finalizer_3_request_call_count.fetch_add(1, Ordering::SeqCst);
+                move |_: Arc<((), (), ())>| {
+                    let request_call_count = request_call_count.clone();
+                    let finalizer_3_request_call_position = finalizer_3_request_call_position.clone();
+                    let finalizer_3_request_call_count = finalizer_3_request_call_count.clone();
+                    async move {
+                        request_call_count.fetch_add(1, Ordering::SeqCst);
+                        finalizer_3_request_call_position.store(request_call_count.load(Ordering::SeqCst), Ordering::SeqCst);
+                        finalizer_3_request_call_count.fetch_add(1, Ordering::SeqCst);
 
-                    debug!("Finalizer 3 called");
+                        debug!("Finalizer 3 called");
+                    }
                 }
             })
             .add_finalizer({
                 let request_call_count = request_call_count.clone();
                 let finalizer_4_request_call_position = finalizer_4_request_call_position.clone();
                 let finalizer_4_request_call_count = finalizer_4_request_call_count.clone();
-                move |_: Arc<((), (), (), (), ())>| {
+                move |_: Arc<((), (), (), ())>| {
                     request_call_count.fetch_add(1, Ordering::SeqCst);
                     finalizer_4_request_call_position.store(request_call_count.load(Ordering::SeqCst), Ordering::SeqCst);
                     finalizer_4_request_call_count.fetch_add(1, Ordering::SeqCst);
 
                     debug!("Finalizer 4 called");
+                }
+            })
+            .add_finalizer({
+                let request_call_count = request_call_count.clone();
+                let finalizer_5_request_call_position = finalizer_5_request_call_position.clone();
+                let finalizer_5_request_call_count = finalizer_5_request_call_count.clone();
+                move |_: Arc<((), (), (), (), ())>| {
+                    request_call_count.fetch_add(1, Ordering::SeqCst);
+                    finalizer_5_request_call_position.store(request_call_count.load(Ordering::SeqCst), Ordering::SeqCst);
+                    finalizer_5_request_call_count.fetch_add(1, Ordering::SeqCst);
+
+                    debug!("Finalizer 5 called");
                 }
             });
 
@@ -1295,6 +1396,7 @@ mod tests {
 
         let _ = request_container.get::<()>().await.unwrap();
         let _ = request_container.get::<((), ())>().await.unwrap();
+        let _ = request_container.get::<((), (), ())>().await.unwrap();
         let _ = request_container.get::<((), (), (), (), ())>().await.unwrap();
         let _ = request_container.get::<((), (), (), ())>().await.unwrap();
 
@@ -1312,34 +1414,39 @@ mod tests {
             .get_resolved_set()
             .0
             .len();
-        let app_container_resolved_set_count = app_container.sync.inner.lock().cache.get_resolved_set().0.len();
+        let app_container_resolved_set_count = app_container.sync.inner.lock().cache.get_resolved_set().0.len()
+            + app_container.inner.lock().await.cache.get_resolved_set().0.len();
         let request_container_resolved_set_count = request_container.sync.inner.lock().cache.get_resolved_set().0.len();
 
         request_container.close().await;
 
         assert_eq!(runtime_container_resolved_set_count, 1);
-        assert_eq!(app_container_resolved_set_count, 1);
+        assert_eq!(app_container_resolved_set_count, 2);
         assert_eq!(request_container_resolved_set_count, 2);
 
         assert_eq!(finalizer_1_request_call_count.load(Ordering::SeqCst), 0);
         assert_eq!(finalizer_1_request_call_position.load(Ordering::SeqCst), 0);
         assert_eq!(finalizer_2_request_call_count.load(Ordering::SeqCst), 0);
         assert_eq!(finalizer_2_request_call_position.load(Ordering::SeqCst), 0);
-        assert_eq!(finalizer_3_request_call_count.load(Ordering::SeqCst), 1);
-        assert_eq!(finalizer_3_request_call_position.load(Ordering::SeqCst), 1);
+        assert_eq!(finalizer_3_request_call_count.load(Ordering::SeqCst), 0);
+        assert_eq!(finalizer_3_request_call_position.load(Ordering::SeqCst), 0);
         assert_eq!(finalizer_4_request_call_count.load(Ordering::SeqCst), 1);
-        assert_eq!(finalizer_4_request_call_position.load(Ordering::SeqCst), 2);
+        assert_eq!(finalizer_4_request_call_position.load(Ordering::SeqCst), 1);
+        assert_eq!(finalizer_5_request_call_count.load(Ordering::SeqCst), 1);
+        assert_eq!(finalizer_5_request_call_position.load(Ordering::SeqCst), 2);
 
         app_container.close().await;
 
         assert_eq!(finalizer_1_request_call_count.load(Ordering::SeqCst), 1);
-        assert_eq!(finalizer_1_request_call_position.load(Ordering::SeqCst), 4);
+        assert_eq!(finalizer_1_request_call_position.load(Ordering::SeqCst), 5);
         assert_eq!(finalizer_2_request_call_count.load(Ordering::SeqCst), 1);
-        assert_eq!(finalizer_2_request_call_position.load(Ordering::SeqCst), 3);
+        assert_eq!(finalizer_2_request_call_position.load(Ordering::SeqCst), 4);
         assert_eq!(finalizer_3_request_call_count.load(Ordering::SeqCst), 1);
-        assert_eq!(finalizer_3_request_call_position.load(Ordering::SeqCst), 1);
+        assert_eq!(finalizer_3_request_call_position.load(Ordering::SeqCst), 3);
         assert_eq!(finalizer_4_request_call_count.load(Ordering::SeqCst), 1);
-        assert_eq!(finalizer_4_request_call_position.load(Ordering::SeqCst), 2);
+        assert_eq!(finalizer_4_request_call_position.load(Ordering::SeqCst), 1);
+        assert_eq!(finalizer_5_request_call_count.load(Ordering::SeqCst), 1);
+        assert_eq!(finalizer_5_request_call_position.load(Ordering::SeqCst), 2);
     }
 
     #[tokio::test]
@@ -1379,7 +1486,7 @@ mod tests {
 
         let registry = RegistriesBuilder::new()
             .provide(|| Ok(Type1), App)
-            .provide(|Inject(type_1): Inject<Type1>| Ok(Type2(type_1)), Request)
+            .provide(|SyncInject(type_1): SyncInject<Type1>| Ok(Type2(type_1)), Request)
             .add_finalizer({
                 let call_count = call_count.clone();
                 let finalizer_1_call_count = finalizer_1_call_count.clone();

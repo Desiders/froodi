@@ -85,7 +85,7 @@ macro_rules! impl_instantiator {
             type Error = Err;
 
             fn instantiate(&mut self, ($($ty,)*): ($($ty,)*)) -> impl Future<Output = Result<Self::Provides, Self::Error>> + Send {
-                Box::pin(async move { self($($ty,)*).await })
+                async move { self($($ty,)*).await }
             }
         }
     };
