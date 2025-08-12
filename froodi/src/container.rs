@@ -16,61 +16,6 @@ use crate::{
 };
 
 #[derive(Clone)]
-pub(crate) struct ContainerInner {
-    pub(crate) cache: Cache,
-    pub(crate) context: Context,
-    pub(crate) root_registry: Arc<Registry>,
-    pub(crate) child_registries: Box<[Arc<Registry>]>,
-    pub(crate) parent: Option<Container>,
-    pub(crate) close_parent: bool,
-}
-
-impl ContainerInner {
-    /// Closes the container, calling finalizers for resolved dependencies in LIFO order.
-    ///
-    /// # Warning
-    /// This method can be called multiple times, but it will only call finalizers for dependencies that were resolved since the last call
-    #[allow(clippy::missing_panics_doc)]
-    pub fn close(&mut self) {
-        self.close_with_parent_flag(self.close_parent);
-    }
-
-    pub(crate) fn close_with_parent_flag(&mut self, close_parent: bool) {
-        while let Some(Resolved { type_id, dependency }) = self.cache.get_resolved_set_mut().0.pop_back() {
-            let InstantiatorInnerData { finalizer, .. } = self
-                .root_registry
-                .get_instantiator_data(&type_id)
-                .expect("Instantiator should be present for resolved type");
-
-            if let Some(mut finalizer) = finalizer {
-                let _ = finalizer.call(dependency);
-                debug!(?type_id, "Finalizer called");
-            }
-        }
-
-        // We need to clear cache and fill it with the context as in start of the container usage
-        #[allow(clippy::assigning_clones)]
-        {
-            self.cache.map = self.context.map.clone();
-        }
-
-        if close_parent {
-            if let Some(parent) = &self.parent {
-                parent.close();
-                debug!("Parent container closed");
-            }
-        }
-    }
-}
-
-impl Drop for ContainerInner {
-    fn drop(&mut self) {
-        self.close();
-        debug!("Container closed on drop");
-    }
-}
-
-#[derive(Clone)]
 pub struct Container {
     pub(crate) inner: Arc<Mutex<ContainerInner>>,
 }
@@ -99,40 +44,34 @@ impl Container {
             panic!("registries len (is 0) should be > 1");
         };
 
-        let mut container = Self {
-            inner: Arc::new(Mutex::new(ContainerInner {
-                cache: Cache::new(),
-                context: Context::new(),
-                root_registry,
-                child_registries,
-                parent: None,
-                close_parent: false,
-            })),
+        let mut container = BoxedContainerInner {
+            cache: Cache::new(),
+            context: Context::new(),
+            root_registry,
+            child_registries,
+            parent: None,
+            close_parent: false,
         };
 
-        let mut inner = container.inner.lock();
-        let mut iter = inner.child_registries.iter();
+        let mut iter = container.child_registries.iter();
         let mut registry = (*iter.next().expect("registries len (is 1) should be > 1")).clone();
         let mut child_registries = iter.cloned().collect();
 
-        let mut search_next = inner.root_registry.scope.is_skipped_by_default;
+        let mut search_next = container.root_registry.scope.is_skipped_by_default;
         while search_next {
-            drop(inner);
             container = container.init_child(registry, child_registries, true);
-            inner = container.inner.lock();
 
-            search_next = inner.root_registry.scope.is_skipped_by_default;
+            search_next = container.root_registry.scope.is_skipped_by_default;
             if search_next {
-                let mut iter = inner.child_registries.iter();
+                let mut iter = container.child_registries.iter();
                 registry = (*iter.next().expect("last scope can't be skipped by default")).clone();
                 child_registries = iter.cloned().collect();
             } else {
                 break;
             }
         }
-        drop(inner);
 
-        container
+        container.into()
     }
 
     /// Creates container with start scope
@@ -154,44 +93,38 @@ impl Container {
         let container_priority = root_registry.scope.priority;
         let priority = scope.priority();
 
-        let mut container = Self {
-            inner: Arc::new(Mutex::new(ContainerInner {
-                cache: Cache::new(),
-                context: Context::new(),
-                root_registry,
-                child_registries,
-                parent: None,
-                close_parent: false,
-            })),
+        let mut container = BoxedContainerInner {
+            cache: Cache::new(),
+            context: Context::new(),
+            root_registry,
+            child_registries,
+            parent: None,
+            close_parent: false,
         };
 
         if container_priority == priority {
-            return container;
+            return container.into();
         }
 
-        let mut inner = container.inner.lock();
-        let mut iter = inner.child_registries.iter();
+        let mut iter = container.child_registries.iter();
         let mut registry = (*iter.next().expect("last scope can't be with another priority")).clone();
         let mut child_registries = iter.cloned().collect();
 
-        let mut search_next = inner.root_registry.scope.priority != priority;
+        let mut search_next = container.root_registry.scope.priority != priority;
         while search_next {
-            drop(inner);
             container = container.init_child(registry, child_registries, true);
-            inner = container.inner.lock();
 
-            search_next = inner.root_registry.scope.priority != priority;
+            search_next = container.root_registry.scope.priority != priority;
             if search_next {
-                let mut iter = inner.child_registries.iter();
+                let mut iter = container.child_registries.iter();
                 registry = (*iter.next().expect("last scope can't be with another priority")).clone();
                 child_registries = iter.cloned().collect();
             } else {
                 break;
             }
         }
-        drop(inner);
 
-        container
+        container.into()
     }
 
     /// Creates child container builder
@@ -631,6 +564,116 @@ where
         drop(inner);
 
         Ok(child)
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct BoxedContainerInner {
+    pub(crate) cache: Cache,
+    pub(crate) context: Context,
+    pub(crate) root_registry: Arc<Registry>,
+    pub(crate) child_registries: Box<[Arc<Registry>]>,
+    pub(crate) parent: Option<Box<BoxedContainerInner>>,
+    pub(crate) close_parent: bool,
+}
+
+impl BoxedContainerInner {
+    #[inline]
+    #[must_use]
+    pub(crate) fn init_child(self, root_registry: Arc<Registry>, child_registries: Box<[Arc<Registry>]>, close_parent: bool) -> Self {
+        let mut cache = self.cache.child();
+        let context = self.context.clone();
+        cache.append_context(&context);
+
+        Self {
+            cache,
+            context,
+            root_registry,
+            child_registries,
+            parent: Some(Box::new(self)),
+            close_parent,
+        }
+    }
+}
+
+impl From<BoxedContainerInner> for Container {
+    fn from(
+        BoxedContainerInner {
+            cache,
+            context,
+            root_registry,
+            child_registries,
+            parent,
+            close_parent,
+        }: BoxedContainerInner,
+    ) -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(ContainerInner {
+                cache,
+                context,
+                root_registry,
+                child_registries,
+                parent: match parent {
+                    Some(parent) => Some((*parent).into()),
+                    None => None,
+                },
+                close_parent,
+            })),
+        }
+    }
+}
+
+pub(crate) struct ContainerInner {
+    pub(crate) cache: Cache,
+    pub(crate) context: Context,
+    pub(crate) root_registry: Arc<Registry>,
+    pub(crate) child_registries: Box<[Arc<Registry>]>,
+    pub(crate) parent: Option<Container>,
+    pub(crate) close_parent: bool,
+}
+
+impl ContainerInner {
+    /// Closes the container, calling finalizers for resolved dependencies in LIFO order.
+    ///
+    /// # Warning
+    /// This method can be called multiple times, but it will only call finalizers for dependencies that were resolved since the last call
+    #[allow(clippy::missing_panics_doc)]
+    pub fn close(&mut self) {
+        self.close_with_parent_flag(self.close_parent);
+    }
+
+    pub(crate) fn close_with_parent_flag(&mut self, close_parent: bool) {
+        while let Some(Resolved { type_id, dependency }) = self.cache.get_resolved_set_mut().0.pop_back() {
+            let InstantiatorInnerData { finalizer, .. } = self
+                .root_registry
+                .get_instantiator_data(&type_id)
+                .expect("Instantiator should be present for resolved type");
+
+            if let Some(mut finalizer) = finalizer {
+                let _ = finalizer.call(dependency);
+                debug!(?type_id, "Finalizer called");
+            }
+        }
+
+        // We need to clear cache and fill it with the context as in start of the container usage
+        #[allow(clippy::assigning_clones)]
+        {
+            self.cache.map = self.context.map.clone();
+        }
+
+        if close_parent {
+            if let Some(parent) = &self.parent {
+                parent.close();
+                debug!("Parent container closed");
+            }
+        }
+    }
+}
+
+impl Drop for ContainerInner {
+    fn drop(&mut self) {
+        self.close();
+        debug!("Container closed on drop");
     }
 }
 

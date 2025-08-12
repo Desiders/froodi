@@ -11,70 +11,13 @@ use super::{
 };
 use crate::{
     cache::{Cache, Resolved},
-    container::{Container as SyncContainer, ContainerInner as SyncContainerInner},
+    container::{BoxedContainerInner as LifetimedSyncContainerInner, Container as SyncContainer, ContainerInner as SyncContainerInner},
     context::Context,
     errors::{ResolveErrorKind, ScopeErrorKind, ScopeWithErrorKind},
     registry::Registry as SyncRegistry,
     scope::Scope,
     InstantiatorErrorKind,
 };
-
-#[derive(Clone)]
-struct ContainerInner {
-    cache: Cache,
-    context: Context,
-    root_registry: Arc<Registry>,
-    child_registries: Box<[Arc<Registry>]>,
-    parent: Option<Container>,
-    close_parent: bool,
-}
-
-impl ContainerInner {
-    /// Closes the container, calling finalizers for resolved dependencies in LIFO order.
-    ///
-    /// # Warning
-    /// This method can be called multiple times, but it will only call finalizers for dependencies that were resolved since the last call
-    #[allow(clippy::missing_panics_doc)]
-    pub async fn close(&mut self) {
-        self.close_with_parent_flag(self.close_parent).await;
-    }
-
-    #[allow(clippy::missing_panics_doc)]
-    #[async_recursion]
-    async fn close_with_parent_flag(&mut self, close_parent: bool) {
-        while let Some(Resolved { type_id, dependency }) = self.cache.get_resolved_set_mut().0.pop_back() {
-            let InstantiatorInnerData { finalizer, .. } = self
-                .root_registry
-                .get_instantiator_data(&type_id)
-                .expect("Instantiator should be present for resolved type");
-
-            if let Some(mut finalizer) = finalizer {
-                let _ = finalizer.call(dependency).await;
-                debug!(?type_id, "Finalizer called");
-            }
-        }
-
-        // We need to clear cache and fill it with the context as in start of the container usage
-        #[allow(clippy::assigning_clones)]
-        {
-            self.cache.map = self.context.map.clone();
-        }
-
-        if close_parent {
-            if let Some(parent) = &self.parent {
-                parent.close().await;
-                debug!("Parent container closed");
-            }
-        }
-    }
-}
-
-impl Drop for ContainerInner {
-    fn drop(&mut self) {
-        self.close();
-        debug!("Container closed on drop");
-    }
-}
 
 #[derive(Clone)]
 pub struct Container {
@@ -113,70 +56,52 @@ impl Container {
             panic!("registries len (is 0) should be > 1");
         };
 
-        let mut container = Self {
-            inner: Arc::new(Mutex::new(ContainerInner {
-                cache: Cache::new(),
-                context: Context::new(),
-                root_registry,
-                child_registries,
-                parent: None,
-                close_parent: false,
-            })),
-            sync: SyncContainer {
-                inner: Arc::new(SyncMutex::new(SyncContainerInner {
-                    cache: Cache::new(),
-                    context: Context::new(),
-                    root_registry: root_sync_registry,
-                    child_registries: child_sync_registries,
-                    parent: None,
-                    close_parent: false,
-                })),
-            },
+        let mut sync_container = LifetimedSyncContainerInner {
+            cache: Cache::new(),
+            context: Context::new(),
+            root_registry: root_sync_registry,
+            child_registries: child_sync_registries,
+            parent: None,
+            close_parent: false,
+        };
+        let mut container = BoxedContainerInner {
+            cache: Cache::new(),
+            context: Context::new(),
+            root_registry,
+            child_registries,
+            parent: None,
+            close_parent: false,
+            sync_container: sync_container.clone(),
         };
 
-        let mut inner = container.inner.lock_blocking();
-        let mut iter = inner.child_registries.iter();
+        let mut iter = container.child_registries.iter();
         let mut registry = (*iter.next().expect("registries len (is 1) should be > 1")).clone();
         let mut child_registries = iter.cloned().collect();
 
-        let mut sync_inner = container.sync.inner.lock();
-        let mut sync_iter = sync_inner.child_registries.iter();
+        let mut sync_iter = sync_container.child_registries.iter();
         let mut sync_registry = (*sync_iter.next().expect("registries len (is 1) should be > 1")).clone();
         let mut child_sync_registries = sync_iter.cloned().collect();
 
-        let mut search_next = inner.root_registry.scope.is_skipped_by_default;
+        let mut search_next = container.root_registry.scope.is_skipped_by_default;
         while search_next {
-            drop(inner);
-            drop(sync_inner);
-            let sync_container = container.sync.clone();
-            container = container.init_child(
-                sync_container,
-                registry,
-                child_registries,
-                sync_registry,
-                child_sync_registries,
-                true,
-            );
-            inner = container.inner.lock_blocking();
-            sync_inner = container.sync.inner.lock();
+            sync_container = sync_container.init_child(sync_registry, child_sync_registries, true);
+            container = container.init_child(registry, child_registries, true, sync_container.clone());
 
-            search_next = inner.root_registry.scope.is_skipped_by_default;
+            search_next = sync_container.root_registry.scope.is_skipped_by_default;
             if search_next {
-                let mut iter = inner.child_registries.iter();
+                let mut iter = container.child_registries.iter();
                 registry = (*iter.next().expect("last scope can't be skipped by default")).clone();
                 child_registries = iter.cloned().collect();
 
-                let mut sync_iter = sync_inner.child_registries.iter();
+                let mut sync_iter = sync_container.child_registries.iter();
                 sync_registry = (*sync_iter.next().expect("last scope can't be skipped by default")).clone();
                 child_sync_registries = sync_iter.cloned().collect();
             } else {
                 break;
             }
         }
-        drop(inner);
-        drop(sync_inner);
 
-        container
+        container.into()
     }
 
     /// Creates container with start scope
@@ -202,77 +127,60 @@ impl Container {
             panic!("registries len (is 0) should be > 1");
         };
 
-        let container_priority = root_registry.scope.priority;
+        let mut container_priority = root_registry.scope.priority;
         let priority = scope.priority();
 
-        let mut container = Self {
-            inner: Arc::new(Mutex::new(ContainerInner {
-                cache: Cache::new(),
-                context: Context::new(),
-                root_registry,
-                child_registries,
-                parent: None,
-                close_parent: false,
-            })),
-            sync: SyncContainer {
-                inner: Arc::new(SyncMutex::new(SyncContainerInner {
-                    cache: Cache::new(),
-                    context: Context::new(),
-                    root_registry: root_sync_registry,
-                    child_registries: child_sync_registries,
-                    parent: None,
-                    close_parent: false,
-                })),
-            },
+        let mut sync_container = LifetimedSyncContainerInner {
+            cache: Cache::new(),
+            context: Context::new(),
+            root_registry: root_sync_registry,
+            child_registries: child_sync_registries,
+            parent: None,
+            close_parent: false,
+        };
+        let mut container = BoxedContainerInner {
+            cache: Cache::new(),
+            context: Context::new(),
+            root_registry,
+            child_registries,
+            parent: None,
+            close_parent: false,
+            sync_container: sync_container.clone(),
         };
 
         if container_priority == priority {
-            return container;
+            return container.into();
         }
 
-        let mut inner = container.inner.lock_blocking();
-        let mut iter = inner.child_registries.iter();
+        let mut iter = container.child_registries.iter();
         let mut registry = (*iter.next().expect("last scope can't be with another priority")).clone();
         let mut child_registries = iter.cloned().collect();
 
-        let mut sync_inner = container.sync.inner.lock();
-        let mut sync_iter = sync_inner.child_registries.iter();
+        let mut sync_iter = sync_container.child_registries.iter();
         let mut sync_registry = (*sync_iter.next().expect("last scope can't be with another priority")).clone();
         let mut child_sync_registries = sync_iter.cloned().collect();
 
-        let mut search_next = inner.root_registry.scope.priority != priority;
+        let mut search_next = container_priority != priority;
         while search_next {
-            drop(inner);
-            drop(sync_inner);
-            let sync_container = container.sync.clone();
-            container = container.init_child(
-                sync_container,
-                registry,
-                child_registries,
-                sync_registry,
-                child_sync_registries,
-                true,
-            );
-            inner = container.inner.lock_blocking();
-            sync_inner = container.sync.inner.lock();
+            sync_container = sync_container.init_child(sync_registry, child_sync_registries, true);
+            container = container.init_child(registry, child_registries, true, sync_container.clone());
 
-            search_next = inner.root_registry.scope.priority != priority;
+            container_priority = container.root_registry.scope.priority;
+            search_next = container_priority != priority;
             if search_next {
-                let mut iter = inner.child_registries.iter();
+                let mut iter = container.child_registries.iter();
                 registry = (*iter.next().expect("last scope can't be with another priority")).clone();
                 child_registries = iter.cloned().collect();
 
-                let mut sync_iter = sync_inner.child_registries.iter();
+                let mut sync_iter = sync_container.child_registries.iter();
                 sync_registry = (*sync_iter.next().expect("last scope can't be with another priority")).clone();
                 child_sync_registries = sync_iter.cloned().collect();
             } else {
                 break;
             }
         }
-        drop(inner);
-        drop(sync_inner);
 
-        container
+        container.into()
     }
 
     /// Creates child container builder
@@ -293,8 +201,8 @@ impl Container {
     /// - Returns [`ScopeErrorKind::NoChildRegistries`] if there are no registries
     /// - Returns [`ScopeErrorKind::NoNonSkippedRegistries`] if there are no non-skipped registries
     #[inline]
-    pub fn enter_build(self) -> Result<Container, ScopeErrorKind> {
-        self.enter().build()
+    pub async fn enter_build(self) -> Result<Container, ScopeErrorKind> {
+        self.enter().build().await
     }
 
     /// Gets a scoped dependency from the container
@@ -468,7 +376,7 @@ impl Container {
     #[inline]
     #[allow(clippy::too_many_arguments)]
     #[must_use]
-    fn init_child_with_context(
+    async fn init_child_with_context(
         self,
         sync_container: SyncContainer,
         context: Context,
@@ -477,22 +385,18 @@ impl Container {
         root_sync_registry: Arc<SyncRegistry>,
         child_sync_registries: Box<[Arc<SyncRegistry>]>,
         close_parent: bool,
-    ) -> Container {
-        let inner = self.inner.lock_blocking();
-
+    ) -> Self {
+        let inner = self.inner.lock().await;
         let mut cache = inner.cache.child();
         cache.append_context(&context);
-
         drop(inner);
 
         let sync_inner = self.sync.inner.lock();
-
         let mut sync_cache = sync_inner.cache.child();
         sync_cache.append_context(&context);
-
         drop(sync_inner);
 
-        Container {
+        Self {
             inner: Arc::new(Mutex::new(ContainerInner {
                 cache,
                 context: context.clone(),
@@ -516,7 +420,7 @@ impl Container {
 
     #[inline]
     #[must_use]
-    fn init_child(
+    async fn init_child(
         self,
         sync_container: SyncContainer,
         root_registry: Arc<Registry>,
@@ -524,24 +428,20 @@ impl Container {
         root_sync_registry: Arc<SyncRegistry>,
         child_sync_registries: Box<[Arc<SyncRegistry>]>,
         close_parent: bool,
-    ) -> Container {
-        let inner = self.inner.lock_blocking();
-
+    ) -> Self {
+        let inner = self.inner.lock().await;
         let mut cache = inner.cache.child();
         let context = inner.context.clone();
         cache.append_context(&context);
-
         drop(inner);
 
         let sync_inner = self.sync.inner.lock();
-
         let mut sync_cache = sync_inner.cache.child();
         let sync_context = sync_inner.context.clone();
         sync_cache.append_context(&sync_context);
-
         drop(sync_inner);
 
-        Container {
+        Self {
             inner: Arc::new(Mutex::new(ContainerInner {
                 cache,
                 context,
@@ -597,10 +497,10 @@ impl ChildContainerBuiler {
     ///
     /// # Warning
     /// This method skips first children skippable scopes, if you want to use one of them, use [`ChildContainerBuiler::with_scope`].
-    pub fn build(self) -> Result<Container, ScopeErrorKind> {
+    pub async fn build(self) -> Result<Container, ScopeErrorKind> {
         use ScopeErrorKind::{NoChildRegistries, NoNonSkippedRegistries};
 
-        let inner = self.container.inner.lock_blocking();
+        let inner = self.container.inner.lock().await;
         let mut iter = inner.child_registries.iter();
         let registry = (*iter.next().ok_or(NoChildRegistries)?).clone();
         let child_registries = iter.cloned().collect();
@@ -613,15 +513,18 @@ impl ChildContainerBuiler {
         drop(sync_inner);
 
         let sync_container = self.container.sync.clone();
-        let mut child = self.container.init_child(
-            sync_container,
-            registry,
-            child_registries,
-            sync_registry,
-            child_sync_registries,
-            false,
-        );
-        let mut inner = child.inner.lock_blocking();
+        let mut child = self
+            .container
+            .init_child(
+                sync_container,
+                registry,
+                child_registries,
+                sync_registry,
+                child_sync_registries,
+                false,
+            )
+            .await;
+        let mut inner = child.inner.lock().await;
         let mut sync_inner = child.sync.inner.lock();
         while inner.root_registry.scope.is_skipped_by_default {
             let mut iter = inner.child_registries.iter();
@@ -635,15 +538,17 @@ impl ChildContainerBuiler {
             drop(sync_inner);
 
             let sync_container = child.sync.clone();
-            child = child.init_child(
-                sync_container,
-                registry,
-                child_registries,
-                sync_registry,
-                child_sync_registries,
-                true,
-            );
-            inner = child.inner.lock_blocking();
+            child = child
+                .init_child(
+                    sync_container,
+                    registry,
+                    child_registries,
+                    sync_registry,
+                    child_sync_registries,
+                    true,
+                )
+                .await;
+            inner = child.inner.lock().await;
             sync_inner = child.sync.inner.lock();
         }
         drop(inner);
@@ -680,12 +585,12 @@ where
     ///
     /// # Warning
     /// If you want just to use next non-skipped scope, use [`ChildContainerBuiler::with_scope`]
-    pub fn build(self) -> Result<Container, ScopeWithErrorKind> {
+    pub async fn build(self) -> Result<Container, ScopeWithErrorKind> {
         use ScopeWithErrorKind::{NoChildRegistries, NoChildRegistriesWithScope};
 
         let priority = self.scope.priority();
 
-        let inner = self.container.inner.lock_blocking();
+        let inner = self.container.inner.lock().await;
         let mut iter = inner.child_registries.iter();
         let registry = (*iter.next().ok_or(NoChildRegistries)?).clone();
         let child_registries = iter.cloned().collect();
@@ -698,15 +603,18 @@ where
         drop(sync_inner);
 
         let sync_container = self.container.sync.clone();
-        let mut child = self.container.init_child(
-            sync_container,
-            registry,
-            child_registries,
-            sync_registry,
-            child_sync_registries,
-            false,
-        );
-        let mut inner = child.inner.lock_blocking();
+        let mut child = self
+            .container
+            .init_child(
+                sync_container,
+                registry,
+                child_registries,
+                sync_registry,
+                child_sync_registries,
+                false,
+            )
+            .await;
+        let mut inner = child.inner.lock().await;
         let mut sync_inner = child.sync.inner.lock();
         while inner.root_registry.scope.priority != priority {
             let mut iter = inner.child_registries.iter();
@@ -728,15 +636,17 @@ where
             drop(sync_inner);
 
             let sync_container = child.sync.clone();
-            child = child.init_child(
-                sync_container,
-                registry,
-                child_registries,
-                sync_registry,
-                child_sync_registries,
-                true,
-            );
-            inner = child.inner.lock_blocking();
+            child = child
+                .init_child(
+                    sync_container,
+                    registry,
+                    child_registries,
+                    sync_registry,
+                    child_sync_registries,
+                    true,
+                )
+                .await;
+            inner = child.inner.lock().await;
             sync_inner = child.sync.inner.lock();
         }
         drop(inner);
@@ -770,10 +680,10 @@ impl ChildContainerWithContext {
     ///
     /// # Warning
     /// This method skips first children skippable scopes, if you want to use one of them, use [`ChildContainerBuiler::with_scope`]
-    pub fn build(self) -> Result<Container, ScopeErrorKind> {
+    pub async fn build(self) -> Result<Container, ScopeErrorKind> {
         use ScopeErrorKind::{NoChildRegistries, NoNonSkippedRegistries};
 
-        let inner = self.container.inner.lock_blocking();
+        let inner = self.container.inner.lock().await;
         let mut iter = inner.child_registries.iter();
         let registry = (*iter.next().ok_or(NoChildRegistries)?).clone();
         let child_registries = iter.cloned().collect();
@@ -786,16 +696,19 @@ impl ChildContainerWithContext {
         drop(sync_inner);
 
         let sync_container = self.container.sync.clone();
-        let mut child = self.container.init_child_with_context(
-            sync_container,
-            self.context.clone(),
-            registry,
-            child_registries,
-            sync_registry,
-            child_sync_registries,
-            false,
-        );
-        let mut inner = child.inner.lock_blocking();
+        let mut child = self
+            .container
+            .init_child_with_context(
+                sync_container,
+                self.context.clone(),
+                registry,
+                child_registries,
+                sync_registry,
+                child_sync_registries,
+                false,
+            )
+            .await;
+        let mut inner = child.inner.lock().await;
         let mut sync_inner = child.sync.inner.lock();
         while inner.root_registry.scope.is_skipped_by_default {
             let mut iter = inner.child_registries.iter();
@@ -809,16 +722,18 @@ impl ChildContainerWithContext {
             drop(sync_inner);
 
             let sync_container = child.sync.clone();
-            child = child.init_child_with_context(
-                sync_container,
-                self.context.clone(),
-                registry,
-                child_registries,
-                sync_registry,
-                child_sync_registries,
-                true,
-            );
-            inner = child.inner.lock_blocking();
+            child = child
+                .init_child_with_context(
+                    sync_container,
+                    self.context.clone(),
+                    registry,
+                    child_registries,
+                    sync_registry,
+                    child_sync_registries,
+                    true,
+                )
+                .await;
+            inner = child.inner.lock().await;
             sync_inner = child.sync.inner.lock();
         }
         drop(inner);
@@ -846,12 +761,12 @@ where
     ///
     /// # Warning
     /// If you want just to use next non-skipped scope, use [`ChildContainerBuiler::with_scope`]
-    pub fn build(self) -> Result<Container, ScopeWithErrorKind> {
+    pub async fn build(self) -> Result<Container, ScopeWithErrorKind> {
         use ScopeWithErrorKind::{NoChildRegistries, NoChildRegistriesWithScope};
 
         let priority = self.scope.priority();
 
-        let inner = self.container.inner.lock_blocking();
+        let inner = self.container.inner.lock().await;
         let mut iter = inner.child_registries.iter();
         let registry = (*iter.next().ok_or(NoChildRegistries)?).clone();
         let child_registries = iter.cloned().collect();
@@ -864,16 +779,19 @@ where
         drop(sync_inner);
 
         let sync_container = self.container.sync.clone();
-        let mut child = self.container.init_child_with_context(
-            sync_container,
-            self.context.clone(),
-            registry,
-            child_registries,
-            sync_registry,
-            child_sync_registries,
-            false,
-        );
-        let mut inner = child.inner.lock_blocking();
+        let mut child = self
+            .container
+            .init_child_with_context(
+                sync_container,
+                self.context.clone(),
+                registry,
+                child_registries,
+                sync_registry,
+                child_sync_registries,
+                false,
+            )
+            .await;
+        let mut inner = child.inner.lock().await;
         let mut sync_inner = child.sync.inner.lock();
         while inner.root_registry.scope.priority != priority {
             let mut iter = inner.child_registries.iter();
@@ -895,22 +813,146 @@ where
             drop(sync_inner);
 
             let sync_container = child.sync.clone();
-            child = child.init_child_with_context(
-                sync_container,
-                self.context.clone(),
-                registry,
-                child_registries,
-                sync_registry,
-                child_sync_registries,
-                true,
-            );
-            inner = child.inner.lock_blocking();
+            child = child
+                .init_child_with_context(
+                    sync_container,
+                    self.context.clone(),
+                    registry,
+                    child_registries,
+                    sync_registry,
+                    child_sync_registries,
+                    true,
+                )
+                .await;
+            inner = child.inner.lock().await;
             sync_inner = child.sync.inner.lock();
         }
         drop(inner);
         drop(sync_inner);
 
         Ok(child)
+    }
+}
+
+struct BoxedContainerInner {
+    cache: Cache,
+    context: Context,
+    root_registry: Arc<Registry>,
+    child_registries: Box<[Arc<Registry>]>,
+    parent: Option<Box<BoxedContainerInner>>,
+    close_parent: bool,
+    sync_container: LifetimedSyncContainerInner,
+}
+
+impl BoxedContainerInner {
+    #[inline]
+    #[must_use]
+    fn init_child(
+        self,
+        root_registry: Arc<Registry>,
+        child_registries: Box<[Arc<Registry>]>,
+        close_parent: bool,
+        sync_container: LifetimedSyncContainerInner,
+    ) -> Self {
+        let mut cache = self.cache.child();
+        let context = self.context.clone();
+        cache.append_context(&context);
+
+        Self {
+            cache,
+            context,
+            root_registry,
+            child_registries,
+            parent: Some(Box::new(self)),
+            close_parent,
+            sync_container,
+        }
+    }
+}
+
+impl From<BoxedContainerInner> for Container {
+    fn from(
+        BoxedContainerInner {
+            cache,
+            context,
+            root_registry,
+            child_registries,
+            parent,
+            close_parent,
+            sync_container,
+        }: BoxedContainerInner,
+    ) -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(ContainerInner {
+                cache,
+                context,
+                root_registry,
+                child_registries,
+                parent: match parent {
+                    Some(parent) => Some((*parent).into()),
+                    None => None,
+                },
+                close_parent,
+            })),
+            sync: sync_container.into(),
+        }
+    }
+}
+
+#[derive(Clone)]
+struct ContainerInner {
+    cache: Cache,
+    context: Context,
+    root_registry: Arc<Registry>,
+    child_registries: Box<[Arc<Registry>]>,
+    parent: Option<Container>,
+    close_parent: bool,
+}
+
+impl ContainerInner {
+    /// Closes the container, calling finalizers for resolved dependencies in LIFO order.
+    ///
+    /// # Warning
+    /// This method can be called multiple times, but it will only call finalizers for dependencies that were resolved since the last call
+    #[allow(clippy::missing_panics_doc)]
+    pub async fn close(&mut self) {
+        self.close_with_parent_flag(self.close_parent).await;
+    }
+
+    #[allow(clippy::missing_panics_doc)]
+    #[async_recursion]
+    async fn close_with_parent_flag(&mut self, close_parent: bool) {
+        while let Some(Resolved { type_id, dependency }) = self.cache.get_resolved_set_mut().0.pop_back() {
+            let InstantiatorInnerData { finalizer, .. } = self
+                .root_registry
+                .get_instantiator_data(&type_id)
+                .expect("Instantiator should be present for resolved type");
+
+            if let Some(mut finalizer) = finalizer {
+                let _ = finalizer.call(dependency).await;
+                debug!(?type_id, "Finalizer called");
+            }
+        }
+
+        // We need to clear cache and fill it with the context as in start of the container usage
+        #[allow(clippy::assigning_clones)]
+        {
+            self.cache.map = self.context.map.clone();
+        }
+
+        if close_parent {
+            if let Some(parent) = &self.parent {
+                parent.close().await;
+                debug!("Parent container closed");
+            }
+        }
+    }
+}
+
+impl Drop for ContainerInner {
+    fn drop(&mut self) {
+        self.close();
+        debug!("Container closed on drop");
     }
 }
 
@@ -957,9 +999,9 @@ mod tests {
             .provide(|| Ok(B(2)), App)
             .provide(|Inject(b): Inject<B>, Inject(c): Inject<C>| Ok(A(b, c)), Step);
         let app_container = Container::new(registry);
-        let request_container = app_container.clone().enter_build().unwrap();
-        let action_container = request_container.clone().enter_build().unwrap();
-        let step_container = action_container.clone().enter_build().unwrap();
+        let request_container = app_container.clone().enter_build().await.unwrap();
+        let action_container = request_container.clone().enter_build().await.unwrap();
+        let step_container = action_container.clone().enter_build().await.unwrap();
 
         let _ = step_container.get::<A>().await.unwrap();
         let _ = step_container.get::<CAAAAA>().await.unwrap();
@@ -991,7 +1033,7 @@ mod tests {
                 Request,
             );
         let app_container = Container::new(registry);
-        let request_container = app_container.clone().enter().with_scope(Request).build().unwrap();
+        let request_container = app_container.clone().enter().with_scope(Request).build().await.unwrap();
 
         assert!(app_container.get_transient::<RequestTransient1>().await.is_ok());
         assert!(app_container.get_transient::<RequestTransient2>().await.is_err());
@@ -1014,9 +1056,9 @@ mod tests {
             .provide(|| Ok(((), (), (), (), (), ())), Step);
 
         let app_container = Container::new(registry);
-        let request_container = app_container.clone().enter_build().unwrap();
-        let action_container = request_container.clone().enter_build().unwrap();
-        let step_container = action_container.clone().enter_build().unwrap();
+        let request_container = app_container.clone().enter_build().await.unwrap();
+        let action_container = request_container.clone().enter_build().await.unwrap();
+        let step_container = action_container.clone().enter_build().await.unwrap();
 
         let app_container_inner = app_container.inner.lock().await;
         let request_container_inner = request_container.inner.lock().await;
@@ -1089,11 +1131,11 @@ mod tests {
             .provide(|| Ok(((), (), (), (), (), ())), Step);
 
         let runtime_container = Container::new_with_start_scope(registry, Runtime);
-        let app_container = runtime_container.clone().enter().with_scope(App).build().unwrap();
-        let session_container = runtime_container.clone().enter().with_scope(Session).build().unwrap();
-        let request_container = app_container.clone().enter().with_scope(Request).build().unwrap();
-        let action_container = request_container.clone().enter().with_scope(Action).build().unwrap();
-        let step_container = action_container.clone().enter().with_scope(Step).build().unwrap();
+        let app_container = runtime_container.clone().enter().with_scope(App).build().await.unwrap();
+        let session_container = runtime_container.clone().enter().with_scope(Session).build().await.unwrap();
+        let request_container = app_container.clone().enter().with_scope(Request).build().await.unwrap();
+        let action_container = request_container.clone().enter().with_scope(Action).build().await.unwrap();
+        let step_container = action_container.clone().enter().with_scope(Step).build().await.unwrap();
 
         let runtime_container_inner = runtime_container.inner.lock().await;
         let app_container_inner = app_container.inner.lock().await;
@@ -1173,7 +1215,7 @@ mod tests {
             });
 
         let app_container = Container::new(registry);
-        let request_container = app_container.clone().enter().with_scope(Request).build().unwrap();
+        let request_container = app_container.clone().enter().with_scope(Request).build().await.unwrap();
 
         request_container.close().await;
         app_container.close().await;
@@ -1252,7 +1294,7 @@ mod tests {
             });
 
         let app_container = Container::new(registry);
-        let request_container = app_container.clone().enter().with_scope(Request).build().unwrap();
+        let request_container = app_container.clone().enter().with_scope(Request).build().await.unwrap();
 
         let _ = request_container.get::<()>().await.unwrap();
         let _ = request_container.get::<((), ())>().await.unwrap();
@@ -1367,7 +1409,7 @@ mod tests {
             });
 
         let app_container = Container::new(registry);
-        let request_container = app_container.enter_build().unwrap();
+        let request_container = app_container.enter_build().await.unwrap();
         DropWrapper {
             val: request_container,
             call_count: call_count.clone(),
