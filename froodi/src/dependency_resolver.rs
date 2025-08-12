@@ -15,7 +15,7 @@ impl<Dep: Send + Sync + 'static> DependencyResolver for Inject<Dep> {
     type Error = ResolveErrorKind;
 
     fn resolve(container: Container) -> Result<Self, Self::Error> {
-        container.get().map(Inject)
+        container.get().map(Self)
     }
 }
 
@@ -25,7 +25,7 @@ impl<Dep: 'static> DependencyResolver for InjectTransient<Dep> {
     type Error = ResolveErrorKind;
 
     fn resolve(container: Container) -> Result<Self, Self::Error> {
-        container.get_transient().map(InjectTransient)
+        container.get_transient().map(Self)
     }
 }
 

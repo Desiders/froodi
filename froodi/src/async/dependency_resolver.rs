@@ -1,4 +1,3 @@
-use alloc::boxed::Box;
 use alloc::sync::Arc;
 use core::future::Future;
 
@@ -17,7 +16,7 @@ impl<Dep: Send + Sync + 'static> DependencyResolver for Inject<Dep> {
     type Error = ResolveErrorKind;
 
     fn resolve(container: Container) -> impl Future<Output = Result<Self, Self::Error>> {
-        Box::pin(async move { container.get().await.map(Inject) })
+        async move { container.get().await.map(Self) }
     }
 }
 
@@ -27,7 +26,7 @@ impl<Dep: 'static> DependencyResolver for InjectTransient<Dep> {
     type Error = ResolveErrorKind;
 
     fn resolve(container: Container) -> impl Future<Output = Result<Self, Self::Error>> {
-        Box::pin(async move { container.get_transient().await.map(InjectTransient) })
+        async move { container.get_transient().await.map(Self) }
     }
 }
 
@@ -45,9 +44,9 @@ macro_rules! impl_dependency_resolver {
             #[inline]
             #[allow(unused_variables)]
             fn resolve(container: Container) -> impl Future<Output = Result<Self, Self::Error>> + Send {
-                Box::pin(async move {
+                async move {
                     Ok(($($ty::resolve(container.clone()).await.map_err(Into::into)?,)*))
-                })
+                }
             }
         }
     };
