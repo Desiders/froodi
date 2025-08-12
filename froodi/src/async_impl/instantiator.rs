@@ -99,7 +99,7 @@ mod tests {
 
     use super::{boxed_instantiator_factory, DependencyResolver, InstantiateErrorKind, Instantiator};
     use crate::{
-        r#async::{
+        async_impl::{
             dependency_resolver::{Inject, InjectTransient},
             registry::BoxedInstantiator,
             service::Service as _,

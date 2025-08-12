@@ -19,7 +19,7 @@ pub(crate) mod scope;
 pub(crate) mod service;
 
 #[cfg(feature = "async")]
-pub mod r#async;
+pub mod async_impl;
 
 pub use container::Container;
 pub use context::Context;

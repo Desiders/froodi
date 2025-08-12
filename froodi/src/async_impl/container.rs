@@ -960,7 +960,7 @@ mod tests {
 
     use super::{Container, ContainerInner, RegistriesBuilder};
     use crate::{
-        r#async::{Inject, InjectTransient},
+        async_impl::{Inject, InjectTransient},
         scope::DefaultScope::*,
         Inject as SyncInject, InjectTransient as SyncInjectTransient, Scope,
     };

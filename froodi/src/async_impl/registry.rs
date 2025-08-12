@@ -2,11 +2,7 @@ use alloc::{collections::BTreeMap, vec, vec::Vec};
 use core::any::TypeId;
 
 use crate::{
-    dependency_resolver::DependencyResolver,
-    errors::{InstantiateErrorKind, ResolveErrorKind},
-    finalizer::{boxed_finalizer_factory, BoxedCloneFinalizer as BoxedCloneSyncFinalizer, Finalizer},
-    instantiator::{boxed_instantiator_factory, BoxedCloneInstantiator, Config, Instantiator},
-    r#async::{
+    async_impl::{
         dependency_resolver::DependencyResolver as AsyncDependencyResolver,
         finalizer::{boxed_finalizer_factory as boxed_async_finalizer_factory, BoxedCloneFinalizer, Finalizer as AsyncFinalizer},
         instantiator::{
@@ -14,6 +10,10 @@ use crate::{
             Instantiator as AsyncInstantiator,
         },
     },
+    dependency_resolver::DependencyResolver,
+    errors::{InstantiateErrorKind, ResolveErrorKind},
+    finalizer::{boxed_finalizer_factory, BoxedCloneFinalizer as BoxedCloneSyncFinalizer, Finalizer},
+    instantiator::{boxed_instantiator_factory, BoxedCloneInstantiator, Config, Instantiator},
     registry::{InstantiatorInnerData as SyncInstantiatorInnerData, Registry as SyncRegistry},
     scope::{Scope, ScopeInnerData},
     DefaultScope, Scopes as ScopesTrait,

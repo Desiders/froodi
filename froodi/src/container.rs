@@ -613,10 +613,7 @@ impl From<BoxedContainerInner> for Container {
                 context,
                 root_registry,
                 child_registries,
-                parent: match parent {
-                    Some(parent) => Some((*parent).into()),
-                    None => None,
-                },
+                parent: parent.map(|parent| (*parent).into()),
                 close_parent,
             })),
         }
