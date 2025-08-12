@@ -18,6 +18,9 @@ pub(crate) mod registry;
 pub(crate) mod scope;
 pub(crate) mod service;
 
+#[cfg(feature = "async")]
+pub mod r#async;
+
 pub use container::Container;
 pub use context::Context;
 pub use dependency_resolver::{Inject, InjectTransient};
