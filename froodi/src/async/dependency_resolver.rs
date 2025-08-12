@@ -70,6 +70,7 @@ mod tests {
     use tracing::debug;
     use tracing_test::traced_test;
 
+    struct SyncRequest;
     struct Request;
 
     #[derive(Clone)]
@@ -90,16 +91,32 @@ mod tests {
     #[traced_test]
     async fn test_scoped_resolve() {
         let instantiator_request_call_count = Arc::new(AtomicU8::new(0));
+        let sync_instantiator_request_call_count = Arc::new(AtomicU8::new(0));
 
         let registries_builder = RegistriesBuilder::new()
             .provide(
                 {
-                    let instantiator_request_call_count = instantiator_request_call_count.clone();
+                    let instantiator_request_call_count = sync_instantiator_request_call_count.clone();
                     move || {
                         instantiator_request_call_count.fetch_add(1, Ordering::SeqCst);
 
-                        debug!("Call instantiator request");
-                        Ok::<_, InstantiateErrorKind>(Request)
+                        debug!("Call sync instantiator request");
+                        Ok::<_, InstantiateErrorKind>(SyncRequest)
+                    }
+                },
+                App,
+            )
+            .provide_async(
+                {
+                    let instantiator_request_call_count = instantiator_request_call_count.clone();
+                    move || {
+                        let instantiator_request_call_count = instantiator_request_call_count.clone();
+                        async move {
+                            instantiator_request_call_count.fetch_add(1, Ordering::SeqCst);
+
+                            debug!("Call instantiator request");
+                            Ok::<_, InstantiateErrorKind>(Request)
+                        }
                     }
                 },
                 App,
@@ -110,35 +127,61 @@ mod tests {
 
         let request_1 = Inject::<Request>::resolve(container.clone()).await.unwrap();
         let request_2 = Inject::<Request>::resolve(container.clone()).await.unwrap();
+        let sync_request_1 = Inject::<SyncRequest>::resolve(container.clone()).await.unwrap();
+        let sync_request_2 = Inject::<SyncRequest>::resolve(container.clone()).await.unwrap();
         let _ = Inject::<Instance>::resolve(container).await.unwrap();
 
+        assert!(Arc::ptr_eq(&sync_request_1.0, &sync_request_2.0));
         assert!(Arc::ptr_eq(&request_1.0, &request_2.0));
         assert_eq!(instantiator_request_call_count.load(Ordering::SeqCst), 1);
+        assert_eq!(sync_instantiator_request_call_count.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]
     #[traced_test]
     async fn test_transient_resolve() {
         let instantiator_request_call_count = Arc::new(AtomicU8::new(0));
+        let sync_instantiator_request_call_count = Arc::new(AtomicU8::new(0));
 
-        let registries_builder = RegistriesBuilder::new().provide(
-            {
-                let instantiator_request_call_count = instantiator_request_call_count.clone();
-                move || {
-                    instantiator_request_call_count.fetch_add(1, Ordering::SeqCst);
+        let registries_builder = RegistriesBuilder::new()
+            .provide(
+                {
+                    let instantiator_request_call_count = sync_instantiator_request_call_count.clone();
+                    move || {
+                        instantiator_request_call_count.fetch_add(1, Ordering::SeqCst);
 
-                    debug!("Call instantiator request");
-                    Ok::<_, InstantiateErrorKind>(Request)
-                }
-            },
-            App,
-        );
+                        debug!("Call sync instantiator request");
+                        Ok::<_, InstantiateErrorKind>(SyncRequest)
+                    }
+                },
+                App,
+            )
+            .provide_async(
+                {
+                    let instantiator_request_call_count = instantiator_request_call_count.clone();
+                    move || {
+                        let instantiator_request_call_count = instantiator_request_call_count.clone();
+                        async move {
+                            {
+                                instantiator_request_call_count.fetch_add(1, Ordering::SeqCst);
+
+                                debug!("Call instantiator request");
+                                Ok::<_, InstantiateErrorKind>(Request)
+                            }
+                        }
+                    }
+                },
+                App,
+            );
 
         let container = Container::new(registries_builder);
 
         let _ = InjectTransient::<Request>::resolve(container.clone()).await.unwrap();
-        InjectTransient::<Request>::resolve(container).await.unwrap();
+        InjectTransient::<Request>::resolve(container.clone()).await.unwrap();
+        let _ = InjectTransient::<SyncRequest>::resolve(container.clone()).await.unwrap();
+        InjectTransient::<SyncRequest>::resolve(container).await.unwrap();
 
         assert_eq!(instantiator_request_call_count.load(Ordering::SeqCst), 2);
+        assert_eq!(sync_instantiator_request_call_count.load(Ordering::SeqCst), 2);
     }
 }
