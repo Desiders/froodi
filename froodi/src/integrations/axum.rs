@@ -44,7 +44,7 @@ where
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 struct AddContainer<S, HScope, WSScope> {
     service: S,
     container: Container,

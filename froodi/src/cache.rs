@@ -4,35 +4,10 @@ use core::any::{Any, TypeId};
 use crate::{any, Context};
 
 #[derive(Clone)]
-#[cfg_attr(feature = "debug", derive(Debug))]
 pub(crate) struct Cache {
     pub(crate) map: Option<Box<any::Map>>,
     resolved: ResolvedSet,
 }
-
-#[cfg(feature = "eq")]
-impl PartialEq for Cache {
-    fn eq(&self, other: &Self) -> bool {
-        match (&self.map, &other.map) {
-            (None, None) => true,
-            (Some(a), Some(b)) => {
-                if a.len() != b.len() {
-                    return false;
-                }
-                for ((k_a, v_a), (k_b, v_b)) in a.iter().zip(b.iter()) {
-                    if k_a != k_b || v_a.type_id() != v_b.type_id() {
-                        return false;
-                    }
-                }
-                true
-            }
-            _ => false,
-        }
-    }
-}
-
-#[cfg(feature = "eq")]
-impl Eq for Cache {}
 
 impl Cache {
     #[must_use]
@@ -95,14 +70,12 @@ impl Cache {
 }
 
 #[derive(Clone)]
-#[cfg_attr(feature = "debug", derive(Debug))]
 pub(crate) struct Resolved {
     pub(crate) type_id: TypeId,
     pub(crate) dependency: Arc<dyn Any + Send + Sync>,
 }
 
 #[derive(Clone)]
-#[cfg_attr(feature = "debug", derive(Debug))]
 pub(crate) struct ResolvedSet(pub(crate) VecDeque<Resolved>);
 
 impl ResolvedSet {

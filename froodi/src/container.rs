@@ -16,14 +16,13 @@ use crate::{
 };
 
 #[derive(Clone)]
-#[cfg_attr(feature = "debug", derive(Debug))]
-struct ContainerInner {
-    cache: Cache,
-    context: Context,
-    root_registry: Arc<Registry>,
-    child_registries: Box<[Arc<Registry>]>,
-    parent: Option<Container>,
-    close_parent: bool,
+pub(crate) struct ContainerInner {
+    pub(crate) cache: Cache,
+    pub(crate) context: Context,
+    pub(crate) root_registry: Arc<Registry>,
+    pub(crate) child_registries: Box<[Arc<Registry>]>,
+    pub(crate) parent: Option<Container>,
+    pub(crate) close_parent: bool,
 }
 
 impl ContainerInner {
@@ -33,6 +32,10 @@ impl ContainerInner {
     /// This method can be called multiple times, but it will only call finalizers for dependencies that were resolved since the last call
     #[allow(clippy::missing_panics_doc)]
     pub fn close(&mut self) {
+        self.close_with_parent_flag(self.close_parent);
+    }
+
+    pub(crate) fn close_with_parent_flag(&mut self, close_parent: bool) {
         while let Some(Resolved { type_id, dependency }) = self.cache.get_resolved_set_mut().0.pop_back() {
             let InstantiatorInnerData { finalizer, .. } = self
                 .root_registry
@@ -51,7 +54,7 @@ impl ContainerInner {
             self.cache.map = self.context.map.clone();
         }
 
-        if self.close_parent {
+        if close_parent {
             if let Some(parent) = &self.parent {
                 parent.close();
                 debug!("Parent container closed");
@@ -59,25 +62,6 @@ impl ContainerInner {
         }
     }
 }
-
-#[cfg(feature = "eq")]
-impl PartialEq for ContainerInner {
-    fn eq(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.root_registry, &other.root_registry)
-            && self.cache == other.cache
-            && self.context == other.context
-            && self.child_registries.len() == other.child_registries.len()
-            && self
-                .child_registries
-                .iter()
-                .zip(other.child_registries.iter())
-                .all(|(a, b)| Arc::ptr_eq(a, b))
-            && self.parent == other.parent
-    }
-}
-
-#[cfg(feature = "eq")]
-impl Eq for ContainerInner {}
 
 impl Drop for ContainerInner {
     fn drop(&mut self) {
@@ -87,9 +71,8 @@ impl Drop for ContainerInner {
 }
 
 #[derive(Clone)]
-#[cfg_attr(feature = "debug", derive(Debug))]
 pub struct Container {
-    inner: Arc<Mutex<ContainerInner>>,
+    pub(crate) inner: Arc<Mutex<ContainerInner>>,
 }
 
 impl Container {
@@ -428,16 +411,6 @@ impl Container {
         }
     }
 }
-
-#[cfg(feature = "eq")]
-impl PartialEq for Container {
-    fn eq(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.inner, &other.inner)
-    }
-}
-
-#[cfg(feature = "eq")]
-impl Eq for Container {}
 
 pub struct ChildContainerBuiler {
     container: Container,
@@ -847,7 +820,7 @@ mod tests {
         let action_container_inner = action_container.inner.lock();
         let step_container_inner = step_container.inner.lock();
 
-        assert_eq!(runtime_container_inner.parent, None);
+        assert!(runtime_container_inner.parent.is_none());
         assert_eq!(runtime_container_inner.child_registries.len(), 5);
         assert_eq!(runtime_container_inner.root_registry.scope.priority, Runtime.priority());
         assert!(Arc::ptr_eq(

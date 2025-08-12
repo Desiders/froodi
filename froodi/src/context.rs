@@ -4,34 +4,9 @@ use core::any::TypeId;
 use crate::any;
 
 #[derive(Clone)]
-#[cfg_attr(feature = "debug", derive(Debug))]
 pub struct Context {
     pub(crate) map: Option<Box<any::Map>>,
 }
-
-#[cfg(feature = "eq")]
-impl PartialEq for Context {
-    fn eq(&self, other: &Self) -> bool {
-        match (&self.map, &other.map) {
-            (None, None) => true,
-            (Some(a), Some(b)) => {
-                if a.len() != b.len() {
-                    return false;
-                }
-                for ((k_a, v_a), (k_b, v_b)) in a.iter().zip(b.iter()) {
-                    if k_a != k_b || v_a.type_id() != v_b.type_id() {
-                        return false;
-                    }
-                }
-                true
-            }
-            _ => false,
-        }
-    }
-}
-
-#[cfg(feature = "eq")]
-impl Eq for Context {}
 
 impl Default for Context {
     fn default() -> Self {

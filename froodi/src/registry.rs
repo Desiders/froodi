@@ -9,7 +9,7 @@ use crate::{
     dependency_resolver::DependencyResolver,
     finalizer::{boxed_finalizer_factory, BoxedCloneFinalizer, Finalizer},
     instantiator::{boxed_instantiator_factory, Instantiator},
-    scope::Scope,
+    scope::{Scope, ScopeInnerData},
     DefaultScope, Scopes as ScopesTrait,
 };
 
@@ -189,24 +189,16 @@ where
     }
 }
 
-#[cfg_attr(feature = "debug", derive(Debug))]
-pub(crate) struct ScopeInnerData {
-    pub(crate) priority: u8,
-    pub(crate) is_skipped_by_default: bool,
-}
-
 #[derive(Clone)]
-#[cfg_attr(feature = "debug", derive(Debug))]
 pub(crate) struct InstantiatorInnerData {
     pub(crate) instantiator: BoxedCloneInstantiator<ResolveErrorKind, InstantiateErrorKind>,
     pub(crate) finalizer: Option<BoxedCloneFinalizer>,
     pub(crate) config: Config,
 }
 
-#[cfg_attr(feature = "debug", derive(Debug))]
 pub(crate) struct Registry {
     pub(crate) scope: ScopeInnerData,
-    instantiators: BTreeMap<TypeId, InstantiatorInnerData>,
+    pub(crate) instantiators: BTreeMap<TypeId, InstantiatorInnerData>,
 }
 
 impl Registry {

@@ -1,7 +1,7 @@
 use quote::ToTokens;
 use syn::{
     parse::{Parse, ParseStream},
-    Token,
+    Attribute, Token,
 };
 
 pub(crate) fn parse_parenthesized_attribute<K, T>(input: ParseStream<'_>, out: &mut Option<(K, T)>) -> syn::Result<()>
@@ -57,7 +57,7 @@ where
     let mut iter = attrs
         .iter()
         .filter(|attr| attr.meta.path().is_ident(ident))
-        .map(|attr| attr.parse_args::<T>());
+        .map(Attribute::parse_args::<T>);
 
     let first = match iter.next() {
         Some(Ok(first)) => first,

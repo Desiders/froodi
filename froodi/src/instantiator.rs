@@ -27,7 +27,6 @@ where
 ///   This does **not** affect the dependencies of the instance.
 ///   Only the final result is cached if caching is applicable.
 #[derive(Clone, Copy)]
-#[cfg_attr(feature = "debug", derive(Debug))]
 pub struct Config {
     pub cache_provides: bool,
 }
