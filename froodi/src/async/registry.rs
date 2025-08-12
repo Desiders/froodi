@@ -341,10 +341,21 @@ mod tests {
             .provide(|| Ok(()), Runtime)
             .provide(|| Ok(()), App)
             .provide(|| Ok(()), App)
+            .provide_async(async || Ok(((), ())), Runtime)
+            .provide_async(async || Ok(((), ())), Runtime)
+            .provide_async(async || Ok(((), ())), App)
+            .provide_async(async || Ok(((), ())), App)
             .build();
         assert_eq!(registries.len(), DefaultScope::all().len());
         assert_eq!(sync_registries.len(), DefaultScope::all().len());
 
+        for registry in registries {
+            if registry.scope.priority == 1 {
+                assert_eq!(registry.instantiators.len(), 1);
+            } else {
+                assert_eq!(registry.instantiators.len(), 0);
+            }
+        }
         for registry in sync_registries {
             if registry.scope.priority == 1 {
                 assert_eq!(registry.instantiators.len(), 1);
@@ -361,10 +372,21 @@ mod tests {
             .provide(|| Ok(1i16), Runtime)
             .provide(|| Ok(1i32), App)
             .provide(|| Ok(1i64), App)
+            .provide_async(async || Ok(1u8), Runtime)
+            .provide_async(async || Ok(1u16), Runtime)
+            .provide_async(async || Ok(1u32), App)
+            .provide_async(async || Ok(1u64), App)
             .build();
         assert_eq!(registries.len(), DefaultScope::all().len());
         assert_eq!(sync_registries.len(), DefaultScope::all().len());
 
+        for registry in registries {
+            if registry.scope.priority == 0 || registry.scope.priority == 1 {
+                assert_eq!(registry.instantiators.len(), 2);
+            } else {
+                assert_eq!(registry.instantiators.len(), 0);
+            }
+        }
         for registry in sync_registries {
             if registry.scope.priority == 0 || registry.scope.priority == 1 {
                 assert_eq!(registry.instantiators.len(), 2);
@@ -381,15 +403,42 @@ mod tests {
             .provide(|| Ok(1i16), Runtime)
             .provide(|| Ok(1i32), App)
             .provide(|| Ok(1i64), App)
+            .provide_async(async || Ok(1u8), Runtime)
+            .provide_async(async || Ok(1u16), Runtime)
+            .provide_async(async || Ok(1u32), App)
+            .provide_async(async || Ok(1u64), App)
             .add_finalizer(|_: Arc<i8>| {})
             .add_finalizer(|_: Arc<i32>| {})
+            .add_async_finalizer(async |_: Arc<u8>| {})
+            .add_async_finalizer(async |_: Arc<u32>| {})
             .build();
 
         let i8_type_id = TypeId::of::<i8>();
         let i16_type_id = TypeId::of::<i16>();
         let i32_type_id = TypeId::of::<i32>();
         let i64_type_id = TypeId::of::<i64>();
+        let u8_type_id = TypeId::of::<u8>();
+        let u16_type_id = TypeId::of::<u16>();
+        let u32_type_id = TypeId::of::<u32>();
+        let u64_type_id = TypeId::of::<u64>();
 
+        for registry in registries {
+            if let Some(data) = registry.instantiators.get(&u8_type_id) {
+                assert!(data.finalizer.is_some());
+                continue;
+            }
+            if let Some(data) = registry.instantiators.get(&u16_type_id) {
+                assert!(data.finalizer.is_none());
+                continue;
+            }
+            if let Some(data) = registry.instantiators.get(&u32_type_id) {
+                assert!(data.finalizer.is_some());
+                continue;
+            }
+            if let Some(data) = registry.instantiators.get(&u64_type_id) {
+                assert!(data.finalizer.is_none());
+            }
+        }
         for registry in sync_registries {
             if let Some(data) = registry.instantiators.get(&i8_type_id) {
                 assert!(data.finalizer.is_some());
