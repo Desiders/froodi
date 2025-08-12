@@ -62,3 +62,8 @@ impl Scopes<6> for DefaultScope {
         [Runtime, App, Session, Request, Action, Step]
     }
 }
+
+pub(crate) struct ScopeInnerData {
+    pub(crate) priority: u8,
+    pub(crate) is_skipped_by_default: bool,
+}
