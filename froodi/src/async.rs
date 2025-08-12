@@ -8,5 +8,5 @@ pub(crate) mod service;
 pub use container::Container;
 pub use dependency_resolver::{Inject, InjectTransient};
 pub use finalizer::Finalizer;
-pub use instantiator::{instance, Config};
+pub use instantiator::Config;
 pub use registry::RegistriesBuilder;

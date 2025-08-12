@@ -93,18 +93,6 @@ macro_rules! impl_instantiator {
 
 all_the_tuples!(impl_instantiator);
 
-/// Wrapper to create an instantiator that just returns passed value.
-/// It can be used when the value was created outside the container.
-#[inline]
-#[must_use]
-pub fn instance<T: Send + Clone + 'static>(val: T) -> impl Instantiator<(), Error = InstantiateErrorKind> {
-    move || {
-        let val = val.clone();
-
-        async move { Ok(val.clone()) }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     extern crate std;
