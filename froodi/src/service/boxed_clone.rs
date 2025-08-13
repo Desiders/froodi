@@ -6,13 +6,6 @@ pub(crate) struct BoxCloneService<Request: ?Sized, Response, Error>(
     pub(crate) Box<dyn CloneService<Request, Response = Response, Error = Error> + Send + Sync>,
 );
 
-#[cfg(feature = "debug")]
-impl<Request: ?Sized, Response, Error> core::fmt::Debug for BoxCloneService<Request, Response, Error> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("BoxCloneService").finish()
-    }
-}
-
 pub(crate) trait CloneService<Request: ?Sized>: Service<Request> {
     #[must_use]
     fn clone_box(&self) -> Box<dyn CloneService<Request, Response = Self::Response, Error = Self::Error> + Send + Sync>;
