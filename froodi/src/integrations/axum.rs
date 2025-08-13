@@ -1,3 +1,11 @@
+#[cfg(feature = "async")]
+use crate::async_impl::Container as AsyncContainer;
+use crate::{
+    utils::future::BoxFuture,
+    Container,
+    DefaultScope::{Request as RequestScope, Session as SessionScope},
+    Inject, InjectTransient, ResolveErrorKind, Scope,
+};
 use alloc::{
     boxed::Box,
     string::{String, ToString},
@@ -13,91 +21,244 @@ use core::{
     str::from_utf8,
     task::{Context, Poll},
 };
-use futures_core::future::BoxFuture;
 use tower_layer::Layer;
 use tower_service::Service;
 use tracing::error;
 
-use crate::{Container, Inject, InjectTransient, ResolveErrorKind, Scope};
-
-#[derive(Clone)]
-struct ContainerLayer<HScope, WSScope> {
-    container: Container,
-    http_scope: HScope,
-    ws_scope: WSScope,
+#[derive(Debug, thiserror::Error)]
+pub enum InjectErrorKind {
+    #[error("Container not found in extensions")]
+    ContainerNotFound,
+    #[error(transparent)]
+    Resolve(ResolveErrorKind),
 }
 
-impl<S, HScope, WSScope> Layer<S> for ContainerLayer<HScope, WSScope>
-where
-    HScope: Clone,
-    WSScope: Clone,
-{
-    type Service = AddContainer<S, HScope, WSScope>;
-
-    fn layer(&self, service: S) -> Self::Service {
-        AddContainer {
-            service,
-            container: self.container.clone(),
-            http_scope: self.http_scope.clone(),
-            ws_scope: self.ws_scope.clone(),
-        }
+impl InjectErrorKind {
+    #[inline]
+    #[allow(clippy::unused_self)]
+    const fn status(&self) -> StatusCode {
+        StatusCode::INTERNAL_SERVER_ERROR
     }
-}
-
-#[derive(Clone)]
-struct AddContainer<S, HScope, WSScope> {
-    service: S,
-    container: Container,
-    http_scope: HScope,
-    ws_scope: WSScope,
-}
-
-impl<ResBody, S, HScope, WSScope> Service<Request<ResBody>> for AddContainer<S, HScope, WSScope>
-where
-    S: Service<Request<ResBody>>,
-    S::Future: Send + 'static,
-    HScope: Scope + Clone,
-    WSScope: Scope + Clone,
-{
-    type Response = S::Response;
-    type Error = S::Error;
-    type Future = BoxFuture<'static, Result<Self::Response, Self::Error>>;
 
     #[inline]
-    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.service.poll_ready(cx)
+    fn body(&self) -> String {
+        self.to_string()
     }
+}
 
-    fn call(&mut self, request: Request<ResBody>) -> Self::Future {
-        let (parts, body) = request.into_parts();
-        let is_websocket = is_websocket_request(&parts);
-        let mut request = Request::from_parts(parts, body);
+impl IntoResponse for InjectErrorKind {
+    fn into_response(self) -> Response {
+        let status = self.status();
+        let body = self.body();
 
-        if is_websocket {
-            match self.container.clone().enter().with_scope(self.ws_scope.clone()).build() {
-                Ok(session_container) => {
-                    request.extensions_mut().insert(session_container);
-                }
-                Err(err) => {
-                    error!(%err, "Scope not found for WS request");
-                }
-            }
-        } else {
-            match self.container.clone().enter().with_scope(self.http_scope.clone()).build() {
-                Ok(request_container) => {
-                    request.extensions_mut().insert(request_container);
-                }
-                Err(err) => {
-                    error!(%err, "Scope not found for HTTP request");
+        (status, body).into_response()
+    }
+}
+
+macro_rules! impl_container_layer {
+    (
+        $LayerName:ident,
+        $AddContainerName:ident,
+        $ContainerType:ty
+    ) => {
+        #[allow(dead_code)]
+        #[derive(Clone)]
+        struct $LayerName<HScope, WSScope> {
+            container: $ContainerType,
+            http_scope: HScope,
+            ws_scope: WSScope,
+        }
+
+        impl<S, HScope, WSScope> Layer<S> for $LayerName<HScope, WSScope>
+        where
+            HScope: Clone,
+            WSScope: Clone,
+        {
+            type Service = $AddContainerName<S, HScope, WSScope>;
+
+            fn layer(&self, service: S) -> Self::Service {
+                $AddContainerName {
+                    service,
+                    container: self.container.clone(),
+                    http_scope: self.http_scope.clone(),
+                    ws_scope: self.ws_scope.clone(),
                 }
             }
         }
 
-        let future = self.service.call(request);
-        Box::pin(async move {
-            let response = future.await?;
-            Ok(response)
-        })
+        #[derive(Clone)]
+        struct $AddContainerName<S, HScope, WSScope> {
+            service: S,
+            container: $ContainerType,
+            http_scope: HScope,
+            ws_scope: WSScope,
+        }
+
+        impl<ResBody, S, HScope, WSScope> Service<Request<ResBody>> for $AddContainerName<S, HScope, WSScope>
+        where
+            S: Service<Request<ResBody>>,
+            S::Future: Send + 'static,
+            HScope: Scope + Clone,
+            WSScope: Scope + Clone,
+        {
+            type Response = S::Response;
+            type Error = S::Error;
+            type Future = BoxFuture<'static, Result<Self::Response, Self::Error>>;
+
+            #[inline]
+            fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+                self.service.poll_ready(cx)
+            }
+
+            fn call(&mut self, request: Request<ResBody>) -> Self::Future {
+                let (parts, body) = request.into_parts();
+                let is_websocket = is_websocket_request(&parts);
+                let mut request = Request::from_parts(parts, body);
+
+                if is_websocket {
+                    match self.container.clone().enter().with_scope(self.ws_scope.clone()).build() {
+                        Ok(session_container) => {
+                            request.extensions_mut().insert(session_container);
+                        }
+                        Err(err) => {
+                            error!(%err, "Scope not found for WS request");
+                        }
+                    }
+                } else {
+                    match self.container.clone().enter().with_scope(self.http_scope.clone()).build() {
+                        Ok(request_container) => {
+                            request.extensions_mut().insert(request_container);
+                        }
+                        Err(err) => {
+                            error!(%err, "Scope not found for HTTP request");
+                        }
+                    }
+                }
+
+                let future = self.service.call(request);
+                Box::pin(async move {
+                    let response = future.await?;
+                    Ok(response)
+                })
+            }
+        }
+    };
+}
+
+impl_container_layer!(ContainerLayer, AddContainer, Container);
+
+#[cfg(feature = "async")]
+impl_container_layer!(AsyncContainerLayer, AddAsyncContainer, AsyncContainer);
+
+#[allow(clippy::manual_async_fn)]
+impl<S, Dep, const PREFER_SYNC_OVER_ASYNC: bool> FromRequestParts<S> for Inject<Dep, PREFER_SYNC_OVER_ASYNC>
+where
+    Dep: Send + Sync + 'static,
+{
+    type Rejection = InjectErrorKind;
+
+    #[cfg(not(feature = "async"))]
+    fn from_request_parts(parts: &mut Parts, _state: &S) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
+        let res = match parts.extensions.get::<Container>() {
+            Some(container) => match container.get() {
+                Ok(dep) => Ok(Self(dep)),
+                Err(err) => Err(Self::Rejection::Resolve(err)),
+            },
+            None => Err(Self::Rejection::ContainerNotFound),
+        };
+
+        async move { res }
+    }
+
+    #[cfg(feature = "async")]
+    fn from_request_parts(parts: &mut Parts, _state: &S) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
+        async move {
+            if PREFER_SYNC_OVER_ASYNC {
+                return match parts.extensions.get::<Container>() {
+                    Some(container) => match container.get() {
+                        Ok(dep) => Ok(Self(dep)),
+                        Err(err) => Err(Self::Rejection::Resolve(err)),
+                    },
+                    None => match parts.extensions.get::<AsyncContainer>() {
+                        Some(container) => match container.get().await {
+                            Ok(dep) => Ok(Self(dep)),
+                            Err(err) => Err(Self::Rejection::Resolve(err)),
+                        },
+                        None => Err(Self::Rejection::ContainerNotFound),
+                    },
+                };
+            }
+
+            match parts.extensions.get::<AsyncContainer>() {
+                Some(container) => match container.get().await {
+                    Ok(dep) => Ok(Self(dep)),
+                    Err(err) => Err(Self::Rejection::Resolve(err)),
+                },
+                None => match parts.extensions.get::<Container>() {
+                    Some(container) => match container.get() {
+                        Ok(dep) => Ok(Self(dep)),
+                        Err(err) => Err(Self::Rejection::Resolve(err)),
+                    },
+                    None => Err(Self::Rejection::ContainerNotFound),
+                },
+            }
+        }
+    }
+}
+
+#[allow(clippy::manual_async_fn)]
+impl<S, Dep, const PREFER_SYNC_OVER_ASYNC: bool> FromRequestParts<S> for InjectTransient<Dep, PREFER_SYNC_OVER_ASYNC>
+where
+    Dep: Send + Sync + 'static,
+{
+    type Rejection = InjectErrorKind;
+
+    #[cfg(not(feature = "async"))]
+    fn from_request_parts(parts: &mut Parts, _state: &S) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
+        let res = match parts.extensions.get::<Container>() {
+            Some(container) => match container.get_transient() {
+                Ok(dep) => Ok(Self(dep)),
+                Err(err) => Err(Self::Rejection::Resolve(err)),
+            },
+            None => Err(Self::Rejection::ContainerNotFound),
+        };
+
+        async move { res }
+    }
+
+    #[cfg(feature = "async")]
+    fn from_request_parts(parts: &mut Parts, _state: &S) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
+        async move {
+            if PREFER_SYNC_OVER_ASYNC {
+                return match parts.extensions.get::<Container>() {
+                    Some(container) => match container.get_transient() {
+                        Ok(dep) => Ok(Self(dep)),
+                        Err(err) => Err(Self::Rejection::Resolve(err)),
+                    },
+                    None => match parts.extensions.get::<AsyncContainer>() {
+                        Some(container) => match container.get_transient().await {
+                            Ok(dep) => Ok(Self(dep)),
+                            Err(err) => Err(Self::Rejection::Resolve(err)),
+                        },
+                        None => Err(Self::Rejection::ContainerNotFound),
+                    },
+                };
+            }
+
+            match parts.extensions.get::<AsyncContainer>() {
+                Some(container) => match container.get_transient().await {
+                    Ok(dep) => Ok(Self(dep)),
+                    Err(err) => Err(Self::Rejection::Resolve(err)),
+                },
+                None => match parts.extensions.get::<Container>() {
+                    Some(container) => match container.get_transient() {
+                        Ok(dep) => Ok(Self(dep)),
+                        Err(err) => Err(Self::Rejection::Resolve(err)),
+                    },
+                    None => Err(Self::Rejection::ContainerNotFound),
+                },
+            }
+        }
     }
 }
 
@@ -158,76 +319,6 @@ fn header_eq(headers: &HeaderMap, key: &HeaderName, value: &'static str) -> bool
     }
 }
 
-#[derive(Debug, thiserror::Error)]
-pub enum InjectErrorKind {
-    #[error("Container not found in extensions")]
-    ContainerNotFound,
-    #[error(transparent)]
-    Resolve(ResolveErrorKind),
-}
-
-impl InjectErrorKind {
-    #[inline]
-    #[allow(clippy::unused_self)]
-    const fn status(&self) -> StatusCode {
-        StatusCode::INTERNAL_SERVER_ERROR
-    }
-
-    #[inline]
-    fn body(&self) -> String {
-        self.to_string()
-    }
-}
-
-impl IntoResponse for InjectErrorKind {
-    fn into_response(self) -> Response {
-        let status = self.status();
-        let body = self.body();
-
-        (status, body).into_response()
-    }
-}
-
-#[allow(clippy::manual_async_fn)]
-impl<S, Dep> FromRequestParts<S> for Inject<Dep>
-where
-    Dep: Send + Sync + 'static,
-{
-    type Rejection = InjectErrorKind;
-
-    fn from_request_parts(parts: &mut Parts, _state: &S) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
-        async move {
-            match parts.extensions.get::<Container>() {
-                Some(container) => match container.get() {
-                    Ok(dep) => Ok(Self(dep)),
-                    Err(err) => Err(Self::Rejection::Resolve(err)),
-                },
-                None => Err(Self::Rejection::ContainerNotFound),
-            }
-        }
-    }
-}
-
-#[allow(clippy::manual_async_fn)]
-impl<S, Dep> FromRequestParts<S> for InjectTransient<Dep>
-where
-    Dep: Send + Sync + 'static,
-{
-    type Rejection = InjectErrorKind;
-
-    fn from_request_parts(parts: &mut Parts, _state: &S) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
-        async move {
-            match parts.extensions.get::<Container>() {
-                Some(container) => match container.get_transient() {
-                    Ok(dep) => Ok(Self(dep)),
-                    Err(err) => Err(Self::Rejection::Resolve(err)),
-                },
-                None => Err(Self::Rejection::ContainerNotFound),
-            }
-        }
-    }
-}
-
 #[inline]
 pub fn setup<S, HScope, WSScope>(router: Router<S>, container: Container, http_scope: HScope, ws_scope: WSScope) -> Router<S>
 where
@@ -247,20 +338,42 @@ pub fn setup_default<S>(router: Router<S>, container: Container) -> Router<S>
 where
     S: Clone + Send + Sync + 'static,
 {
-    use crate::DefaultScope::{Request, Session};
+    setup(router, container, RequestScope, SessionScope)
+}
 
-    setup(router, container, Request, Session)
+#[inline]
+#[cfg(feature = "async")]
+pub fn setup_async<S, HScope, WSScope>(router: Router<S>, container: AsyncContainer, http_scope: HScope, ws_scope: WSScope) -> Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+    HScope: Scope + Clone + Send + Sync + 'static,
+    WSScope: Scope + Clone + Send + Sync + 'static,
+{
+    router.layer(AsyncContainerLayer {
+        container,
+        http_scope,
+        ws_scope,
+    })
+}
+
+#[inline]
+#[cfg(feature = "async")]
+pub fn setup_async_default<S>(router: Router<S>, container: AsyncContainer) -> Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+{
+    setup_async(router, container, RequestScope, SessionScope)
 }
 
 #[cfg(test)]
 mod tests {
     extern crate std;
 
-    use super::setup_default;
+    use super::{setup_async_default, setup_default, AsyncContainer, Container, Inject, InjectTransient};
     use crate::{
-        Container,
+        async_impl::RegistriesBuilder as AsyncRegistriesBuilder,
         DefaultScope::{App, Request, Session},
-        Inject, InjectTransient, RegistriesBuilder,
+        RegistriesBuilder,
     };
 
     use alloc::{
@@ -286,8 +399,10 @@ mod tests {
         }
 
         #[allow(clippy::unused_async)]
-        async fn handler(Extension(container): Extension<Container>) -> Box<str> {
-            container.get::<i32>().unwrap().to_string().into_boxed_str()
+        async fn handler(Extension(container): Extension<Container>, Extension(async_container): Extension<AsyncContainer>) -> Box<str> {
+            (*container.get::<i32>().unwrap() + *async_container.get::<i32>().await.unwrap())
+                .to_string()
+                .into_boxed_str()
         }
 
         let container = Container::new(
@@ -295,15 +410,22 @@ mod tests {
                 .provide(|| Ok(Config { num: 1 }), App)
                 .provide(|Inject(cfg): Inject<Config>| Ok(cfg.num + 1), Request),
         );
+        let async_container = AsyncContainer::new(
+            AsyncRegistriesBuilder::new()
+                .provide(|| Ok(Config { num: 1 }), App)
+                .provide_async(async |Inject(cfg): Inject<Config>| Ok(cfg.num + 1), Request),
+        );
 
-        let router = setup_default(Router::new().route("/", get(handler)), container);
+        let router = Router::new().route("/", get(handler));
+        let router = setup_default(router, container);
+        let router = setup_async_default(router, async_container);
 
         let server = TestServer::builder().http_transport().build(router).unwrap();
 
         let response = server.get("/").await;
 
         response.assert_status_ok();
-        response.assert_text("2");
+        response.assert_text("4");
     }
 
     #[tokio::test]
@@ -314,14 +436,22 @@ mod tests {
             num: i32,
         }
 
-        async fn ws_upgrade(ws: WebSocketUpgrade, Extension(container): Extension<Container>) -> Response {
-            ws.on_upgrade(move |socket| handler(socket, container))
+        async fn ws_upgrade(
+            ws: WebSocketUpgrade,
+            Extension(container): Extension<Container>,
+            Extension(async_container): Extension<AsyncContainer>,
+        ) -> Response {
+            ws.on_upgrade(move |socket| handler(socket, container, async_container))
         }
 
-        async fn handler(mut socket: WebSocket, container: Container) {
+        async fn handler(mut socket: WebSocket, container: Container, async_container: AsyncContainer) {
             while let Some(_) = socket.recv().await {
                 if socket
-                    .send(Message::Text(container.get::<i32>().unwrap().to_string().into()))
+                    .send(Message::Text(
+                        (*container.get::<i32>().unwrap() + *async_container.get::<i32>().await.unwrap())
+                            .to_string()
+                            .into(),
+                    ))
                     .await
                     .is_err()
                 {
@@ -335,15 +465,22 @@ mod tests {
                 .provide(|| Ok(Config { num: 1 }), App)
                 .provide(|Inject(cfg): Inject<Config>| Ok(cfg.num + 1), Session),
         );
+        let async_container = AsyncContainer::new(
+            AsyncRegistriesBuilder::new()
+                .provide(|| Ok(Config { num: 1 }), App)
+                .provide_async(async |Inject(cfg): Inject<Config>| Ok(cfg.num + 1), Session),
+        );
 
-        let router = setup_default(Router::new().route("/", any(ws_upgrade)), container);
+        let router = Router::new().route("/", any(ws_upgrade));
+        let router = setup_default(router, container);
+        let router = setup_async_default(router, async_container);
 
         let server = TestServer::builder().http_transport().build(router).unwrap();
 
         let mut ws = server.get_websocket("/").await.into_websocket().await;
 
         ws.send_text("").await;
-        ws.assert_receive_text("2").await;
+        ws.assert_receive_text("4").await;
     }
 
     #[tokio::test]
