@@ -1,12 +1,15 @@
 use alloc::{boxed::Box, collections::vec_deque::VecDeque, sync::Arc};
-use core::any::{Any, TypeId};
+use core::{
+    any::{Any, TypeId},
+    mem,
+};
 
 use crate::{any, Context};
 
 #[derive(Clone)]
 pub(crate) struct Cache {
     pub(crate) map: Option<Box<any::Map>>,
-    resolved: ResolvedSet,
+    pub(crate) resolved: ResolvedSet,
 }
 
 impl Cache {
@@ -57,15 +60,8 @@ impl Cache {
 
     #[inline]
     #[must_use]
-    #[cfg(test)]
-    pub(crate) fn get_resolved_set(&self) -> &ResolvedSet {
-        &self.resolved
-    }
-
-    #[inline]
-    #[must_use]
-    pub(crate) fn get_resolved_set_mut(&mut self) -> &mut ResolvedSet {
-        &mut self.resolved
+    pub(crate) fn take_resolved_set(&mut self) -> ResolvedSet {
+        mem::take(&mut self.resolved)
     }
 }
 
@@ -75,7 +71,7 @@ pub(crate) struct Resolved {
     pub(crate) dependency: Arc<dyn Any + Send + Sync>,
 }
 
-#[derive(Clone)]
+#[derive(Default, Clone)]
 pub(crate) struct ResolvedSet(pub(crate) VecDeque<Resolved>);
 
 impl ResolvedSet {
