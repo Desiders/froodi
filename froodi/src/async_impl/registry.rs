@@ -3,7 +3,6 @@ use core::any::TypeId;
 
 use crate::{
     async_impl::{
-        dependency_resolver::DependencyResolver as AsyncDependencyResolver,
         finalizer::{boxed_finalizer_factory as boxed_async_finalizer_factory, BoxedCloneFinalizer, Finalizer as AsyncFinalizer},
         instantiator::{
             boxed_instantiator_factory as boxed_async_instantiator_factory, BoxedCloneInstantiator as BoxedCloneAsyncInstantiator,
@@ -105,7 +104,7 @@ impl<S> RegistriesBuilder<S> {
     pub fn provide_async<Inst, Deps>(mut self, instantiator: Inst, scope: S) -> Self
     where
         Inst: AsyncInstantiator<Deps, Provides: Send, Error = InstantiateErrorKind> + Send + Sync,
-        Deps: AsyncDependencyResolver<Error = ResolveErrorKind>,
+        Deps: DependencyResolver<Error = ResolveErrorKind>,
     {
         self.add_instantiator::<Inst::Provides>(BoxedInstantiator::Async(boxed_async_instantiator_factory(instantiator)), scope);
         self
@@ -116,7 +115,7 @@ impl<S> RegistriesBuilder<S> {
     pub fn provide_async_with_config<Inst, Deps>(mut self, instantiator: Inst, config: Config, scope: S) -> Self
     where
         Inst: AsyncInstantiator<Deps, Provides: Send, Error = InstantiateErrorKind> + Send + Sync,
-        Deps: AsyncDependencyResolver<Error = ResolveErrorKind>,
+        Deps: DependencyResolver<Error = ResolveErrorKind>,
     {
         self.add_instantiator_with_config::<Inst::Provides>(
             BoxedInstantiator::Async(boxed_async_instantiator_factory(instantiator)),

@@ -48,7 +48,7 @@ where
 {
     BoxCloneService(Box::new(service_fn({
         move |container| {
-            let dependencies = match Deps::resolve(container) {
+            let dependencies = match Deps::resolve(&container) {
                 Ok(dependencies) => dependencies,
                 Err(err) => return Err(InstantiatorErrorKind::Deps(err)),
             };
@@ -74,7 +74,7 @@ macro_rules! impl_instantiator {
             F: FnMut($($ty,)*) -> Result<Response, Err> + Clone + 'static,
             Response: 'static,
             Err: Into<InstantiateErrorKind>,
-            $( $ty: DependencyResolver, )*
+            $( $ty: DependencyResolver + Send, )*
         {
             type Provides = Response;
             type Error = Err;
@@ -102,7 +102,7 @@ mod tests {
 
     use super::{boxed_instantiator_factory, DependencyResolver, InstantiateErrorKind, Instantiator};
     use crate::{
-        dependency_resolver::{Inject, InjectTransient},
+        inject::{Inject, InjectTransient},
         scope::DefaultScope::*,
         service::Service as _,
         Container, RegistriesBuilder,

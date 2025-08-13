@@ -3,11 +3,13 @@ use core::{any::Any, future::Future};
 use tracing::debug;
 
 use super::{
-    dependency_resolver::DependencyResolver,
     service::{service_fn, BoxCloneService},
     Container,
 };
-use crate::errors::{InstantiateErrorKind, InstantiatorErrorKind};
+use crate::{
+    dependency_resolver::DependencyResolver,
+    errors::{InstantiateErrorKind, InstantiatorErrorKind},
+};
 
 pub trait Instantiator<Deps>: Clone + 'static
 where
@@ -51,7 +53,7 @@ where
             let mut instantiator = instantiator.clone();
 
             async move {
-                let dependencies = match Deps::resolve(container).await {
+                let dependencies = match Deps::resolve_async(&container).await {
                     Ok(dependencies) => dependencies,
                     Err(err) => return Err(InstantiatorErrorKind::Deps(err)),
                 };
@@ -99,13 +101,9 @@ mod tests {
 
     use super::{boxed_instantiator_factory, DependencyResolver, InstantiateErrorKind, Instantiator};
     use crate::{
-        async_impl::{
-            dependency_resolver::{Inject, InjectTransient},
-            registry::BoxedInstantiator,
-            service::Service as _,
-            Container, RegistriesBuilder,
-        },
+        async_impl::{registry::BoxedInstantiator, service::Service as _, Container, RegistriesBuilder},
         scope::DefaultScope::*,
+        Inject, InjectTransient,
     };
 
     use alloc::{
