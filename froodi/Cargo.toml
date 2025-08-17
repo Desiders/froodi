@@ -10,7 +10,7 @@ description = "An ergonomic Rust IoC container"
 keywords = ["ioc", "di", "dependency-injection"]
 categories = ["no-std", "development-tools", "config"]
 
-rust-version = "1.70.0"
+rust-version = "1.65.0"
 
 [dependencies]
 anyhow = { version = "1.0", default-features = false }
@@ -32,7 +32,7 @@ default = ["std"]
 
 std = ["anyhow/std", "thiserror/std", "tracing/std"]
 
-async = ["dep:tower", "tower/util", "dep:async-recursion"]
+async = ["tower", "tower/util", "dep:async-recursion"]
 
 axum = ["dep:axum", "axum/ws", "dep:tower-layer", "dep:tower-service"]
 http2-axum = ["dep:h2", "axum/http2"]

@@ -14,7 +14,7 @@ pub(crate) struct Cache {
 
 impl Cache {
     #[must_use]
-    pub const fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             map: None,
             resolved: ResolvedSet::new(),
@@ -75,7 +75,7 @@ pub(crate) struct Resolved {
 pub(crate) struct ResolvedSet(pub(crate) VecDeque<Resolved>);
 
 impl ResolvedSet {
-    pub(crate) const fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self(VecDeque::new())
     }
 
