@@ -1,3 +1,4 @@
+#[cfg(feature = "async")]
 use core::future::Future;
 
 use super::errors::ResolveErrorKind;
