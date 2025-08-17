@@ -8,11 +8,10 @@ use super::{cache::Cache, registry::RegistriesBuilder};
 use crate::{
     cache::Resolved,
     context::Context,
-    errors::{ResolveErrorKind, ScopeErrorKind, ScopeWithErrorKind},
+    errors::{InstantiatorErrorKind, ResolveErrorKind, ScopeErrorKind, ScopeWithErrorKind},
     registry::{InstantiatorInnerData, Registry},
     scope::Scope,
     service::Service as _,
-    InstantiatorErrorKind,
 };
 
 #[derive(Clone)]

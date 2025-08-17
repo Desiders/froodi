@@ -12,10 +12,9 @@ use crate::{
     cache::{Cache, Resolved},
     container::{BoxedContainerInner as BoxedSyncContainerInner, Container as SyncContainer, ContainerInner as SyncContainerInner},
     context::Context,
-    errors::{ResolveErrorKind, ScopeErrorKind, ScopeWithErrorKind},
+    errors::{InstantiatorErrorKind, ResolveErrorKind, ScopeErrorKind, ScopeWithErrorKind},
     registry::Registry as SyncRegistry,
     scope::Scope,
-    InstantiatorErrorKind,
 };
 
 #[derive(Clone)]

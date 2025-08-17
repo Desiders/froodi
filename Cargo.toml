@@ -1,4 +1,4 @@
 [workspace]
-members = ["froodi", "froodi-*"]
-default-members = ["froodi", "froodi-*"]
+members = ["froodi", "froodi-*", "examples/*"]
+default-members = ["froodi", "froodi-*", "examples/*"]
 resolver = "2"

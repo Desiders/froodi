@@ -32,7 +32,7 @@ default = ["std"]
 
 std = ["anyhow/std", "thiserror/std", "tracing/std"]
 
-async = ["dep:tower", "dep:async-recursion"]
+async = ["dep:tower", "tower/util", "dep:async-recursion"]
 
 axum = ["dep:axum", "axum/ws", "dep:tower-layer", "dep:tower-service"]
 http2-axum = ["dep:h2", "axum/http2"]

@@ -92,10 +92,9 @@ impl<S> RegistriesBuilder<S> {
     ///     2. The finalized used for life cycle management, while [`Drop`] is used for resource management.
     #[inline]
     #[must_use]
-    pub fn add_finalizer<Dep, Fin>(mut self, finalizer: Fin) -> Self
+    pub fn add_finalizer<Dep>(mut self, finalizer: impl Finalizer<Dep> + Send + Sync) -> Self
     where
         Dep: Send + Sync + 'static,
-        Fin: Finalizer<Dep> + Send + Sync,
     {
         self.finalizers.insert(TypeId::of::<Dep>(), boxed_finalizer_factory(finalizer));
         self

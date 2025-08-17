@@ -25,7 +25,7 @@ pub mod async_impl;
 
 pub use container::Container;
 pub use context::Context;
-pub use errors::{InstantiateErrorKind, InstantiatorErrorKind, ResolveErrorKind, ScopeErrorKind, ScopeWithErrorKind};
+pub use errors::{InstantiateErrorKind, InstantiatorResult, ResolveErrorKind, ScopeErrorKind, ScopeWithErrorKind};
 pub use finalizer::Finalizer;
 pub use inject::{Inject, InjectTransient};
 pub use instantiator::{instance, Config};

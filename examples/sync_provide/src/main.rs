@@ -1,20 +1,3 @@
-# Froodi - an ergonomic Rust IoC container
-
-[![Crates.io Version](https://img.shields.io/crates/v/froodi)](https://crates.io/crates/froodi)
-
-Froodi is a lightweight, ergonomic Inversion of Control (IoC) container for Rust that helps manage dependencies with clear scoping and lifecycle management in a simple manner
-
-## Features
-
-- **Scoping**: Any object can have a lifespan for the entire app, a single request, or even more fractionally.
-- **Finalization**: Some dependencies, like database connections, need not only to be created but also carefully released. Many frameworks lack this essential feature
-- **Ergonomic API**: Only a few objects are needed to start using the library
-- **Speed**: Dependency resolving as fast as the speed of light thanks to the Rust
-- **Axum integration**: The popular framework for building web applications is supported out of the box
-- **Completely safe**: No unsafe code
-
-# Quickstart
-```rust
 use froodi::{
     Container,
     DefaultScope::{App, Request},
@@ -58,6 +41,7 @@ impl<R: UserRepo> CreateUser<R> {
 
 fn init_container(config: Config) -> Container {
     // We can use functions as instance creators instead of closures
+    #[allow(clippy::unnecessary_wraps)]
     fn create_user<R>(Inject(repo): Inject<R>) -> InstantiatorResult<CreateUser<R>> {
         Ok(CreateUser { repo })
     }
@@ -88,12 +72,3 @@ fn main() {
     request_container.close();
     app_container.close();
 }
-```
-
-# Integrations
-## Axum
-coming soon...
-
-# Contributing
-
-Contributions are welcome!

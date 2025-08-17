@@ -1,6 +1,8 @@
 use alloc::sync::Arc;
 
-use crate::{async_impl::Container as AsyncContainer, dependency_resolver::DependencyResolver, Container, ResolveErrorKind};
+#[cfg(feature = "async")]
+use crate::async_impl::Container as AsyncContainer;
+use crate::{dependency_resolver::DependencyResolver, Container, ResolveErrorKind};
 
 pub struct Inject<Dep, const PREFER_SYNC_OVER_ASYNC: bool = true>(pub Arc<Dep>);
 
