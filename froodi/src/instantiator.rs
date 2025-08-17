@@ -92,8 +92,36 @@ all_the_tuples!(impl_instantiator);
 /// It can be used when the value was created outside the container.
 #[inline]
 #[must_use]
-pub const fn instance<T: Clone + 'static>(val: T) -> impl Instantiator<(), Error = InstantiateErrorKind> {
+pub const fn instance<T: Clone + 'static>(val: T) -> impl Instantiator<(), Provides = T, Error = InstantiateErrorKind> {
     move || Ok(val.clone())
+}
+
+/// Creates a `Box<dyn Trait>` from a value, optionally including supertraits.
+///
+/// # Syntax
+/// ```text
+/// boxed!(value; Trait [+ SuperTrait1 [+ SuperTrait2 ...]])
+/// ```
+///
+/// # Examples
+/// ```rust
+/// trait UserRepo {}
+///
+/// struct PostgresUserRepo;
+///
+/// impl UserRepo for PostgresUserRepo {}
+///
+/// // Single trait
+/// let repo1: Box<dyn UserRepo> = boxed!(PostgresUserRepo; UserRepo);
+///
+/// // Trait with supertraits
+/// let repo2: Box<dyn UserRepo + Send + Sync> = boxed!(PostgresUserRepo; UserRepo + Send + Sync);
+/// ```
+#[macro_export]
+macro_rules! boxed {
+    ($val:expr ; $trait:tt $($super_traits:tt)*) => {{
+        Box::new($val) as Box<dyn $r#trait $($super_traits)*>
+    }};
 }
 
 #[cfg(test)]
