@@ -1,7 +1,7 @@
 use froodi::{
     DefaultScope::{App, Request},
     Inject, InstantiatorResult,
-    async_impl::{Container, RegistriesBuilder},
+    async_impl::{Container, RegistryBuilder},
     instance,
 };
 use std::sync::Arc;
@@ -46,7 +46,7 @@ fn init_container(config: Config) -> Container {
         Ok(CreateUser { repo })
     }
 
-    let registry = RegistriesBuilder::new()
+    let registry = RegistryBuilder::new()
         // We still can use sync instance creator even with async container
         .provide(instance(config), App)
         .provide(|_config: Inject<Config>| Ok(PostgresUserRepo), Request)

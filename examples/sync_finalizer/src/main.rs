@@ -1,7 +1,7 @@
 use froodi::{
     Container,
     DefaultScope::{App, Request},
-    Inject, InstantiatorResult, RegistriesBuilder, instance,
+    Inject, InstantiatorResult, RegistryBuilder, instance,
 };
 use std::sync::Arc;
 
@@ -51,7 +51,7 @@ fn init_container(config: Config) -> Container {
         println!("Create user interactor finalized");
     }
 
-    let registry = RegistriesBuilder::new()
+    let registry = RegistryBuilder::new()
         .provide(instance(config), App)
         .provide(|_config: Inject<Config>| Ok(PostgresUserRepo), Request)
         .provide(create_user::<PostgresUserRepo>, Request)
