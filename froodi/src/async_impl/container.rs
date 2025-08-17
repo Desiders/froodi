@@ -10,7 +10,7 @@ use super::{
 };
 use crate::{
     cache::{Cache, Resolved},
-    container::{BoxedContainerInner as LifetimedSyncContainerInner, Container as SyncContainer, ContainerInner as SyncContainerInner},
+    container::{BoxedContainerInner as BoxedSyncContainerInner, Container as SyncContainer, ContainerInner as SyncContainerInner},
     context::Context,
     errors::{ResolveErrorKind, ScopeErrorKind, ScopeWithErrorKind},
     registry::Registry as SyncRegistry,
@@ -55,7 +55,7 @@ impl Container {
             panic!("registries len (is 0) should be > 1");
         };
 
-        let mut sync_container = LifetimedSyncContainerInner {
+        let mut sync_container = BoxedSyncContainerInner {
             cache: Cache::new(),
             context: Context::new(),
             root_registry: root_sync_registry,
@@ -129,7 +129,7 @@ impl Container {
         let mut container_priority = root_registry.scope.priority;
         let priority = scope.priority();
 
-        let mut sync_container = LifetimedSyncContainerInner {
+        let mut sync_container = BoxedSyncContainerInner {
             cache: Cache::new(),
             context: Context::new(),
             root_registry: root_sync_registry,
@@ -750,7 +750,7 @@ struct BoxedContainerInner {
     child_registries: Box<[Arc<Registry>]>,
     parent: Option<Box<BoxedContainerInner>>,
     close_parent: bool,
-    sync_container: LifetimedSyncContainerInner,
+    sync_container: BoxedSyncContainerInner,
 }
 
 impl BoxedContainerInner {
@@ -761,7 +761,7 @@ impl BoxedContainerInner {
         root_registry: Arc<Registry>,
         child_registries: Box<[Arc<Registry>]>,
         close_parent: bool,
-        sync_container: LifetimedSyncContainerInner,
+        sync_container: BoxedSyncContainerInner,
     ) -> Self {
         let mut cache = self.cache.child();
         let context = self.context.clone();
@@ -819,7 +819,6 @@ impl ContainerInner {
     ///
     /// # Warning
     /// This method can be called multiple times, but it will only call finalizers for dependencies that were resolved since the last call
-    #[allow(clippy::missing_panics_doc)]
     pub async fn close(&self) {
         self.close_with_parent_flag(self.close_parent).await;
     }
@@ -852,13 +851,6 @@ impl ContainerInner {
                 debug!("Parent container closed");
             }
         }
-    }
-}
-
-impl Drop for ContainerInner {
-    fn drop(&mut self) {
-        self.close();
-        debug!("Container closed on drop");
     }
 }
 
@@ -1421,6 +1413,108 @@ mod tests {
         assert_eq!(finalizer_2_call_position.load(Ordering::SeqCst), 2);
         assert_eq!(instantiator_call_count.load(Ordering::SeqCst), 1);
         assert_eq!(instantiator_call_position.load(Ordering::SeqCst), 4);
+        assert_eq!(drop_call_count.load(Ordering::SeqCst), 1);
+        assert_eq!(drop_call_position.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_async_close_on_drop() {
+        let call_count = Arc::new(AtomicU8::new(0));
+
+        let drop_call_count = Arc::new(AtomicU8::new(0));
+        let drop_call_position = Arc::new(AtomicU8::new(0));
+        let instantiator_call_count = Arc::new(AtomicU8::new(0));
+        let instantiator_call_position = Arc::new(AtomicU8::new(0));
+        let finalizer_1_call_count = Arc::new(AtomicU8::new(0));
+        let finalizer_1_call_position = Arc::new(AtomicU8::new(0));
+        let finalizer_2_call_count = Arc::new(AtomicU8::new(0));
+        let finalizer_2_call_position = Arc::new(AtomicU8::new(0));
+
+        struct Type1;
+        struct Type2(Arc<Type1>);
+
+        struct DropWrapper<T> {
+            val: T,
+            call_count: Arc<AtomicU8>,
+            drop_call_count: Arc<AtomicU8>,
+            drop_call_position: Arc<AtomicU8>,
+        }
+
+        impl<T> Drop for DropWrapper<T> {
+            fn drop(&mut self) {
+                self.call_count.fetch_add(1, Ordering::SeqCst);
+                self.drop_call_count.fetch_add(1, Ordering::SeqCst);
+                self.drop_call_position
+                    .store(self.call_count.load(Ordering::SeqCst), Ordering::SeqCst);
+
+                debug!("Drop called");
+            }
+        }
+
+        let registry = RegistriesBuilder::new()
+            .provide(|| Ok(Type1), App)
+            .provide(|Inject(type_1): Inject<Type1>| Ok(Type2(type_1)), Request)
+            .add_async_finalizer({
+                let call_count = call_count.clone();
+                let finalizer_1_call_count = finalizer_1_call_count.clone();
+                let finalizer_1_call_position = finalizer_1_call_position.clone();
+                move |_: Arc<Type1>| {
+                    let call_count = call_count.clone();
+                    let finalizer_1_call_count = finalizer_1_call_count.clone();
+                    let finalizer_1_call_position = finalizer_1_call_position.clone();
+                    async move {
+                        call_count.fetch_add(1, Ordering::SeqCst);
+                        finalizer_1_call_position.store(call_count.load(Ordering::SeqCst), Ordering::SeqCst);
+                        finalizer_1_call_count.fetch_add(1, Ordering::SeqCst);
+
+                        debug!("Finalizer 1 called");
+                    }
+                }
+            })
+            .add_async_finalizer({
+                let call_count = call_count.clone();
+                let finalizer_2_call_count = finalizer_2_call_count.clone();
+                let finalizer_2_call_position = finalizer_2_call_position.clone();
+                move |_: Arc<Type2>| {
+                    let call_count = call_count.clone();
+                    let finalizer_2_call_count = finalizer_2_call_count.clone();
+                    let finalizer_2_call_position = finalizer_2_call_position.clone();
+                    async move {
+                        call_count.fetch_add(1, Ordering::SeqCst);
+                        finalizer_2_call_position.store(call_count.load(Ordering::SeqCst), Ordering::SeqCst);
+                        finalizer_2_call_count.fetch_add(1, Ordering::SeqCst);
+
+                        debug!("Finalizer 2 called");
+                    }
+                }
+            });
+
+        let app_container = Container::new(registry);
+        let request_container = app_container.enter_build().unwrap();
+        DropWrapper {
+            val: request_container,
+            call_count: call_count.clone(),
+            drop_call_count: drop_call_count.clone(),
+            drop_call_position: drop_call_position.clone(),
+        }
+        .val
+        .get::<Type2>()
+        .await
+        .unwrap();
+
+        instantiator_call_position.store(call_count.load(Ordering::SeqCst) + 1, Ordering::SeqCst);
+        instantiator_call_count.fetch_add(1, Ordering::SeqCst);
+
+        debug!("Instantiator called");
+
+        assert_eq!(call_count.load(Ordering::SeqCst), 1);
+        assert_eq!(finalizer_1_call_count.load(Ordering::SeqCst), 0);
+        assert_eq!(finalizer_1_call_position.load(Ordering::SeqCst), 0);
+        assert_eq!(finalizer_2_call_count.load(Ordering::SeqCst), 0);
+        assert_eq!(finalizer_2_call_position.load(Ordering::SeqCst), 0);
+        assert_eq!(instantiator_call_count.load(Ordering::SeqCst), 1);
+        assert_eq!(instantiator_call_position.load(Ordering::SeqCst), 2);
         assert_eq!(drop_call_count.load(Ordering::SeqCst), 1);
         assert_eq!(drop_call_position.load(Ordering::SeqCst), 1);
     }
