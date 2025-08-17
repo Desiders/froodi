@@ -1,8 +1,8 @@
 use froodi::{
-    async_impl::{Container, RegistryBuilder},
-    instance,
     DefaultScope::{App, Request},
     Inject, InstantiatorResult,
+    async_impl::{Container, RegistryBuilder},
+    instance,
 };
 use std::sync::Arc;
 
