@@ -589,12 +589,8 @@ pub(crate) struct ContainerInner {
 }
 
 impl ContainerInner {
-    /// Closes the container, calling finalizers for resolved dependencies in LIFO order.
-    ///
-    /// # Warning
-    /// This method can be called multiple times, but it will only call finalizers for dependencies that were resolved since the last call
     #[allow(clippy::missing_panics_doc)]
-    pub fn close(&self) {
+    fn close(&self) {
         self.close_with_parent_flag(self.close_parent);
     }
 
