@@ -1,32 +1,17 @@
-use alloc::sync::Arc;
+use core::future::Future;
 
 use super::errors::ResolveErrorKind;
+#[cfg(feature = "async")]
+use crate::async_impl::Container as AsyncContainer;
 use crate::Container;
 
 pub trait DependencyResolver: Sized {
     type Error: Into<ResolveErrorKind>;
 
-    fn resolve(container: Container) -> Result<Self, Self::Error>;
-}
+    fn resolve(container: &Container) -> Result<Self, Self::Error>;
 
-pub struct Inject<Dep>(pub Arc<Dep>);
-
-impl<Dep: Send + Sync + 'static> DependencyResolver for Inject<Dep> {
-    type Error = ResolveErrorKind;
-
-    fn resolve(container: Container) -> Result<Self, Self::Error> {
-        container.get().map(Inject)
-    }
-}
-
-pub struct InjectTransient<Dep>(pub Dep);
-
-impl<Dep: 'static> DependencyResolver for InjectTransient<Dep> {
-    type Error = ResolveErrorKind;
-
-    fn resolve(container: Container) -> Result<Self, Self::Error> {
-        container.get_transient().map(InjectTransient)
-    }
+    #[cfg(feature = "async")]
+    fn resolve_async(container: &AsyncContainer) -> impl Future<Output = Result<Self, Self::Error>> + Send;
 }
 
 macro_rules! impl_dependency_resolver {
@@ -36,14 +21,21 @@ macro_rules! impl_dependency_resolver {
         #[allow(non_snake_case, unused_mut)]
         impl<$($ty,)*> DependencyResolver for ($($ty,)*)
         where
-            $( $ty: DependencyResolver, )*
+            $( $ty: DependencyResolver + Send, )*
         {
             type Error = ResolveErrorKind;
 
             #[inline]
             #[allow(unused_variables)]
-            fn resolve(container: Container) -> Result<Self, Self::Error> {
-                Ok(($($ty::resolve(container.clone()).map_err(Into::into)?,)*))
+            fn resolve(container:  &Container) -> Result<Self, Self::Error> {
+                Ok(($($ty::resolve(container).map_err(Into::into)?,)*))
+            }
+
+            #[inline]
+            #[allow(unused_variables)]
+            #[cfg(feature = "async")]
+            async fn resolve_async(container:  &AsyncContainer) -> Result<Self, Self::Error> {
+                Ok(($($ty::resolve_async(container).await.map_err(Into::into)?,)*))
             }
         }
     };
@@ -55,8 +47,14 @@ all_the_tuples!(impl_dependency_resolver);
 mod tests {
     extern crate std;
 
-    use super::{DependencyResolver, Inject, InjectTransient};
-    use crate::{errors::InstantiateErrorKind, instance, scope::DefaultScope::*, Container, RegistriesBuilder};
+    use super::DependencyResolver;
+    use crate::{
+        errors::InstantiateErrorKind,
+        inject::{Inject, InjectTransient},
+        instance,
+        scope::DefaultScope::*,
+        Container, RegistriesBuilder,
+    };
 
     use alloc::{
         format,
@@ -105,9 +103,9 @@ mod tests {
 
         let container = Container::new(registries_builder);
 
-        let request_1 = Inject::<Request>::resolve(container.clone()).unwrap();
-        let request_2 = Inject::<Request>::resolve(container.clone()).unwrap();
-        let _ = Inject::<Instance>::resolve(container).unwrap();
+        let request_1 = Inject::<Request>::resolve(&container).unwrap();
+        let request_2 = Inject::<Request>::resolve(&container).unwrap();
+        let _ = Inject::<Instance>::resolve(&container).unwrap();
 
         assert!(Arc::ptr_eq(&request_1.0, &request_2.0));
         assert_eq!(instantiator_request_call_count.load(Ordering::SeqCst), 1);
@@ -133,8 +131,8 @@ mod tests {
 
         let container = Container::new(registries_builder);
 
-        let _ = InjectTransient::<Request>::resolve(container.clone()).unwrap();
-        InjectTransient::<Request>::resolve(container).unwrap();
+        let _ = InjectTransient::<Request>::resolve(&container).unwrap();
+        InjectTransient::<Request>::resolve(&container).unwrap();
 
         assert_eq!(instantiator_request_call_count.load(Ordering::SeqCst), 2);
     }

@@ -1,0 +1,49 @@
+[package]
+name = "froodi"
+version = "1.0.0-beta.1"
+edition = "2021"
+authors = ["Desiders"]
+license = "Apache-2.0"
+repository = "https://github.com/Desiders/froodi"
+
+description = "An ergonomic Rust IoC container"
+keywords = ["ioc", "di", "dependency-injection"]
+categories = ["no-std", "development-tools", "config"]
+
+rust-version = "1.70.0"
+
+[dependencies]
+anyhow = { version = "1.0", default-features = false }
+thiserror = { version = "2.0", default-features = false }
+tracing = { version = "0.1", default-features = false }
+parking_lot = { version = "0.12", default-features = false }
+
+async-recursion = { version = "1.1", optional = true }
+tower = { version = "0.5", optional = true }
+
+tower-layer = { version = "0.3", optional = true }
+tower-service = { version = "0.3", optional = true }
+h2 = { version = "0.4", optional = true }
+
+axum = { version = ">= 0.6, <= 0.8", default-features = false, optional = true }
+
+[features]
+default = ["std"]
+
+std = ["anyhow/std", "thiserror/std", "tracing/std"]
+
+async = ["dep:tower", "tower/util", "dep:async-recursion"]
+
+axum = ["dep:axum", "axum/ws", "dep:tower-layer", "dep:tower-service"]
+http2-axum = ["dep:h2", "axum/http2"]
+
+[dev-dependencies]
+tracing-test = { version = "0.2", default-features = false }
+criterion = { version = "0.7" }
+axum = { version = "0.8" }
+axum-test = { version = "17.3", features = ["ws"] }
+tokio = { version = "1.47", features = ["macros"] }
+
+[[bench]]
+name = "container"
+harness = false

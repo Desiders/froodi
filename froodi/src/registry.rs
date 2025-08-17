@@ -9,7 +9,7 @@ use crate::{
     dependency_resolver::DependencyResolver,
     finalizer::{boxed_finalizer_factory, BoxedCloneFinalizer, Finalizer},
     instantiator::{boxed_instantiator_factory, Instantiator},
-    scope::Scope,
+    scope::{Scope, ScopeInnerData},
     DefaultScope, Scopes as ScopesTrait,
 };
 
@@ -92,10 +92,9 @@ impl<S> RegistriesBuilder<S> {
     ///     2. The finalized used for life cycle management, while [`Drop`] is used for resource management.
     #[inline]
     #[must_use]
-    pub fn add_finalizer<Dep, Fin>(mut self, finalizer: Fin) -> Self
+    pub fn add_finalizer<Dep>(mut self, finalizer: impl Finalizer<Dep> + Send + Sync) -> Self
     where
         Dep: Send + Sync + 'static,
-        Fin: Finalizer<Dep> + Send + Sync,
     {
         self.finalizers.insert(TypeId::of::<Dep>(), boxed_finalizer_factory(finalizer));
         self
@@ -189,24 +188,16 @@ where
     }
 }
 
-#[cfg_attr(feature = "debug", derive(Debug))]
-pub(crate) struct ScopeInnerData {
-    pub(crate) priority: u8,
-    pub(crate) is_skipped_by_default: bool,
-}
-
 #[derive(Clone)]
-#[cfg_attr(feature = "debug", derive(Debug))]
 pub(crate) struct InstantiatorInnerData {
     pub(crate) instantiator: BoxedCloneInstantiator<ResolveErrorKind, InstantiateErrorKind>,
     pub(crate) finalizer: Option<BoxedCloneFinalizer>,
     pub(crate) config: Config,
 }
 
-#[cfg_attr(feature = "debug", derive(Debug))]
 pub(crate) struct Registry {
     pub(crate) scope: ScopeInnerData,
-    instantiators: BTreeMap<TypeId, InstantiatorInnerData>,
+    pub(crate) instantiators: BTreeMap<TypeId, InstantiatorInnerData>,
 }
 
 impl Registry {
