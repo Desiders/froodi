@@ -371,9 +371,9 @@ mod tests {
 
     use super::{setup_async_default, setup_default, AsyncContainer, Container, Inject, InjectTransient};
     use crate::{
-        async_impl::RegistriesBuilder as AsyncRegistriesBuilder,
+        async_impl::RegistryBuilder as AsyncRegistriesBuilder,
         DefaultScope::{App, Request, Session},
-        RegistriesBuilder,
+        RegistryBuilder,
     };
 
     use alloc::{
@@ -406,7 +406,7 @@ mod tests {
         }
 
         let container = Container::new(
-            RegistriesBuilder::new()
+            RegistryBuilder::new()
                 .provide(|| Ok(Config { num: 1 }), App)
                 .provide(|Inject(cfg): Inject<Config>| Ok(cfg.num + 1), Request),
         );
@@ -461,7 +461,7 @@ mod tests {
         }
 
         let container = Container::new(
-            RegistriesBuilder::new()
+            RegistryBuilder::new()
                 .provide(|| Ok(Config { num: 1 }), App)
                 .provide(|Inject(cfg): Inject<Config>| Ok(cfg.num + 1), Session),
         );
@@ -497,7 +497,7 @@ mod tests {
         }
 
         let container = Container::new(
-            RegistriesBuilder::new()
+            RegistryBuilder::new()
                 .provide(|| Ok(Config { num: 1 }), App)
                 .provide(|Inject(cfg): Inject<Config>| Ok(cfg.num + 1), Request),
         );

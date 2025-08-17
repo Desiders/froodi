@@ -29,7 +29,7 @@ pub use errors::{InstantiateErrorKind, InstantiatorResult, ResolveErrorKind, Sco
 pub use finalizer::Finalizer;
 pub use inject::{Inject, InjectTransient};
 pub use instantiator::{instance, Config};
-pub use registry::RegistriesBuilder;
+pub use registry::RegistryBuilder;
 pub use scope::{DefaultScope, Scope, Scopes};
 
 #[cfg(feature = "axum")]

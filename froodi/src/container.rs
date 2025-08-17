@@ -4,12 +4,12 @@ use alloc::{boxed::Box, sync::Arc};
 use parking_lot::Mutex;
 use tracing::{debug, debug_span, error, warn};
 
-use super::{cache::Cache, registry::RegistriesBuilder};
+use super::{cache::Cache, registry::RegistryBuilder};
 use crate::{
     cache::Resolved,
     context::Context,
     errors::{InstantiatorErrorKind, ResolveErrorKind, ScopeErrorKind, ScopeWithErrorKind},
-    registry::{InstantiatorInnerData, Registry},
+    registry::{InstantiatorInnerData, ScopedRegistry},
     scope::Scope,
     service::Service as _,
 };
@@ -35,8 +35,8 @@ impl Container {
     /// - Panics if all scopes except the first one are skipped by default.
     #[inline]
     #[must_use]
-    pub fn new<S: Scope>(registries_builder: RegistriesBuilder<S>) -> Self {
-        let mut registries = registries_builder.build().into_iter();
+    pub fn new<S: Scope>(registry_builder: RegistryBuilder<S>) -> Self {
+        let mut registries = registry_builder.build().into_iter();
         let (root_registry, child_registries) = if let Some(root_registry) = registries.next() {
             (Arc::new(root_registry), registries.map(Arc::new).collect())
         } else {
@@ -81,8 +81,8 @@ impl Container {
     #[inline]
     #[must_use]
     #[allow(clippy::needless_pass_by_value)]
-    pub fn new_with_start_scope<S: Scope>(registries_builder: RegistriesBuilder<S>, scope: S) -> Self {
-        let mut registries = registries_builder.build().into_iter();
+    pub fn new_with_start_scope<S: Scope>(registry_builder: RegistryBuilder<S>, scope: S) -> Self {
+        let mut registries = registry_builder.build().into_iter();
         let (root_registry, child_registries) = if let Some(root_registry) = registries.next() {
             (Arc::new(root_registry), registries.map(Arc::new).collect())
         } else {
@@ -288,8 +288,8 @@ impl Container {
     fn init_child_with_context(
         self,
         context: Context,
-        root_registry: Arc<Registry>,
-        child_registries: Box<[Arc<Registry>]>,
+        root_registry: Arc<ScopedRegistry>,
+        child_registries: Box<[Arc<ScopedRegistry>]>,
         close_parent: bool,
     ) -> Container {
         let mut cache = self.inner.cache.lock().child();
@@ -309,7 +309,7 @@ impl Container {
 
     #[inline]
     #[must_use]
-    fn init_child(self, root_registry: Arc<Registry>, child_registries: Box<[Arc<Registry>]>, close_parent: bool) -> Container {
+    fn init_child(self, root_registry: Arc<ScopedRegistry>, child_registries: Box<[Arc<ScopedRegistry>]>, close_parent: bool) -> Container {
         let mut cache = self.inner.cache.lock().child();
         let context = self.inner.context.lock().clone();
         cache.append_context(&context);
@@ -529,8 +529,8 @@ where
 pub(crate) struct BoxedContainerInner {
     pub(crate) cache: Cache,
     pub(crate) context: Context,
-    pub(crate) root_registry: Arc<Registry>,
-    pub(crate) child_registries: Box<[Arc<Registry>]>,
+    pub(crate) root_registry: Arc<ScopedRegistry>,
+    pub(crate) child_registries: Box<[Arc<ScopedRegistry>]>,
     pub(crate) parent: Option<Box<BoxedContainerInner>>,
     pub(crate) close_parent: bool,
 }
@@ -538,7 +538,12 @@ pub(crate) struct BoxedContainerInner {
 impl BoxedContainerInner {
     #[inline]
     #[must_use]
-    pub(crate) fn init_child(self, root_registry: Arc<Registry>, child_registries: Box<[Arc<Registry>]>, close_parent: bool) -> Self {
+    pub(crate) fn init_child(
+        self,
+        root_registry: Arc<ScopedRegistry>,
+        child_registries: Box<[Arc<ScopedRegistry>]>,
+        close_parent: bool,
+    ) -> Self {
         let mut cache = self.cache.child();
         let context = self.context.clone();
         cache.append_context(&context);
@@ -581,8 +586,8 @@ impl From<BoxedContainerInner> for Container {
 pub(crate) struct ContainerInner {
     pub(crate) cache: Mutex<Cache>,
     pub(crate) context: Mutex<Context>,
-    pub(crate) root_registry: Arc<Registry>,
-    pub(crate) child_registries: Box<[Arc<Registry>]>,
+    pub(crate) root_registry: Arc<ScopedRegistry>,
+    pub(crate) child_registries: Box<[Arc<ScopedRegistry>]>,
     pub(crate) parent: Option<Container>,
     pub(crate) close_parent: bool,
 }
@@ -634,7 +639,7 @@ impl Drop for ContainerInner {
 mod tests {
     extern crate std;
 
-    use super::{Container, RegistriesBuilder};
+    use super::{Container, RegistryBuilder};
     use crate::{
         container::ContainerInner,
         inject::{Inject, InjectTransient},
@@ -667,7 +672,7 @@ mod tests {
         struct CAAAA(Arc<CAAAAA>);
         struct CAAAAA;
 
-        let registry = RegistriesBuilder::new()
+        let registry = RegistryBuilder::new()
             .provide(|| (Ok(CAAAAA)), Runtime)
             .provide(|Inject(caaaaa): Inject<CAAAAA>| Ok(CAAAA(caaaaa)), App)
             .provide(|Inject(caaaa): Inject<CAAAA>| Ok(CAAA(caaaa)), Session)
@@ -698,7 +703,7 @@ mod tests {
     #[test]
     #[traced_test]
     fn test_transient_get() {
-        let registry = RegistriesBuilder::new()
+        let registry = RegistryBuilder::new()
             .provide(|| Ok(RequestTransient1), App)
             .provide(
                 |InjectTransient(req): InjectTransient<RequestTransient1>| Ok(RequestTransient2(req)),
@@ -725,7 +730,7 @@ mod tests {
     #[test]
     #[traced_test]
     fn test_scope_hierarchy() {
-        let registry = RegistriesBuilder::new()
+        let registry = RegistryBuilder::new()
             .provide(|| Ok(()), Runtime)
             .provide(|| Ok(((), ())), App)
             .provide(|| Ok(((), (), ())), Session)
@@ -782,7 +787,7 @@ mod tests {
     #[test]
     #[traced_test]
     fn test_scope_with_hierarchy() {
-        let registry = RegistriesBuilder::new()
+        let registry = RegistryBuilder::new()
             .provide(|| Ok(()), Runtime)
             .provide(|| Ok(((), ())), App)
             .provide(|| Ok(((), (), ())), Session)
@@ -851,7 +856,7 @@ mod tests {
         let finalizer_2_request_call_count = Arc::new(AtomicU8::new(0));
         let finalizer_3_request_call_count = Arc::new(AtomicU8::new(0));
 
-        let registry = RegistriesBuilder::new()
+        let registry = RegistryBuilder::new()
             .provide(|| Ok(()), Runtime)
             .provide(|| Ok(((), ())), App)
             .provide(|| Ok(((), (), (), ())), Request)
@@ -899,7 +904,7 @@ mod tests {
         let finalizer_4_request_call_count = Arc::new(AtomicU8::new(0));
         let finalizer_4_request_call_position = Arc::new(AtomicU8::new(0));
 
-        let registry = RegistriesBuilder::new()
+        let registry = RegistryBuilder::new()
             .provide(|| Ok(()), Runtime)
             .provide(|| Ok(((), ())), App)
             .provide(|| Ok(((), (), (), ())), Request)
@@ -1027,7 +1032,7 @@ mod tests {
             }
         }
 
-        let registry = RegistriesBuilder::new()
+        let registry = RegistryBuilder::new()
             .provide(|| Ok(Type1), App)
             .provide(|Inject(type_1): Inject<Type1>| Ok(Type2(type_1)), Request)
             .add_finalizer({

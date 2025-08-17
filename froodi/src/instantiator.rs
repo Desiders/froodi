@@ -105,7 +105,7 @@ mod tests {
         inject::{Inject, InjectTransient},
         scope::DefaultScope::*,
         service::Service as _,
-        Container, RegistriesBuilder,
+        Container, RegistryBuilder,
     };
 
     use alloc::{
@@ -156,10 +156,10 @@ mod tests {
             }
         });
 
-        let mut registries_builder = RegistriesBuilder::new();
-        registries_builder.add_instantiator::<Request>(instantiator_request, App);
+        let mut registry_builder = RegistryBuilder::new();
+        registry_builder.add_instantiator::<Request>(instantiator_request, App);
 
-        let container = Container::new(registries_builder);
+        let container = Container::new(registry_builder);
 
         let response_1 = instantiator_response.call(container.clone()).unwrap();
         let response_2 = instantiator_response.call(container).unwrap();
@@ -197,10 +197,10 @@ mod tests {
             }
         });
 
-        let mut registries_builder = RegistriesBuilder::new();
-        registries_builder.add_instantiator::<Request>(instantiator_request, App);
+        let mut registry_builder = RegistryBuilder::new();
+        registry_builder.add_instantiator::<Request>(instantiator_request, App);
 
-        let container = Container::new(registries_builder);
+        let container = Container::new(registry_builder);
 
         let response_1 = instantiator_response.call(container.clone()).unwrap();
         let response_2 = instantiator_response.call(container.clone()).unwrap();

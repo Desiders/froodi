@@ -5,7 +5,7 @@ use parking_lot::Mutex;
 use tracing::{debug, debug_span, error};
 
 use super::{
-    registry::{InstantiatorInnerData, RegistriesBuilder, Registry},
+    registry::{InstantiatorInnerData, RegistryBuilder, ScopedRegistry},
     service::Service as _,
 };
 use crate::{
@@ -13,7 +13,7 @@ use crate::{
     container::{BoxedContainerInner as BoxedSyncContainerInner, Container as SyncContainer, ContainerInner as SyncContainerInner},
     context::Context,
     errors::{InstantiatorErrorKind, ResolveErrorKind, ScopeErrorKind, ScopeWithErrorKind},
-    registry::Registry as SyncRegistry,
+    registry::ScopedRegistry as SyncRegistry,
     scope::Scope,
 };
 
@@ -39,8 +39,8 @@ impl Container {
     /// - Panics if all scopes except the first one are skipped by default.
     #[inline]
     #[must_use]
-    pub fn new<S: Scope + Clone>(registries_builder: RegistriesBuilder<S>) -> Self {
-        let (registries, sync_registries) = registries_builder.build();
+    pub fn new<S: Scope + Clone>(registry_builder: RegistryBuilder<S>) -> Self {
+        let (registries, sync_registries) = registry_builder.build();
         let mut registries = registries.into_iter();
         let (root_registry, child_registries) = if let Some(root_registry) = registries.next() {
             (Arc::new(root_registry), registries.map(Arc::new).collect())
@@ -110,8 +110,8 @@ impl Container {
     #[inline]
     #[must_use]
     #[allow(clippy::needless_pass_by_value)]
-    pub fn new_with_start_scope<S: Scope + Clone>(registries_builder: RegistriesBuilder<S>, scope: S) -> Self {
-        let (registries, sync_registries) = registries_builder.build();
+    pub fn new_with_start_scope<S: Scope + Clone>(registry_builder: RegistryBuilder<S>, scope: S) -> Self {
+        let (registries, sync_registries) = registry_builder.build();
         let mut registries = registries.into_iter();
         let (root_registry, child_registries) = if let Some(root_registry) = registries.next() {
             (Arc::new(root_registry), registries.map(Arc::new).collect())
@@ -364,8 +364,8 @@ impl Container {
         self,
         sync_container: SyncContainer,
         context: Context,
-        root_registry: Arc<Registry>,
-        child_registries: Box<[Arc<Registry>]>,
+        root_registry: Arc<ScopedRegistry>,
+        child_registries: Box<[Arc<ScopedRegistry>]>,
         root_sync_registry: Arc<SyncRegistry>,
         child_sync_registries: Box<[Arc<SyncRegistry>]>,
         close_parent: bool,
@@ -403,8 +403,8 @@ impl Container {
     fn init_child(
         self,
         sync_container: SyncContainer,
-        root_registry: Arc<Registry>,
-        child_registries: Box<[Arc<Registry>]>,
+        root_registry: Arc<ScopedRegistry>,
+        child_registries: Box<[Arc<ScopedRegistry>]>,
         root_sync_registry: Arc<SyncRegistry>,
         child_sync_registries: Box<[Arc<SyncRegistry>]>,
         close_parent: bool,
@@ -745,8 +745,8 @@ where
 struct BoxedContainerInner {
     cache: Cache,
     context: Context,
-    root_registry: Arc<Registry>,
-    child_registries: Box<[Arc<Registry>]>,
+    root_registry: Arc<ScopedRegistry>,
+    child_registries: Box<[Arc<ScopedRegistry>]>,
     parent: Option<Box<BoxedContainerInner>>,
     close_parent: bool,
     sync_container: BoxedSyncContainerInner,
@@ -757,8 +757,8 @@ impl BoxedContainerInner {
     #[must_use]
     fn init_child(
         self,
-        root_registry: Arc<Registry>,
-        child_registries: Box<[Arc<Registry>]>,
+        root_registry: Arc<ScopedRegistry>,
+        child_registries: Box<[Arc<ScopedRegistry>]>,
         close_parent: bool,
         sync_container: BoxedSyncContainerInner,
     ) -> Self {
@@ -807,8 +807,8 @@ impl From<BoxedContainerInner> for Container {
 struct ContainerInner {
     cache: Mutex<Cache>,
     context: Mutex<Context>,
-    root_registry: Arc<Registry>,
-    child_registries: Box<[Arc<Registry>]>,
+    root_registry: Arc<ScopedRegistry>,
+    child_registries: Box<[Arc<ScopedRegistry>]>,
     parent: Option<Container>,
     close_parent: bool,
 }
@@ -850,7 +850,7 @@ impl ContainerInner {
 mod tests {
     extern crate std;
 
-    use super::{Container, ContainerInner, RegistriesBuilder};
+    use super::{Container, ContainerInner, RegistryBuilder};
     use crate::{scope::DefaultScope::*, Inject, InjectTransient, Scope};
 
     use alloc::{
@@ -878,7 +878,7 @@ mod tests {
         struct CAAAA(Arc<CAAAAA>);
         struct CAAAAA;
 
-        let registry = RegistriesBuilder::new()
+        let registry = RegistryBuilder::new()
             .provide(|| (Ok(CAAAAA)), Runtime)
             .provide(|Inject(caaaaa): Inject<CAAAAA>| Ok(CAAAA(caaaaa)), App)
             .provide(|Inject(caaaa): Inject<CAAAA>| Ok(CAAA(caaaa)), Session)
@@ -914,7 +914,7 @@ mod tests {
         struct CAAAA(Arc<CAAAAA>);
         struct CAAAAA;
 
-        let registry = RegistriesBuilder::new()
+        let registry = RegistryBuilder::new()
             .provide_async(async || (Ok(CAAAAA)), Runtime)
             .provide_async(async |Inject(caaaaa): Inject<CAAAAA>| Ok(CAAAA(caaaaa)), App)
             .provide_async(async |Inject(caaaa): Inject<CAAAA>| Ok(CAAA(caaaa)), Session)
@@ -945,7 +945,7 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_transient_get() {
-        let registry = RegistriesBuilder::new()
+        let registry = RegistryBuilder::new()
             .provide(|| Ok(RequestTransient1), App)
             .provide(
                 |InjectTransient(req): InjectTransient<RequestTransient1>| Ok(RequestTransient2(req)),
@@ -972,7 +972,7 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_async_transient_get() {
-        let registry = RegistriesBuilder::new()
+        let registry = RegistryBuilder::new()
             .provide_async(async || Ok(RequestTransient1), App)
             .provide_async(
                 async |InjectTransient(req): InjectTransient<RequestTransient1>| Ok(RequestTransient2(req)),
@@ -998,7 +998,7 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_scope_hierarchy() {
-        let registry = RegistriesBuilder::new()
+        let registry = RegistryBuilder::new()
             .provide_async(async || Ok(()), Runtime)
             .provide_async(async || Ok(((), ())), App)
             .provide_async(async || Ok(((), (), ())), Session)
@@ -1055,7 +1055,7 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_scope_with_hierarchy() {
-        let registry = RegistriesBuilder::new()
+        let registry = RegistryBuilder::new()
             .provide_async(async || Ok(()), Runtime)
             .provide_async(async || Ok(((), ())), App)
             .provide_async(async || Ok(((), (), ())), Session)
@@ -1125,7 +1125,7 @@ mod tests {
         let finalizer_3_request_call_count = Arc::new(AtomicU8::new(0));
         let finalizer_4_request_call_count = Arc::new(AtomicU8::new(0));
 
-        let registry = RegistriesBuilder::new()
+        let registry = RegistryBuilder::new()
             .provide(|| Ok(()), Runtime)
             .provide(|| Ok(((), ())), App)
             .provide_async(async || Ok(((), (), ())), Session)
@@ -1188,7 +1188,7 @@ mod tests {
         let finalizer_5_request_call_count = Arc::new(AtomicU8::new(0));
         let finalizer_5_request_call_position = Arc::new(AtomicU8::new(0));
 
-        let registry = RegistriesBuilder::new()
+        let registry = RegistryBuilder::new()
             .provide(|| Ok(()), Runtime)
             .provide(|| Ok(((), ())), App)
             .provide_async(async || Ok(((), (), ())), App)
@@ -1351,7 +1351,7 @@ mod tests {
             }
         }
 
-        let registry = RegistriesBuilder::new()
+        let registry = RegistryBuilder::new()
             .provide(|| Ok(Type1), App)
             .provide(|Inject(type_1): Inject<Type1>| Ok(Type2(type_1)), Request)
             .add_finalizer({
@@ -1443,7 +1443,7 @@ mod tests {
             }
         }
 
-        let registry = RegistriesBuilder::new()
+        let registry = RegistryBuilder::new()
             .provide(|| Ok(Type1), App)
             .provide(|Inject(type_1): Inject<Type1>| Ok(Type2(type_1)), Request)
             .add_async_finalizer({

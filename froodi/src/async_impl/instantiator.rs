@@ -101,7 +101,7 @@ mod tests {
 
     use super::{boxed_instantiator_factory, DependencyResolver, InstantiateErrorKind, Instantiator};
     use crate::{
-        async_impl::{registry::BoxedInstantiator, service::Service as _, Container, RegistriesBuilder},
+        async_impl::{registry::BoxedInstantiator, service::Service as _, Container, RegistryBuilder},
         scope::DefaultScope::*,
         Inject, InjectTransient,
     };
@@ -162,10 +162,10 @@ mod tests {
             }
         });
 
-        let mut registries_builder = RegistriesBuilder::new();
-        registries_builder.add_instantiator::<Request>(BoxedInstantiator::Async(instantiator_request), App);
+        let mut registry_builder = RegistryBuilder::new();
+        registry_builder.add_instantiator::<Request>(BoxedInstantiator::Async(instantiator_request), App);
 
-        let container = Container::new(registries_builder);
+        let container = Container::new(registry_builder);
 
         let response_1 = instantiator_response.call(container.clone()).await.unwrap();
         let response_2 = instantiator_response.call(container).await.unwrap();
@@ -211,10 +211,10 @@ mod tests {
             }
         });
 
-        let mut registries_builder = RegistriesBuilder::new();
-        registries_builder.add_instantiator::<Request>(BoxedInstantiator::Async(instantiator_request), App);
+        let mut registry_builder = RegistryBuilder::new();
+        registry_builder.add_instantiator::<Request>(BoxedInstantiator::Async(instantiator_request), App);
 
-        let container = Container::new(registries_builder);
+        let container = Container::new(registry_builder);
 
         let response_1 = instantiator_response.call(container.clone()).await.unwrap();
         let response_2 = instantiator_response.call(container.clone()).await.unwrap();

@@ -1,14 +1,14 @@
 #![allow(dead_code)]
 
 use criterion::{criterion_group, criterion_main, Criterion};
-use froodi::{Container, DefaultScope::*, Inject, InjectTransient, RegistriesBuilder};
+use froodi::{Container, DefaultScope::*, Inject, InjectTransient, RegistryBuilder};
 use std::sync::Arc;
 
 fn criterion_benchmark(c: &mut Criterion) {
-    c.bench_function("container_new_with_registries_builder", |b| {
+    c.bench_function("container_new_with_registry_builder", |b| {
         b.iter(|| {
             Container::new(
-                RegistriesBuilder::new()
+                RegistryBuilder::new()
                     .provide(|| Ok(()), Runtime)
                     .provide(|| Ok(((), ())), App)
                     .provide(|| Ok(((), (), ())), Session)
@@ -26,7 +26,7 @@ fn criterion_benchmark(c: &mut Criterion) {
     })
     .bench_function("container_child_with_scope", |b| {
         let runtime_container = Container::new_with_start_scope(
-            RegistriesBuilder::new()
+            RegistryBuilder::new()
                 .provide(|| Ok(()), Runtime)
                 .provide(|| Ok(((), ())), App)
                 .provide(|| Ok(((), (), ())), Session)
@@ -45,7 +45,7 @@ fn criterion_benchmark(c: &mut Criterion) {
     })
     .bench_function("container_child_with_hierarchy", |b| {
         let app_container = Container::new(
-            RegistriesBuilder::new()
+            RegistryBuilder::new()
                 .provide(|| Ok(()), Runtime)
                 .provide(|| Ok(((), ())), App)
                 .provide(|| Ok(((), (), ())), Session)
@@ -70,7 +70,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         struct CAAAAA;
 
         let container = Container::new(
-            RegistriesBuilder::new()
+            RegistryBuilder::new()
                 .provide(|| (Ok(CAAAAA)), Request)
                 .provide(|Inject(caaaaa): Inject<CAAAAA>| Ok(CAAAA(caaaaa)), Request)
                 .provide(|Inject(caaaa): Inject<CAAAA>| Ok(CAAA(caaaa)), Request)
@@ -94,7 +94,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         struct CAAAAA;
 
         let container = Container::new(
-            RegistriesBuilder::new()
+            RegistryBuilder::new()
                 .provide(|| (Ok(CAAAAA)), Request)
                 .provide(|InjectTransient(caaaaa): InjectTransient<CAAAAA>| Ok(CAAAA(caaaaa)), Request)
                 .provide(|InjectTransient(caaaa): InjectTransient<CAAAA>| Ok(CAAA(caaaa)), Request)

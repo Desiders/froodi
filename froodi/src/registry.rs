@@ -19,19 +19,19 @@ pub(crate) struct InstantiatorData<S> {
     scope: S,
 }
 
-pub struct RegistriesBuilder<Scope> {
+pub struct RegistryBuilder<Scope> {
     instantiators: BTreeMap<TypeId, InstantiatorData<Scope>>,
     finalizers: BTreeMap<TypeId, BoxedCloneFinalizer>,
     scopes: Vec<Scope>,
 }
 
-impl Default for RegistriesBuilder<DefaultScope> {
+impl Default for RegistryBuilder<DefaultScope> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl RegistriesBuilder<DefaultScope> {
+impl RegistryBuilder<DefaultScope> {
     #[inline]
     #[must_use]
     pub fn new() -> Self {
@@ -43,7 +43,7 @@ impl RegistriesBuilder<DefaultScope> {
     }
 }
 
-impl<Scope> RegistriesBuilder<Scope> {
+impl<Scope> RegistryBuilder<Scope> {
     #[inline]
     #[must_use]
     pub fn new_with_scopes<Scopes, const N: usize>() -> Self
@@ -58,7 +58,7 @@ impl<Scope> RegistriesBuilder<Scope> {
     }
 }
 
-impl<S> RegistriesBuilder<S> {
+impl<S> RegistryBuilder<S> {
     #[inline]
     #[must_use]
     pub fn provide<Inst, Deps>(mut self, instantiator: Inst, scope: S) -> Self
@@ -101,7 +101,7 @@ impl<S> RegistriesBuilder<S> {
     }
 }
 
-impl<S> RegistriesBuilder<S> {
+impl<S> RegistryBuilder<S> {
     #[inline]
     pub(crate) fn add_instantiator<Dep: 'static>(
         &mut self,
@@ -129,11 +129,11 @@ impl<S> RegistriesBuilder<S> {
     }
 }
 
-impl<S> RegistriesBuilder<S>
+impl<S> RegistryBuilder<S>
 where
     S: Scope,
 {
-    pub(crate) fn build(mut self) -> Vec<Registry> {
+    pub(crate) fn build(mut self) -> Vec<ScopedRegistry> {
         use alloc::collections::btree_map::Entry::{Occupied, Vacant};
 
         let mut scopes_instantiators: BTreeMap<S, Vec<(TypeId, InstantiatorInnerData)>> =
@@ -175,7 +175,7 @@ where
 
         let mut registries = Vec::with_capacity(scopes_instantiators.len());
         for (scope, instantiators) in scopes_instantiators {
-            registries.push(Registry {
+            registries.push(ScopedRegistry {
                 scope: ScopeInnerData {
                     priority: scope.priority(),
                     is_skipped_by_default: scope.is_skipped_by_default(),
@@ -195,12 +195,12 @@ pub(crate) struct InstantiatorInnerData {
     pub(crate) config: Config,
 }
 
-pub(crate) struct Registry {
+pub(crate) struct ScopedRegistry {
     pub(crate) scope: ScopeInnerData,
     pub(crate) instantiators: BTreeMap<TypeId, InstantiatorInnerData>,
 }
 
-impl Registry {
+impl ScopedRegistry {
     #[inline]
     pub(crate) fn get_instantiator(&self, type_id: &TypeId) -> Option<BoxedCloneInstantiator<ResolveErrorKind, InstantiateErrorKind>> {
         self.instantiators.get(type_id).map(|data| data.instantiator.clone())
@@ -214,7 +214,7 @@ impl Registry {
 
 #[cfg(test)]
 mod tests {
-    use super::RegistriesBuilder;
+    use super::RegistryBuilder;
     use crate::{
         scope::DefaultScope::{self, *},
         Scopes,
@@ -225,13 +225,13 @@ mod tests {
 
     #[test]
     fn test_build_empty() {
-        let registries = RegistriesBuilder::<DefaultScope>::new().build();
+        let registries = RegistryBuilder::<DefaultScope>::new().build();
         assert!(!registries.is_empty());
     }
 
     #[test]
     fn test_build_equal_provides() {
-        let registries = RegistriesBuilder::new()
+        let registries = RegistryBuilder::new()
             .provide(|| Ok(()), Runtime)
             .provide(|| Ok(()), Runtime)
             .provide(|| Ok(()), App)
@@ -250,7 +250,7 @@ mod tests {
 
     #[test]
     fn test_build_several_scopes() {
-        let registries = RegistriesBuilder::new()
+        let registries = RegistryBuilder::new()
             .provide(|| Ok(1i8), Runtime)
             .provide(|| Ok(1i16), Runtime)
             .provide(|| Ok(1i32), App)
@@ -269,7 +269,7 @@ mod tests {
 
     #[test]
     fn test_add_finalizer() {
-        let registries = RegistriesBuilder::new()
+        let registries = RegistryBuilder::new()
             .provide(|| Ok(1i8), Runtime)
             .provide(|| Ok(1i16), Runtime)
             .provide(|| Ok(1i32), App)

@@ -53,7 +53,7 @@ mod tests {
         inject::{Inject, InjectTransient},
         instance,
         scope::DefaultScope::*,
-        Container, RegistriesBuilder,
+        Container, RegistryBuilder,
     };
 
     use alloc::{
@@ -86,7 +86,7 @@ mod tests {
     fn test_scoped_resolve() {
         let instantiator_request_call_count = Arc::new(AtomicU8::new(0));
 
-        let registries_builder = RegistriesBuilder::new()
+        let registry_builder = RegistryBuilder::new()
             .provide(
                 {
                     let instantiator_request_call_count = instantiator_request_call_count.clone();
@@ -101,7 +101,7 @@ mod tests {
             )
             .provide(instance(Instance), App);
 
-        let container = Container::new(registries_builder);
+        let container = Container::new(registry_builder);
 
         let request_1 = Inject::<Request>::resolve(&container).unwrap();
         let request_2 = Inject::<Request>::resolve(&container).unwrap();
@@ -116,7 +116,7 @@ mod tests {
     fn test_transient_resolve() {
         let instantiator_request_call_count = Arc::new(AtomicU8::new(0));
 
-        let registries_builder = RegistriesBuilder::new().provide(
+        let registry_builder = RegistryBuilder::new().provide(
             {
                 let instantiator_request_call_count = instantiator_request_call_count.clone();
                 move || {
@@ -129,7 +129,7 @@ mod tests {
             App,
         );
 
-        let container = Container::new(registries_builder);
+        let container = Container::new(registry_builder);
 
         let _ = InjectTransient::<Request>::resolve(&container).unwrap();
         InjectTransient::<Request>::resolve(&container).unwrap();
