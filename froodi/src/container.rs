@@ -232,6 +232,9 @@ impl Container {
     /// # Notes
     /// This method resolves a new instance of the dependency each time it is called,
     /// so it should be used for dependencies that are not cached or shared, and without finalizer.
+    ///
+    /// # Warning
+    /// Context isn't used here. To get dependencies from the context, use [`Self::get`]
     #[allow(clippy::missing_errors_doc)]
     pub fn get_transient<Dep: 'static>(&self) -> Result<Dep, ResolveErrorKind> {
         let span = debug_span!("resolve", dependency = type_name::<Dep>());
@@ -293,7 +296,7 @@ impl Container {
         close_parent: bool,
     ) -> Container {
         let mut cache = self.inner.cache.lock().child();
-        cache.append_context(&context);
+        cache.append_context(&mut context.clone());
 
         Container {
             inner: Arc::new(ContainerInner {
@@ -312,7 +315,7 @@ impl Container {
     fn init_child(self, root_registry: Arc<ScopedRegistry>, child_registries: Box<[Arc<ScopedRegistry>]>, close_parent: bool) -> Container {
         let mut cache = self.inner.cache.lock().child();
         let context = self.inner.context.lock().clone();
-        cache.append_context(&context);
+        cache.append_context(&mut context.clone());
 
         Container {
             inner: Arc::new(ContainerInner {
@@ -546,7 +549,7 @@ impl BoxedContainerInner {
     ) -> Self {
         let mut cache = self.cache.child();
         let context = self.context.clone();
-        cache.append_context(&context);
+        cache.append_context(&mut context.clone());
 
         Self {
             cache,

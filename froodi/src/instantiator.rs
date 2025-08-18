@@ -105,6 +105,8 @@ pub const fn instance<T: Clone + 'static>(val: T) -> impl Instantiator<(), Provi
 ///
 /// # Examples
 /// ```rust
+/// use froodi::boxed;
+///
 /// trait UserRepo {}
 ///
 /// struct PostgresUserRepo;

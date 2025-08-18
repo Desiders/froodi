@@ -1,4 +1,4 @@
-use alloc::{boxed::Box, collections::vec_deque::VecDeque, sync::Arc};
+use alloc::{collections::vec_deque::VecDeque, sync::Arc};
 use core::{
     any::{Any, TypeId},
     mem,
@@ -8,7 +8,7 @@ use crate::{any, Context};
 
 #[derive(Clone)]
 pub(crate) struct Cache {
-    pub(crate) map: Option<Box<any::Map>>,
+    pub(crate) map: any::Map,
     pub(crate) resolved: ResolvedSet,
 }
 
@@ -16,24 +16,19 @@ impl Cache {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            map: None,
+            map: any::Map::new(),
             resolved: ResolvedSet::new(),
         }
     }
 
     #[inline]
     pub(crate) fn insert_rc<T: Send + Sync + 'static>(&mut self, value: Arc<T>) -> Option<Arc<T>> {
-        self.map
-            .get_or_insert_with(Box::default)
-            .insert(TypeId::of::<T>(), value)
-            .and_then(|boxed| boxed.downcast().ok())
+        self.map.insert(TypeId::of::<T>(), value).and_then(|boxed| boxed.downcast().ok())
     }
 
     #[inline]
-    pub(crate) fn append_context(&mut self, context: &Context) {
-        if let (Some(cache), Some(context)) = (&mut self.map, context.map.as_ref()) {
-            cache.append(&mut (*context).clone());
-        }
+    pub(crate) fn append_context(&mut self, context: &mut Context) {
+        self.map.append(&mut context.map);
     }
 
     #[inline]
@@ -47,10 +42,7 @@ impl Cache {
 
     #[must_use]
     pub(crate) fn get<T: Send + Sync + 'static>(&self, type_id: &TypeId) -> Option<Arc<T>> {
-        self.map
-            .as_ref()
-            .and_then(|map| map.get(type_id))
-            .and_then(|boxed| boxed.clone().downcast().ok())
+        self.map.get(type_id).and_then(|boxed| boxed.clone().downcast().ok())
     }
 
     #[inline]

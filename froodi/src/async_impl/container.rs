@@ -371,10 +371,10 @@ impl Container {
         close_parent: bool,
     ) -> Self {
         let mut cache = self.inner.cache.lock().child();
-        cache.append_context(&context);
+        cache.append_context(&mut context.clone());
 
         let mut sync_cache = self.sync.inner.cache.lock().child();
-        sync_cache.append_context(&context);
+        sync_cache.append_context(&mut context.clone());
 
         Self {
             inner: Arc::new(ContainerInner {
@@ -411,11 +411,11 @@ impl Container {
     ) -> Self {
         let mut cache = self.inner.cache.lock().child();
         let context = self.inner.context.lock().clone();
-        cache.append_context(&context);
+        cache.append_context(&mut context.clone());
 
         let mut sync_cache = self.sync.inner.cache.lock().child();
         let sync_context = self.sync.inner.context.lock().clone();
-        sync_cache.append_context(&sync_context);
+        sync_cache.append_context(&mut sync_context.clone());
 
         Self {
             inner: Arc::new(ContainerInner {
@@ -764,7 +764,7 @@ impl BoxedContainerInner {
     ) -> Self {
         let mut cache = self.cache.child();
         let context = self.context.clone();
-        cache.append_context(&context);
+        cache.append_context(&mut context.clone());
 
         Self {
             cache,
