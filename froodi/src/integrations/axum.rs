@@ -113,10 +113,12 @@ macro_rules! impl_container_layer {
             fn call(&mut self, request: Request<ResBody>) -> Self::Future {
                 let (parts, body) = request.into_parts();
                 let is_websocket = is_websocket_request(&parts);
+                let mut context = crate::Context::new();
+                context.insert(parts.clone());
                 let mut request = Request::from_parts(parts, body);
 
                 if is_websocket {
-                    match self.container.clone().enter().with_scope(self.ws_scope.clone()).build() {
+                    match self.container.clone().enter().with_scope(self.ws_scope.clone()).with_context(context).build() {
                         Ok(session_container) => {
                             request.extensions_mut().insert(session_container);
                         }
@@ -125,7 +127,7 @@ macro_rules! impl_container_layer {
                         }
                     }
                 } else {
-                    match self.container.clone().enter().with_scope(self.http_scope.clone()).build() {
+                    match self.container.clone().enter().with_scope(self.http_scope.clone()).with_context(context).build() {
                         Ok(request_container) => {
                             request.extensions_mut().insert(request_container);
                         }
@@ -383,6 +385,7 @@ mod tests {
     };
     use axum::{
         extract::ws::{Message, WebSocket, WebSocketUpgrade},
+        http::request::Parts,
         response::Response,
         routing::{any, get},
         Extension, Router,
@@ -496,11 +499,10 @@ mod tests {
             num.to_string().into_boxed_str()
         }
 
-        let container = Container::new(
-            RegistryBuilder::new()
-                .provide(|| Ok(Config { num: 1 }), App)
-                .provide(|Inject(cfg): Inject<Config>| Ok(cfg.num + 1), Request),
-        );
+        let container = Container::new(RegistryBuilder::new().provide(|| Ok(Config { num: 1 }), App).provide(
+            |Inject(cfg): Inject<Config>, Inject(_parts): Inject<Parts>| Ok(cfg.num + 1),
+            Request,
+        ));
 
         let router = setup_default(Router::new().route("/", get(handler)), container);
 
