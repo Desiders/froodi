@@ -104,6 +104,7 @@ impl_setup!(Setup, Container);
 impl_setup!(AsyncSetup, AsyncContainer);
 
 #[inline]
+#[must_use]
 pub const fn setup<WithScope>(container: Container, scope: WithScope) -> Setup<WithScope>
 where
     WithScope: Scope + Clone + Send + Sync + 'static,
@@ -112,11 +113,13 @@ where
 }
 
 #[inline]
+#[must_use]
 pub const fn setup_default(container: Container) -> Setup<DefaultScope> {
     setup(container, RequestScope)
 }
 
 #[inline]
+#[must_use]
 #[cfg(feature = "async")]
 pub const fn setup_async<WithScope>(container: AsyncContainer, scope: WithScope) -> AsyncSetup<WithScope>
 where
@@ -126,6 +129,7 @@ where
 }
 
 #[inline]
+#[must_use]
 #[cfg(feature = "async")]
 pub const fn setup_async_default(container: AsyncContainer) -> AsyncSetup<DefaultScope> {
     setup_async(container, RequestScope)

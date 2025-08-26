@@ -43,6 +43,7 @@ impl<R: UserRepo> CreateUser<R> {
 
 fn init_container() -> Container {
     // We can use functions as instance creators instead of closures
+    #[allow(clippy::unnecessary_wraps)]
     fn create_user<R>(Inject(repo): Inject<R>) -> InstantiatorResult<CreateUser<R>> {
         Ok(CreateUser { repo })
     }
