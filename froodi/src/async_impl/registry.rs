@@ -5,17 +5,20 @@ use crate::{
     async_impl::{
         finalizer::{boxed_finalizer_factory as boxed_async_finalizer_factory, BoxedCloneFinalizer, Finalizer as AsyncFinalizer},
         instantiator::{
-            boxed_instantiator_factory as boxed_async_instantiator_factory, BoxedCloneInstantiator as BoxedCloneAsyncInstantiator,
-            Instantiator as AsyncInstantiator,
+            boxed_container_instantiator, boxed_instantiator as boxed_async_instantiator_factory,
+            BoxedCloneInstantiator as BoxedCloneAsyncInstantiator, Instantiator as AsyncInstantiator,
         },
+        Container,
     },
     dependency_resolver::DependencyResolver,
     errors::{InstantiateErrorKind, ResolveErrorKind},
     finalizer::{boxed_finalizer_factory, BoxedCloneFinalizer as BoxedCloneSyncFinalizer, Finalizer},
-    instantiator::{boxed_instantiator_factory, BoxedCloneInstantiator, Config, Instantiator},
+    instantiator::{
+        boxed_container_instantiator as boxed_sync_container_instantiator, boxed_instantiator, BoxedCloneInstantiator, Config, Instantiator,
+    },
     registry::{InstantiatorInnerData as SyncInstantiatorInnerData, ScopedRegistry as ScopedSyncRegistry},
     scope::{Scope, ScopeInnerData},
-    DefaultScope, Scopes as ScopesTrait,
+    Container as SyncContainer, DefaultScope, Scopes as ScopesTrait,
 };
 
 #[derive(Clone)]
@@ -80,7 +83,7 @@ impl<S> RegistryBuilder<S> {
         Inst: Instantiator<Deps, Error = InstantiateErrorKind> + Send + Sync,
         Deps: DependencyResolver<Error = ResolveErrorKind>,
     {
-        self.add_instantiator::<Inst::Provides>(BoxedInstantiator::Sync(boxed_instantiator_factory(instantiator)), scope);
+        self.add_instantiator::<Inst::Provides>(BoxedInstantiator::Sync(boxed_instantiator(instantiator)), scope);
         self
     }
 
@@ -91,11 +94,7 @@ impl<S> RegistryBuilder<S> {
         Inst: Instantiator<Deps, Error = InstantiateErrorKind> + Send + Sync,
         Deps: DependencyResolver<Error = ResolveErrorKind>,
     {
-        self.add_instantiator_with_config::<Inst::Provides>(
-            BoxedInstantiator::Sync(boxed_instantiator_factory(instantiator)),
-            config,
-            scope,
-        );
+        self.add_instantiator_with_config::<Inst::Provides>(BoxedInstantiator::Sync(boxed_instantiator(instantiator)), config, scope);
         self
     }
 
@@ -263,25 +262,45 @@ where
             }
         }
 
+        let container_type_id = TypeId::of::<Container>();
+        let container_instantiator_data = InstantiatorInnerData {
+            instantiator: boxed_container_instantiator(),
+            finalizer: None,
+            config: Config { cache_provides: true },
+        };
+
         let mut registries = Vec::with_capacity(scopes_instantiators.len());
         for (scope, instantiators) in scopes_instantiators {
+            let mut instantiators = BTreeMap::from_iter(instantiators);
+            instantiators.insert(container_type_id, container_instantiator_data.clone());
+
             registries.push(ScopedRegistry {
                 scope: ScopeInnerData {
                     priority: scope.priority(),
                     is_skipped_by_default: scope.is_skipped_by_default(),
                 },
-                instantiators: BTreeMap::from_iter(instantiators),
+                instantiators,
             });
         }
 
+        let container_type_id = TypeId::of::<SyncContainer>();
+        let container_instantiator_data = SyncInstantiatorInnerData {
+            instantiator: boxed_sync_container_instantiator(),
+            finalizer: None,
+            config: Config { cache_provides: true },
+        };
+
         let mut sync_registries = Vec::with_capacity(scopes_sync_instantiators.len());
         for (scope, instantiators) in scopes_sync_instantiators {
+            let mut instantiators = BTreeMap::from_iter(instantiators);
+            instantiators.insert(container_type_id, container_instantiator_data.clone());
+
             sync_registries.push(ScopedSyncRegistry {
                 scope: ScopeInnerData {
                     priority: scope.priority(),
                     is_skipped_by_default: scope.is_skipped_by_default(),
                 },
-                instantiators: BTreeMap::from_iter(instantiators),
+                instantiators,
             });
         }
 

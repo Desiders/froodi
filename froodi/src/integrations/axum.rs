@@ -55,7 +55,7 @@ impl IntoResponse for InjectErrorKind {
     }
 }
 
-macro_rules! impl_container_layer {
+macro_rules! impl_layer {
     (
         $LayerName:ident,
         $AddContainerName:ident,
@@ -147,10 +147,10 @@ macro_rules! impl_container_layer {
     };
 }
 
-impl_container_layer!(ContainerLayer, AddContainer, Container);
+impl_layer!(ContainerLayer, AddContainer, Container);
 
 #[cfg(feature = "async")]
-impl_container_layer!(AsyncContainerLayer, AddAsyncContainer, AsyncContainer);
+impl_layer!(AsyncContainerLayer, AddAsyncContainer, AsyncContainer);
 
 #[allow(clippy::manual_async_fn)]
 impl<S, Dep, const PREFER_SYNC_OVER_ASYNC: bool> FromRequestParts<S> for Inject<Dep, PREFER_SYNC_OVER_ASYNC>
