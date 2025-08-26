@@ -251,9 +251,9 @@ mod tests {
 
         for registry in registries {
             if registry.scope.priority == 1 {
-                assert_eq!(registry.instantiators.len(), 1);
+                assert_eq!(registry.instantiators.len(), 2);
             } else {
-                assert_eq!(registry.instantiators.len(), 0);
+                assert_eq!(registry.instantiators.len(), 1);
             }
         }
     }
@@ -270,9 +270,9 @@ mod tests {
 
         for registry in registries {
             if registry.scope.priority == 0 || registry.scope.priority == 1 {
-                assert_eq!(registry.instantiators.len(), 2);
+                assert_eq!(registry.instantiators.len(), 3);
             } else {
-                assert_eq!(registry.instantiators.len(), 0);
+                assert_eq!(registry.instantiators.len(), 1);
             }
         }
     }
