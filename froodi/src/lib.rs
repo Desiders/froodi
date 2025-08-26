@@ -34,3 +34,6 @@ pub use scope::{DefaultScope, Scope, Scopes};
 
 #[cfg(feature = "axum")]
 pub use integrations::axum;
+
+#[cfg(feature = "dptree")]
+pub use integrations::dptree;
