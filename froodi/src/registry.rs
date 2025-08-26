@@ -8,9 +8,9 @@ use super::{
 use crate::{
     dependency_resolver::DependencyResolver,
     finalizer::{boxed_finalizer_factory, BoxedCloneFinalizer, Finalizer},
-    instantiator::{boxed_instantiator_factory, Instantiator},
+    instantiator::{boxed_container_instantiator, boxed_instantiator, Instantiator},
     scope::{Scope, ScopeInnerData},
-    DefaultScope, Scopes as ScopesTrait,
+    Container, DefaultScope, Scopes as ScopesTrait,
 };
 
 pub(crate) struct InstantiatorData<S> {
@@ -66,7 +66,7 @@ impl<S> RegistryBuilder<S> {
         Inst: Instantiator<Deps, Error = InstantiateErrorKind> + Send + Sync,
         Deps: DependencyResolver<Error = ResolveErrorKind>,
     {
-        self.add_instantiator::<Inst::Provides>(boxed_instantiator_factory(instantiator), scope);
+        self.add_instantiator::<Inst::Provides>(boxed_instantiator(instantiator), scope);
         self
     }
 
@@ -77,7 +77,7 @@ impl<S> RegistryBuilder<S> {
         Inst: Instantiator<Deps, Error = InstantiateErrorKind> + Send + Sync,
         Deps: DependencyResolver<Error = ResolveErrorKind>,
     {
-        self.add_instantiator_with_config::<Inst::Provides>(boxed_instantiator_factory(instantiator), config, scope);
+        self.add_instantiator_with_config::<Inst::Provides>(boxed_instantiator(instantiator), config, scope);
         self
     }
 
@@ -173,14 +173,24 @@ where
             }
         }
 
+        let container_type_id = TypeId::of::<Container>();
+        let container_instantiator_data = InstantiatorInnerData {
+            instantiator: boxed_container_instantiator(),
+            finalizer: None,
+            config: Config { cache_provides: true },
+        };
+
         let mut registries = Vec::with_capacity(scopes_instantiators.len());
         for (scope, instantiators) in scopes_instantiators {
+            let mut instantiators = BTreeMap::from_iter(instantiators);
+            instantiators.insert(container_type_id, container_instantiator_data.clone());
+
             registries.push(ScopedRegistry {
                 scope: ScopeInnerData {
                     priority: scope.priority(),
                     is_skipped_by_default: scope.is_skipped_by_default(),
                 },
-                instantiators: BTreeMap::from_iter(instantiators),
+                instantiators,
             });
         }
 
@@ -241,9 +251,9 @@ mod tests {
 
         for registry in registries {
             if registry.scope.priority == 1 {
-                assert_eq!(registry.instantiators.len(), 1);
+                assert_eq!(registry.instantiators.len(), 2);
             } else {
-                assert_eq!(registry.instantiators.len(), 0);
+                assert_eq!(registry.instantiators.len(), 1);
             }
         }
     }
@@ -260,9 +270,9 @@ mod tests {
 
         for registry in registries {
             if registry.scope.priority == 0 || registry.scope.priority == 1 {
-                assert_eq!(registry.instantiators.len(), 2);
+                assert_eq!(registry.instantiators.len(), 3);
             } else {
-                assert_eq!(registry.instantiators.len(), 0);
+                assert_eq!(registry.instantiators.len(), 1);
             }
         }
     }

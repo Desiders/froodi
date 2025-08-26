@@ -7,7 +7,7 @@ use super::{
     errors::{InstantiateErrorKind, InstantiatorErrorKind},
     service::{service_fn, BoxCloneService},
 };
-use crate::Container;
+use crate::{Container, ResolveErrorKind};
 
 pub trait Instantiator<Deps>: Clone + 'static
 where
@@ -41,7 +41,7 @@ pub(crate) type BoxedCloneInstantiator<DepsErr, FactoryErr> =
     BoxCloneService<Container, Box<dyn Any>, InstantiatorErrorKind<DepsErr, FactoryErr>>;
 
 #[must_use]
-pub(crate) fn boxed_instantiator_factory<Inst, Deps>(instantiator: Inst) -> BoxedCloneInstantiator<Deps::Error, Inst::Error>
+pub(crate) fn boxed_instantiator<Inst, Deps>(instantiator: Inst) -> BoxedCloneInstantiator<Deps::Error, Inst::Error>
 where
     Inst: Instantiator<Deps> + Send + Sync,
     Deps: DependencyResolver,
@@ -62,6 +62,11 @@ where
             Ok(Box::new(dependency) as _)
         }
     })))
+}
+
+#[must_use]
+pub(crate) fn boxed_container_instantiator() -> BoxedCloneInstantiator<ResolveErrorKind, InstantiateErrorKind> {
+    BoxCloneService(Box::new(service_fn(move |container| Ok(Box::new(container) as _))))
 }
 
 macro_rules! impl_instantiator {
@@ -130,7 +135,7 @@ macro_rules! boxed {
 mod tests {
     extern crate std;
 
-    use super::{boxed_instantiator_factory, DependencyResolver, InstantiateErrorKind, Instantiator};
+    use super::{boxed_instantiator, DependencyResolver, InstantiateErrorKind, Instantiator};
     use crate::{
         inject::{Inject, InjectTransient},
         scope::DefaultScope::*,
@@ -165,7 +170,7 @@ mod tests {
         let instantiator_request_call_count = Arc::new(AtomicU8::new(0));
         let instantiator_response_call_count = Arc::new(AtomicU8::new(0));
 
-        let instantiator_request = boxed_instantiator_factory({
+        let instantiator_request = boxed_instantiator({
             let instantiator_request_call_count = instantiator_request_call_count.clone();
             move || {
                 instantiator_request_call_count.fetch_add(1, Ordering::SeqCst);
@@ -174,7 +179,7 @@ mod tests {
                 Ok::<_, InstantiateErrorKind>(Request(true))
             }
         });
-        let mut instantiator_response = boxed_instantiator_factory({
+        let mut instantiator_response = boxed_instantiator({
             let instantiator_response_call_count = instantiator_response_call_count.clone();
             move |InjectTransient(Request(val_1)), InjectTransient(Request(val_2))| {
                 assert_eq!(val_1, val_2);
@@ -206,7 +211,7 @@ mod tests {
         let instantiator_request_call_count = Arc::new(AtomicU8::new(0));
         let instantiator_response_call_count = Arc::new(AtomicU8::new(0));
 
-        let instantiator_request = boxed_instantiator_factory({
+        let instantiator_request = boxed_instantiator({
             let instantiator_request_call_count = instantiator_request_call_count.clone();
             move || {
                 instantiator_request_call_count.fetch_add(1, Ordering::SeqCst);
@@ -215,7 +220,7 @@ mod tests {
                 Ok::<_, InstantiateErrorKind>(Request(true))
             }
         });
-        let mut instantiator_response = boxed_instantiator_factory({
+        let mut instantiator_response = boxed_instantiator({
             let instantiator_response_call_count = instantiator_response_call_count.clone();
             move |val_1: Inject<Request>, val_2: Inject<Request>| {
                 assert_eq!(val_1.0 .0, val_2.0 .0);

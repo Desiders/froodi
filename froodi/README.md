@@ -85,6 +85,7 @@ fn main() {
  - [Sync finalizer][examples/sync_finalizer]. This example shows how to add sync finalizers.
  - [Async finalizer][examples/async_finalizer]. This example shows how to add async finalizers.
  - [Boxed dyn provide][examples/box_dyn_provide]. This example shows how to provide boxed dyn dependencies.
+ - [Dptree][examples/dptree]. This example shows how to integrate the framework with Dptree library.
 
 You may consider checking out [this directory][examples] for examples.
 
@@ -105,6 +106,7 @@ Contributions are welcome!
 [examples/sync_finalizer]: https://github.com/Desiders/froodi/tree/master/examples/sync_finalizer
 [examples/async_finalizer]: https://github.com/Desiders/froodi/tree/master/examples/async_finalizer
 [examples/box_dyn_provide]: https://github.com/Desiders/froodi/tree/master/examples/box_dyn_provide
+[examples/dptree]: https://github.com/Desiders/froodi/tree/master/examples/dptree
 
 [license_apache]: https://github.com/Desiders/froodi/blob/master/froodi/LICENSE
 [docs]: https://docs.rs/froodi

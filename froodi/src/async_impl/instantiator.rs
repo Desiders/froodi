@@ -9,6 +9,7 @@ use super::{
 use crate::{
     dependency_resolver::DependencyResolver,
     errors::{InstantiateErrorKind, InstantiatorErrorKind},
+    ResolveErrorKind,
 };
 
 pub trait Instantiator<Deps>: Clone + 'static
@@ -43,7 +44,7 @@ pub(crate) type BoxedCloneInstantiator<DepsErr, FactoryErr> =
     BoxCloneService<Container, Box<dyn Any + Send>, InstantiatorErrorKind<DepsErr, FactoryErr>>;
 
 #[must_use]
-pub(crate) fn boxed_instantiator_factory<Inst, Deps>(instantiator: Inst) -> BoxedCloneInstantiator<Deps::Error, Inst::Error>
+pub(crate) fn boxed_instantiator<Inst, Deps>(instantiator: Inst) -> BoxedCloneInstantiator<Deps::Error, Inst::Error>
 where
     Inst: Instantiator<Deps, Provides: Send> + Send + Sync,
     Deps: DependencyResolver,
@@ -68,6 +69,11 @@ where
             }
         }
     })))
+}
+
+#[must_use]
+pub(crate) fn boxed_container_instantiator() -> BoxedCloneInstantiator<ResolveErrorKind, InstantiateErrorKind> {
+    BoxCloneService::new(Box::new(service_fn(async move |container| Ok(Box::new(container) as _))))
 }
 
 macro_rules! impl_instantiator {
@@ -99,7 +105,7 @@ all_the_tuples!(impl_instantiator);
 mod tests {
     extern crate std;
 
-    use super::{boxed_instantiator_factory, DependencyResolver, InstantiateErrorKind, Instantiator};
+    use super::{boxed_instantiator, DependencyResolver, InstantiateErrorKind, Instantiator};
     use crate::{
         async_impl::{registry::BoxedInstantiator, service::Service as _, Container, RegistryBuilder},
         scope::DefaultScope::*,
@@ -133,7 +139,7 @@ mod tests {
         let instantiator_request_call_count = Arc::new(AtomicU8::new(0));
         let instantiator_response_call_count = Arc::new(AtomicU8::new(0));
 
-        let instantiator_request = boxed_instantiator_factory({
+        let instantiator_request = boxed_instantiator({
             let instantiator_request_call_count = instantiator_request_call_count.clone();
             move |()| {
                 let instantiator_request_call_count = instantiator_request_call_count.clone();
@@ -146,7 +152,7 @@ mod tests {
                 }
             }
         });
-        let mut instantiator_response = boxed_instantiator_factory({
+        let mut instantiator_response = boxed_instantiator({
             let instantiator_response_call_count = instantiator_response_call_count.clone();
             move |InjectTransient(Request(val_1)), InjectTransient(Request(val_2))| {
                 let instantiator_response_call_count = instantiator_response_call_count.clone();
@@ -182,7 +188,7 @@ mod tests {
         let instantiator_request_call_count = Arc::new(AtomicU8::new(0));
         let instantiator_response_call_count = Arc::new(AtomicU8::new(0));
 
-        let instantiator_request = boxed_instantiator_factory({
+        let instantiator_request = boxed_instantiator({
             let instantiator_request_call_count = instantiator_request_call_count.clone();
             move |()| {
                 let instantiator_request_call_count = instantiator_request_call_count.clone();
@@ -195,7 +201,7 @@ mod tests {
                 }
             }
         });
-        let mut instantiator_response = boxed_instantiator_factory({
+        let mut instantiator_response = boxed_instantiator({
             let instantiator_response_call_count = instantiator_response_call_count.clone();
             move |val_1: Inject<Request>, val_2: Inject<Request>| {
                 let instantiator_response_call_count = instantiator_response_call_count.clone();
