@@ -144,7 +144,7 @@ macro_rules! impl_injectable {
         where
             F: Fn($($ty,)*) -> Fut + Sync,
             Fut: Future<Output = Output> + Send + 'static,
-            Output: 'static,
+            Output: Send + 'static,
             $($ty: DependencyResolver + Send + 'static),*
         {
             #[cfg(not(feature = "async"))]
@@ -154,8 +154,11 @@ macro_rules! impl_injectable {
                 Arc::new( move ||  {
                     let container = core::borrow::Borrow::<Container>::borrow(&map.get()).clone();
                     $( let $ty = $ty::resolve(&container).map_err(Into::into).unwrap(); )*
-                    let fut = this( $( $ty ),* );
-                    Box::pin(fut)
+                    Box::pin(async move {
+                        let res = this( $( $ty ),* ).await;
+                        container.close();
+                        res
+                    })
                 })
             }
 
@@ -186,7 +189,14 @@ macro_rules! impl_injectable {
                             }
                         };
                     )*
-                    this( $( $ty ),* ).await
+                    let res = this( $( $ty ),* ).await;
+                    if let Some(container) = container_async {
+                        container.close().await;
+                    }
+                    if let Some(container) = container_sync {
+                        container.close();
+                    }
+                    res
                 }))
             }
 
@@ -201,7 +211,7 @@ macro_rules! impl_injectable {
         impl<F, Output, const PREFER_SYNC_OVER_ASYNC: bool, $($ty,)*> InjectableTrait<Output, ($($ty,)*)> for Injectable<Asyncify<F>, PREFER_SYNC_OVER_ASYNC>
         where
             F: Fn($($ty,)*) -> Output + Sync,
-            Output: 'static,
+            Output: Send + 'static,
             $($ty: DependencyResolver + Send + 'static),*
         {
             #[cfg(not(feature = "async"))]
@@ -211,7 +221,11 @@ macro_rules! impl_injectable {
                 Arc::new( move ||  {
                     let container = core::borrow::Borrow::<Container>::borrow(&map.get()).clone();
                     $( let $ty = $ty::resolve(&container).map_err(Into::into).unwrap(); )*
-                    Box::pin(async move { this( $( $ty ),* ) })
+                    Box::pin(async move {
+                        let res = this( $( $ty ),* );
+                        container.close();
+                        res
+                    })
                 })
             }
 
@@ -242,7 +256,14 @@ macro_rules! impl_injectable {
                             }
                         };
                     )*
-                    this( $( $ty ),* )
+                    let res = this( $( $ty ),* );
+                    if let Some(container) = container_async {
+                        container.close().await;
+                    }
+                    if let Some(container) = container_sync {
+                        container.close();
+                    }
+                    res
                 }))
             }
 
