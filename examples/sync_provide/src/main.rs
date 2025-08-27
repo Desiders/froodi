@@ -1,9 +1,8 @@
 use froodi::{
     Container,
     DefaultScope::{App, Request},
-    Inject, InstantiatorResult, RegistryBuilder, instance,
+    Inject, InjectTransient, InstantiatorResult, RegistryBuilder, instance,
 };
-use std::sync::Arc;
 
 // Dependency that will be alive throughout the application
 #[derive(Default, Clone)]
@@ -28,9 +27,8 @@ impl UserRepo for PostgresUserRepo {
 }
 
 struct CreateUser<R> {
-    // Dependency without details about the specific implementation.
-    // It's inside `Arc` because of caching and finalization features.
-    repo: Arc<R>,
+    // Dependency without details about the specific implementation
+    repo: R,
 }
 
 impl<R: UserRepo> CreateUser<R> {
@@ -42,7 +40,7 @@ impl<R: UserRepo> CreateUser<R> {
 fn init_container(config: Config) -> Container {
     // We can use functions as instance creators instead of closures
     #[allow(clippy::unnecessary_wraps)]
-    fn create_user<R>(Inject(repo): Inject<R>) -> InstantiatorResult<CreateUser<R>> {
+    fn create_user<R>(InjectTransient(repo): InjectTransient<R>) -> InstantiatorResult<CreateUser<R>> {
         Ok(CreateUser { repo })
     }
 
@@ -60,7 +58,7 @@ fn main() {
     let request_container = app_container.clone().enter_build().unwrap();
 
     // Get REQUEST-scoped dependency from REQUEST-scoped container
-    let interactor = request_container.get::<CreateUser<PostgresUserRepo>>().unwrap();
+    let interactor = request_container.get_transient::<CreateUser<PostgresUserRepo>>().unwrap();
     interactor.handle();
 
     // Get APP-scoped dependency from REQUEST-scoped container.

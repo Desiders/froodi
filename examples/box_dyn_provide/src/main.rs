@@ -1,5 +1,4 @@
-use froodi::{Container, DefaultScope::Request, Inject, InstantiatorResult, RegistryBuilder, boxed};
-use std::sync::Arc;
+use froodi::{Container, DefaultScope::Request, InjectTransient, InstantiatorResult, RegistryBuilder, boxed};
 
 trait UserRepo: Send + Sync {
     fn create_user(&self);
@@ -14,9 +13,8 @@ impl UserRepo for PostgresUserRepo {
 }
 
 struct CreateUser {
-    // Dependency without details about the specific implementation.
-    // It's inside `Arc` because of caching and finalization features.
-    repo: Arc<Box<dyn UserRepo>>,
+    // Dependency without details about the specific implementation
+    repo: Box<dyn UserRepo>,
 }
 
 impl CreateUser {
@@ -28,7 +26,7 @@ impl CreateUser {
 fn init_container() -> Container {
     // We can use functions as instance creators instead of closures
     #[allow(clippy::unnecessary_wraps)]
-    fn create_user(Inject(repo): Inject<Box<dyn UserRepo>>) -> InstantiatorResult<CreateUser> {
+    fn create_user(InjectTransient(repo): InjectTransient<Box<dyn UserRepo>>) -> InstantiatorResult<CreateUser> {
         Ok(CreateUser { repo })
     }
 
@@ -48,7 +46,7 @@ fn main() {
     let request_container = app_container.clone().enter_build().unwrap();
 
     // Get REQUEST-scoped dependency from REQUEST-scoped container
-    let interactor = request_container.get::<CreateUser>().unwrap();
+    let interactor = request_container.get_transient::<CreateUser>().unwrap();
     interactor.handle();
 
     // We need to close containers after usage of them.

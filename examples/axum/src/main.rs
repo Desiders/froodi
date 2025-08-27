@@ -2,11 +2,10 @@ use axum::{Extension, Router, routing::get};
 use froodi::{
     Container,
     DefaultScope::{App, Request},
-    Inject, InstantiatorResult, RegistryBuilder,
+    Inject, InjectTransient, InstantiatorResult, RegistryBuilder,
     axum::setup_default,
     instance,
 };
-use std::sync::Arc;
 use tokio::net::TcpListener;
 
 // Dependency that will be alive throughout the application
@@ -32,9 +31,8 @@ impl UserRepo for PostgresUserRepo {
 }
 
 struct CreateUser<R> {
-    // Dependency without details about the specific implementation.
-    // It's inside `Arc` because of caching and finalization features.
-    repo: Arc<R>,
+    // Dependency without details about the specific implementation
+    repo: R,
 }
 
 impl<R: UserRepo> CreateUser<R> {
@@ -46,7 +44,7 @@ impl<R: UserRepo> CreateUser<R> {
 fn init_container(config: Config) -> Container {
     // We can use functions as instance creators instead of closures
     #[allow(clippy::unnecessary_wraps)]
-    fn create_user<R>(Inject(repo): Inject<R>) -> InstantiatorResult<CreateUser<R>> {
+    fn create_user<R>(InjectTransient(repo): InjectTransient<R>) -> InstantiatorResult<CreateUser<R>> {
         Ok(CreateUser { repo })
     }
 
@@ -59,7 +57,7 @@ fn init_container(config: Config) -> Container {
 
 async fn handler(
     // Get REQUEST-scoped dependency from REQUEST-scoped container
-    Inject(interactor): Inject<CreateUser<PostgresUserRepo>>,
+    InjectTransient(interactor): InjectTransient<CreateUser<PostgresUserRepo>>,
     // We also can inject container itself using `Extension` or `Inject`/`InjectTransient`
     Extension(_request_container): Extension<Container>,
 ) {

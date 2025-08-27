@@ -2,10 +2,10 @@ use dptree::Endpoint;
 use froodi::{
     Container,
     DefaultScope::Request,
-    Inject, InstantiatorResult, RegistryBuilder,
+    InjectTransient, InstantiatorResult, RegistryBuilder,
     dptree::{Injectable, MapInject, setup_default},
 };
-use std::{ops::ControlFlow, sync::Arc};
+use std::ops::ControlFlow;
 
 // Dependency that will be alive throughout the application
 #[derive(Default, Clone)]
@@ -30,9 +30,8 @@ impl UserRepo for PostgresUserRepo {
 }
 
 struct CreateUser<R> {
-    // Dependency without details about the specific implementation.
-    // It's inside `Arc` because of caching and finalization features.
-    repo: Arc<R>,
+    // Dependency without details about the specific implementation
+    repo: R,
 }
 
 impl<R: UserRepo> CreateUser<R> {
@@ -44,7 +43,7 @@ impl<R: UserRepo> CreateUser<R> {
 fn init_container() -> Container {
     // We can use functions as instance creators instead of closures
     #[allow(clippy::unnecessary_wraps)]
-    fn create_user<R>(Inject(repo): Inject<R>) -> InstantiatorResult<CreateUser<R>> {
+    fn create_user<R>(InjectTransient(repo): InjectTransient<R>) -> InstantiatorResult<CreateUser<R>> {
         Ok(CreateUser { repo })
     }
 
@@ -71,11 +70,11 @@ fn init_branch(container: Container, config: Config) -> Endpoint<'static, ()> {
 
 async fn handler(
     // Get REQUEST-scoped dependency from REQUEST-scoped container
-    Inject(interactor): Inject<CreateUser<PostgresUserRepo>>,
+    InjectTransient(interactor): InjectTransient<CreateUser<PostgresUserRepo>>,
     // Get dependency from dptree's dependency map
     MapInject(_config): MapInject<Config>,
     // We also can inject container itself
-    Inject(_request_container): Inject<Container>,
+    InjectTransient(_request_container): InjectTransient<Container>,
 ) {
     interactor.handle();
 }
