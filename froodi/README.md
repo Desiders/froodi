@@ -10,7 +10,7 @@ Froodi is a lightweight, ergonomic Inversion of Control (IoC) container for Rust
 - **Finalization**: Some dependencies, like database connections, need not only to be created but also carefully released. Many frameworks lack this essential feature
 - **Ergonomic**: Simple API
 - **Speed**: Dependency resolving as fast as the speed of light thanks to the Rust
-- **Integration**: The popular frameworks for building web applications is supported out of the box
+- **Integration**: The popular frameworks for building applications is supported out of the box (axum, dptree)
 - **Safe**: 100% safe Rust (no unsafe used)
 
 # Quickstart
@@ -18,9 +18,8 @@ Froodi is a lightweight, ergonomic Inversion of Control (IoC) container for Rust
 use froodi::{
     Container,
     DefaultScope::{App, Request},
-    Inject, InstantiatorResult, RegistryBuilder, instance,
+    Inject, InjectTransient, InstantiatorResult, RegistryBuilder, instance,
 };
-use std::sync::Arc;
 
 #[derive(Default, Clone)]
 struct Config {
@@ -44,7 +43,7 @@ impl UserRepo for PostgresUserRepo {
 }
 
 struct CreateUser<R> {
-    repo: Arc<R>,
+    repo: R,
 }
 
 impl<R: UserRepo> CreateUser<R> {
@@ -54,7 +53,8 @@ impl<R: UserRepo> CreateUser<R> {
 }
 
 fn init_container(config: Config) -> Container {
-    fn create_user<R>(Inject(repo): Inject<R>) -> InstantiatorResult<CreateUser<R>> {
+    #[allow(clippy::unnecessary_wraps)]
+    fn create_user<R>(InjectTransient(repo): InjectTransient<R>) -> InstantiatorResult<CreateUser<R>> {
         Ok(CreateUser { repo })
     }
 
@@ -69,7 +69,7 @@ fn main() {
     let app_container = init_container(Config::default());
     let request_container = app_container.clone().enter_build().unwrap();
 
-    let interactor = request_container.get::<CreateUser<PostgresUserRepo>>().unwrap();
+    let interactor = request_container.get_transient::<CreateUser<PostgresUserRepo>>().unwrap();
     interactor.handle();
 
     let _config = request_container.get::<Config>().unwrap();
@@ -89,10 +89,6 @@ fn main() {
  - [Dptree][examples/dptree]. This example shows how to integrate the framework with Dptree library.
 
 You may consider checking out [this directory][examples] for examples.
-
-# Integrations
-## Axum
-coming soon...
 
 # Contributing
 
