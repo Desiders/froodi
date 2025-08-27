@@ -164,20 +164,23 @@ macro_rules! impl_injectable {
             fn inject<'a>(&'a self, map: &'a DependencyMap) -> CompiledFn<'a, Output> {
                 let Self(this) = self;
                 Arc::new(move || Box::pin(async move {
+                    let container_sync = map.try_get::<Container>();
+                    let container_async = map.try_get::<AsyncContainer>();
+
                     $( let $ty =
                         if PREFER_SYNC_OVER_ASYNC {
-                            match map.try_get::<Container>() {
-                                Some(container) => $ty::resolve(&container).map_err(Into::into).unwrap(),
-                                None => match map.try_get::<AsyncContainer>() {
-                                    Some(container) => $ty::resolve_async(&container).await.map_err(Into::into).unwrap(),
+                            match container_sync {
+                                Some(ref container) => $ty::resolve(&container).map_err(Into::into).unwrap(),
+                                None => match container_async {
+                                    Some(ref container) => $ty::resolve_async(&container).await.map_err(Into::into).unwrap(),
                                     None => panic!("sync and async containers are not found"),
                                 },
                             }
                         } else {
-                            match map.try_get::<AsyncContainer>() {
-                                Some(container) => $ty::resolve_async(&container).await.map_err(Into::into).unwrap(),
-                                None => match map.try_get::<Container>() {
-                                    Some(container) => $ty::resolve(&container).map_err(Into::into).unwrap(),
+                            match container_async {
+                                Some(ref container) => $ty::resolve_async(&container).await.map_err(Into::into).unwrap(),
+                                None => match container_sync {
+                                    Some(ref container) => $ty::resolve(&container).map_err(Into::into).unwrap(),
                                     None => panic!("sync and async containers are not found"),
                                 },
                             }
@@ -217,20 +220,23 @@ macro_rules! impl_injectable {
             fn inject<'a>(&'a self, map: &'a DependencyMap) -> CompiledFn<'a, Output> {
                 let Self(Asyncify(this)) = self;
                 Arc::new(move || Box::pin(async move {
+                    let container_sync = map.try_get::<Container>();
+                    let container_async = map.try_get::<AsyncContainer>();
+
                     $( let $ty =
                         if PREFER_SYNC_OVER_ASYNC {
-                            match map.try_get::<Container>() {
-                                Some(container) => $ty::resolve(&container).map_err(Into::into).unwrap(),
-                                None => match map.try_get::<AsyncContainer>() {
-                                    Some(container) => $ty::resolve_async(&container).await.map_err(Into::into).unwrap(),
+                            match container_sync {
+                                Some(ref container) => $ty::resolve(&container).map_err(Into::into).unwrap(),
+                                None => match container_async {
+                                    Some(ref container) => $ty::resolve_async(&container).await.map_err(Into::into).unwrap(),
                                     None => panic!("sync and async containers are not found"),
                                 },
                             }
                         } else {
-                            match map.try_get::<AsyncContainer>() {
-                                Some(container) => $ty::resolve_async(&container).await.map_err(Into::into).unwrap(),
-                                None => match map.try_get::<Container>() {
-                                    Some(container) => $ty::resolve(&container).map_err(Into::into).unwrap(),
+                            match container_async {
+                                Some(ref container) => $ty::resolve_async(&container).await.map_err(Into::into).unwrap(),
+                                None => match container_sync {
+                                    Some(ref container) => $ty::resolve(&container).map_err(Into::into).unwrap(),
                                     None => panic!("sync and async containers are not found"),
                                 },
                             }
