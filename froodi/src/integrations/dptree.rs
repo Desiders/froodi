@@ -144,7 +144,7 @@ macro_rules! impl_injectable {
         where
             F: Fn($($ty,)*) -> Fut + Sync,
             Fut: Future<Output = Output> + Send + 'static,
-            Output: 'static,
+            Output: Send + 'static,
             $($ty: DependencyResolver + Send + 'static),*
         {
             #[cfg(not(feature = "async"))]
@@ -154,8 +154,11 @@ macro_rules! impl_injectable {
                 Arc::new( move ||  {
                     let container = core::borrow::Borrow::<Container>::borrow(&map.get()).clone();
                     $( let $ty = $ty::resolve(&container).map_err(Into::into).unwrap(); )*
-                    let fut = this( $( $ty ),* );
-                    Box::pin(fut)
+                    Box::pin(async move {
+                        let res = this( $( $ty ),* ).await;
+                        container.close();
+                        res
+                    })
                 })
             }
 
@@ -164,26 +167,36 @@ macro_rules! impl_injectable {
             fn inject<'a>(&'a self, map: &'a DependencyMap) -> CompiledFn<'a, Output> {
                 let Self(this) = self;
                 Arc::new(move || Box::pin(async move {
+                    let container_sync = map.try_get::<Container>();
+                    let container_async = map.try_get::<AsyncContainer>();
+
                     $( let $ty =
                         if PREFER_SYNC_OVER_ASYNC {
-                            match map.try_get::<Container>() {
-                                Some(container) => $ty::resolve(&container).map_err(Into::into).unwrap(),
-                                None => match map.try_get::<AsyncContainer>() {
-                                    Some(container) => $ty::resolve_async(&container).await.map_err(Into::into).unwrap(),
+                            match container_sync {
+                                Some(ref container) => $ty::resolve(&container).map_err(Into::into).unwrap(),
+                                None => match container_async {
+                                    Some(ref container) => $ty::resolve_async(&container).await.map_err(Into::into).unwrap(),
                                     None => panic!("sync and async containers are not found"),
                                 },
                             }
                         } else {
-                            match map.try_get::<AsyncContainer>() {
-                                Some(container) => $ty::resolve_async(&container).await.map_err(Into::into).unwrap(),
-                                None => match map.try_get::<Container>() {
-                                    Some(container) => $ty::resolve(&container).map_err(Into::into).unwrap(),
+                            match container_async {
+                                Some(ref container) => $ty::resolve_async(&container).await.map_err(Into::into).unwrap(),
+                                None => match container_sync {
+                                    Some(ref container) => $ty::resolve(&container).map_err(Into::into).unwrap(),
                                     None => panic!("sync and async containers are not found"),
                                 },
                             }
                         };
                     )*
-                    this( $( $ty ),* ).await
+                    let res = this( $( $ty ),* ).await;
+                    if let Some(container) = container_async {
+                        container.close().await;
+                    }
+                    if let Some(container) = container_sync {
+                        container.close();
+                    }
+                    res
                 }))
             }
 
@@ -198,7 +211,7 @@ macro_rules! impl_injectable {
         impl<F, Output, const PREFER_SYNC_OVER_ASYNC: bool, $($ty,)*> InjectableTrait<Output, ($($ty,)*)> for Injectable<Asyncify<F>, PREFER_SYNC_OVER_ASYNC>
         where
             F: Fn($($ty,)*) -> Output + Sync,
-            Output: 'static,
+            Output: Send + 'static,
             $($ty: DependencyResolver + Send + 'static),*
         {
             #[cfg(not(feature = "async"))]
@@ -208,7 +221,11 @@ macro_rules! impl_injectable {
                 Arc::new( move ||  {
                     let container = core::borrow::Borrow::<Container>::borrow(&map.get()).clone();
                     $( let $ty = $ty::resolve(&container).map_err(Into::into).unwrap(); )*
-                    Box::pin(async move { this( $( $ty ),* ) })
+                    Box::pin(async move {
+                        let res = this( $( $ty ),* );
+                        container.close();
+                        res
+                    })
                 })
             }
 
@@ -217,26 +234,36 @@ macro_rules! impl_injectable {
             fn inject<'a>(&'a self, map: &'a DependencyMap) -> CompiledFn<'a, Output> {
                 let Self(Asyncify(this)) = self;
                 Arc::new(move || Box::pin(async move {
+                    let container_sync = map.try_get::<Container>();
+                    let container_async = map.try_get::<AsyncContainer>();
+
                     $( let $ty =
                         if PREFER_SYNC_OVER_ASYNC {
-                            match map.try_get::<Container>() {
-                                Some(container) => $ty::resolve(&container).map_err(Into::into).unwrap(),
-                                None => match map.try_get::<AsyncContainer>() {
-                                    Some(container) => $ty::resolve_async(&container).await.map_err(Into::into).unwrap(),
+                            match container_sync {
+                                Some(ref container) => $ty::resolve(&container).map_err(Into::into).unwrap(),
+                                None => match container_async {
+                                    Some(ref container) => $ty::resolve_async(&container).await.map_err(Into::into).unwrap(),
                                     None => panic!("sync and async containers are not found"),
                                 },
                             }
                         } else {
-                            match map.try_get::<AsyncContainer>() {
-                                Some(container) => $ty::resolve_async(&container).await.map_err(Into::into).unwrap(),
-                                None => match map.try_get::<Container>() {
-                                    Some(container) => $ty::resolve(&container).map_err(Into::into).unwrap(),
+                            match container_async {
+                                Some(ref container) => $ty::resolve_async(&container).await.map_err(Into::into).unwrap(),
+                                None => match container_sync {
+                                    Some(ref container) => $ty::resolve(&container).map_err(Into::into).unwrap(),
                                     None => panic!("sync and async containers are not found"),
                                 },
                             }
                         };
                     )*
-                    this( $( $ty ),* )
+                    let res = this( $( $ty ),* );
+                    if let Some(container) = container_async {
+                        container.close().await;
+                    }
+                    if let Some(container) = container_sync {
+                        container.close();
+                    }
+                    res
                 }))
             }
 
