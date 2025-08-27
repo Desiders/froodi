@@ -93,64 +93,157 @@ macro_rules! impl_layer {
             http_scope: HScope,
             ws_scope: WSScope,
         }
-
-        impl<ResBody, S, HScope, WSScope> Service<Request<ResBody>> for $AddContainerName<S, HScope, WSScope>
-        where
-            S: Service<Request<ResBody>>,
-            S::Future: Send + 'static,
-            HScope: Scope + Clone,
-            WSScope: Scope + Clone,
-        {
-            type Response = S::Response;
-            type Error = S::Error;
-            type Future = BoxFuture<'static, Result<Self::Response, Self::Error>>;
-
-            #[inline]
-            fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-                self.service.poll_ready(cx)
-            }
-
-            fn call(&mut self, request: Request<ResBody>) -> Self::Future {
-                let (parts, body) = request.into_parts();
-                let is_websocket = is_websocket_request(&parts);
-                let mut context = crate::Context::new();
-                context.insert(parts.clone());
-                let mut request = Request::from_parts(parts, body);
-
-                if is_websocket {
-                    match self.container.clone().enter().with_scope(self.ws_scope.clone()).with_context(context).build() {
-                        Ok(session_container) => {
-                            request.extensions_mut().insert(session_container);
-                        }
-                        Err(err) => {
-                            error!(%err, "Scope not found for WS request");
-                        }
-                    }
-                } else {
-                    match self.container.clone().enter().with_scope(self.http_scope.clone()).with_context(context).build() {
-                        Ok(request_container) => {
-                            request.extensions_mut().insert(request_container);
-                        }
-                        Err(err) => {
-                            error!(%err, "Scope not found for HTTP request");
-                        }
-                    }
-                }
-
-                let future = self.service.call(request);
-                Box::pin(async move {
-                    let response = future.await?;
-                    Ok(response)
-                })
-            }
-        }
     };
 }
 
 impl_layer!(ContainerLayer, AddContainer, Container);
 
+impl<ResBody, S, HScope, WSScope> Service<Request<ResBody>> for AddContainer<S, HScope, WSScope>
+where
+    S: Service<Request<ResBody>>,
+    S::Future: Send + 'static,
+    HScope: Scope + Clone,
+    WSScope: Scope + Clone,
+{
+    type Response = S::Response;
+    type Error = S::Error;
+    type Future = BoxFuture<'static, Result<Self::Response, Self::Error>>;
+
+    #[inline]
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.service.poll_ready(cx)
+    }
+
+    fn call(&mut self, request: Request<ResBody>) -> Self::Future {
+        let (parts, body) = request.into_parts();
+        let is_websocket = is_websocket_request(&parts);
+        let mut context = crate::Context::new();
+        context.insert(parts.clone());
+        let mut request = Request::from_parts(parts, body);
+
+        let mut container_to_close = None;
+        if is_websocket {
+            match self
+                .container
+                .clone()
+                .enter()
+                .with_scope(self.ws_scope.clone())
+                .with_context(context)
+                .build()
+            {
+                Ok(session_container) => {
+                    container_to_close = Some(session_container.clone());
+                    request.extensions_mut().insert(session_container);
+                }
+                Err(err) => {
+                    error!(%err, "Scope not found for WS request");
+                }
+            }
+        } else {
+            match self
+                .container
+                .clone()
+                .enter()
+                .with_scope(self.http_scope.clone())
+                .with_context(context)
+                .build()
+            {
+                Ok(request_container) => {
+                    container_to_close = Some(request_container.clone());
+                    request.extensions_mut().insert(request_container);
+                }
+                Err(err) => {
+                    error!(%err, "Scope not found for HTTP request");
+                }
+            }
+        }
+
+        let future = self.service.call(request);
+        Box::pin(async move {
+            let response = future.await?;
+            if let Some(container) = container_to_close {
+                container.close();
+            }
+            Ok(response)
+        })
+    }
+}
+
 #[cfg(feature = "async")]
 impl_layer!(AsyncContainerLayer, AddAsyncContainer, AsyncContainer);
+
+#[cfg(feature = "async")]
+impl<ResBody, S, HScope, WSScope> Service<Request<ResBody>> for AddAsyncContainer<S, HScope, WSScope>
+where
+    S: Service<Request<ResBody>>,
+    S::Future: Send + 'static,
+    S::Response: Send,
+    HScope: Scope + Clone,
+    WSScope: Scope + Clone,
+{
+    type Response = S::Response;
+    type Error = S::Error;
+    type Future = BoxFuture<'static, Result<Self::Response, Self::Error>>;
+
+    #[inline]
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.service.poll_ready(cx)
+    }
+
+    fn call(&mut self, request: Request<ResBody>) -> Self::Future {
+        let (parts, body) = request.into_parts();
+        let is_websocket = is_websocket_request(&parts);
+        let mut context = crate::Context::new();
+        context.insert(parts.clone());
+        let mut request = Request::from_parts(parts, body);
+
+        let mut container_to_close = None;
+        if is_websocket {
+            match self
+                .container
+                .clone()
+                .enter()
+                .with_scope(self.ws_scope.clone())
+                .with_context(context)
+                .build()
+            {
+                Ok(session_container) => {
+                    container_to_close = Some(session_container.clone());
+                    request.extensions_mut().insert(session_container);
+                }
+                Err(err) => {
+                    error!(%err, "Scope not found for WS request");
+                }
+            }
+        } else {
+            match self
+                .container
+                .clone()
+                .enter()
+                .with_scope(self.http_scope.clone())
+                .with_context(context)
+                .build()
+            {
+                Ok(request_container) => {
+                    container_to_close = Some(request_container.clone());
+                    request.extensions_mut().insert(request_container);
+                }
+                Err(err) => {
+                    error!(%err, "Scope not found for HTTP request");
+                }
+            }
+        }
+
+        let future = self.service.call(request);
+        Box::pin(async move {
+            let response = future.await?;
+            if let Some(container) = container_to_close {
+                container.close().await;
+            }
+            Ok(response)
+        })
+    }
+}
 
 #[allow(clippy::manual_async_fn)]
 impl<S, Dep, const PREFER_SYNC_OVER_ASYNC: bool> FromRequestParts<S> for Inject<Dep, PREFER_SYNC_OVER_ASYNC>
