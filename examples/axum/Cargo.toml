@@ -1,0 +1,10 @@
+[package]
+name = "axum"
+version = "1.0.0"
+edition = "2024"
+
+[dependencies]
+froodi = { path = "../../froodi", features = ["axum"] }
+
+tokio = { version = "1.36", features = ["rt", "macros"] }
+axum = { version = "0.8" }
