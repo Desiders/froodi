@@ -1518,7 +1518,7 @@ mod tests {
 
     #[test]
     fn test_bounds() {
-        fn impl_bounds<T: Send + 'static>() {}
+        fn impl_bounds<T: Send + Sync + 'static>() {}
 
         impl_bounds::<(Container, ContainerInner)>();
     }
