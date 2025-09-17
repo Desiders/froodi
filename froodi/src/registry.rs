@@ -10,6 +10,7 @@ use crate::{
     finalizer::{boxed_finalizer_factory, BoxedCloneFinalizer, Finalizer},
     instantiator::{boxed_container_instantiator, boxed_instantiator, Instantiator},
     scope::{Scope, ScopeInnerData},
+    utils::thread_safety::{SendSafety, SyncSafety},
     Container, DefaultScope, Scopes as ScopesTrait,
 };
 
@@ -63,7 +64,7 @@ impl<S> RegistryBuilder<S> {
     #[must_use]
     pub fn provide<Inst, Deps>(mut self, instantiator: Inst, scope: S) -> Self
     where
-        Inst: Instantiator<Deps, Error = InstantiateErrorKind> + Send + Sync,
+        Inst: Instantiator<Deps, Error = InstantiateErrorKind> + SendSafety + SyncSafety,
         Deps: DependencyResolver<Error = ResolveErrorKind>,
     {
         self.add_instantiator::<Inst::Provides>(boxed_instantiator(instantiator), scope);
@@ -74,7 +75,7 @@ impl<S> RegistryBuilder<S> {
     #[must_use]
     pub fn provide_with_config<Inst, Deps>(mut self, instantiator: Inst, config: Config, scope: S) -> Self
     where
-        Inst: Instantiator<Deps, Error = InstantiateErrorKind> + Send + Sync,
+        Inst: Instantiator<Deps, Error = InstantiateErrorKind> + SendSafety + SyncSafety,
         Deps: DependencyResolver<Error = ResolveErrorKind>,
     {
         self.add_instantiator_with_config::<Inst::Provides>(boxed_instantiator(instantiator), config, scope);
@@ -92,9 +93,9 @@ impl<S> RegistryBuilder<S> {
     ///     2. The finalized used for life cycle management, while [`Drop`] is used for resource management.
     #[inline]
     #[must_use]
-    pub fn add_finalizer<Dep>(mut self, finalizer: impl Finalizer<Dep> + Send + Sync) -> Self
+    pub fn add_finalizer<Dep>(mut self, finalizer: impl Finalizer<Dep> + SendSafety + SyncSafety) -> Self
     where
-        Dep: Send + Sync + 'static,
+        Dep: SendSafety + SyncSafety + 'static,
     {
         self.finalizers.insert(TypeId::of::<Dep>(), boxed_finalizer_factory(finalizer));
         self
@@ -227,10 +228,9 @@ mod tests {
     use super::RegistryBuilder;
     use crate::{
         scope::DefaultScope::{self, *},
+        utils::thread_safety::RcThreadSafety,
         Scopes,
     };
-
-    use alloc::sync::Arc;
     use core::any::TypeId;
 
     #[test]
@@ -284,8 +284,8 @@ mod tests {
             .provide(|| Ok(1i16), Runtime)
             .provide(|| Ok(1i32), App)
             .provide(|| Ok(1i64), App)
-            .add_finalizer(|_: Arc<i8>| {})
-            .add_finalizer(|_: Arc<i32>| {})
+            .add_finalizer(|_: RcThreadSafety<i8>| {})
+            .add_finalizer(|_: RcThreadSafety<i32>| {})
             .build();
 
         let i8_type_id = TypeId::of::<i8>();

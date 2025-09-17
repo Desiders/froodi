@@ -7,7 +7,10 @@ use super::{
     errors::{InstantiateErrorKind, InstantiatorErrorKind},
     service::{service_fn, BoxCloneService},
 };
-use crate::{Container, ResolveErrorKind};
+use crate::{
+    utils::thread_safety::{SendSafety, SyncSafety},
+    Container, ResolveErrorKind,
+};
 
 pub trait Instantiator<Deps>: Clone + 'static
 where
@@ -43,7 +46,7 @@ pub(crate) type BoxedCloneInstantiator<DepsErr, FactoryErr> =
 #[must_use]
 pub(crate) fn boxed_instantiator<Inst, Deps>(instantiator: Inst) -> BoxedCloneInstantiator<Deps::Error, Inst::Error>
 where
-    Inst: Instantiator<Deps> + Send + Sync,
+    Inst: Instantiator<Deps> + SendSafety + SyncSafety,
     Deps: DependencyResolver,
 {
     BoxCloneService(Box::new(service_fn({
@@ -79,7 +82,7 @@ macro_rules! impl_instantiator {
             F: FnMut($($ty,)*) -> Result<Response, Err> + Clone + 'static,
             Response: 'static,
             Err: Into<InstantiateErrorKind>,
-            $( $ty: DependencyResolver + Send, )*
+            $( $ty: DependencyResolver + SendSafety, )*
         {
             type Provides = Response;
             type Error = Err;
@@ -122,7 +125,7 @@ pub const fn instance<T: Clone + 'static>(val: T) -> impl Instantiator<(), Provi
 /// let repo1: Box<dyn UserRepo> = boxed!(PostgresUserRepo; UserRepo);
 ///
 /// // Trait with supertraits
-/// let repo2: Box<dyn UserRepo + Send + Sync> = boxed!(PostgresUserRepo; UserRepo + Send + Sync);
+/// let repo2: Box<dyn UserRepo > = boxed!(PostgresUserRepo; UserRepo );
 /// ```
 #[macro_export]
 macro_rules! boxed {
@@ -140,13 +143,13 @@ mod tests {
         inject::{Inject, InjectTransient},
         scope::DefaultScope::*,
         service::Service as _,
+        utils::thread_safety::RcThreadSafety,
         Container, RegistryBuilder,
     };
 
     use alloc::{
         format,
         string::{String, ToString as _},
-        sync::Arc,
     };
     use core::sync::atomic::{AtomicU8, Ordering};
     use tracing::debug;
@@ -167,8 +170,8 @@ mod tests {
     #[test]
     #[traced_test]
     fn test_boxed_instantiator_factory() {
-        let instantiator_request_call_count = Arc::new(AtomicU8::new(0));
-        let instantiator_response_call_count = Arc::new(AtomicU8::new(0));
+        let instantiator_request_call_count = RcThreadSafety::new(AtomicU8::new(0));
+        let instantiator_response_call_count = RcThreadSafety::new(AtomicU8::new(0));
 
         let instantiator_request = boxed_instantiator({
             let instantiator_request_call_count = instantiator_request_call_count.clone();
@@ -208,8 +211,8 @@ mod tests {
     #[test]
     #[traced_test]
     fn test_boxed_instantiator_cached_factory() {
-        let instantiator_request_call_count = Arc::new(AtomicU8::new(0));
-        let instantiator_response_call_count = Arc::new(AtomicU8::new(0));
+        let instantiator_request_call_count = RcThreadSafety::new(AtomicU8::new(0));
+        let instantiator_response_call_count = RcThreadSafety::new(AtomicU8::new(0));
 
         let instantiator_request = boxed_instantiator({
             let instantiator_request_call_count = instantiator_request_call_count.clone();

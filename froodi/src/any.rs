@@ -1,4 +1,6 @@
-use alloc::{collections::BTreeMap, sync::Arc};
-use core::any::{Any, TypeId};
+use alloc::collections::BTreeMap;
+use core::any::TypeId;
 
-pub(crate) type Map = BTreeMap<TypeId, Arc<dyn Any + Send + Sync>>;
+use crate::utils::thread_safety::RcAnyThreadSafety;
+
+pub(crate) type Map = BTreeMap<TypeId, RcAnyThreadSafety>;

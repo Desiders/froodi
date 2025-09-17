@@ -28,13 +28,15 @@ axum = { version = ">= 0.6, <= 0.8", default-features = false, optional = true }
 dptree = { version = "0.5", optional = true }
 
 [features]
-default = ["std"]
+default = ["std", "thread_safe"]
 
 std = ["anyhow/std", "thiserror/std", "tracing/std"]
 
+thread_safe = []
+
 async = ["dep:async-recursion"]
 
-axum = ["dep:axum", "axum/ws", "dep:tower-layer", "dep:tower-service"]
+axum = ["dep:axum", "axum/ws", "dep:tower-layer", "dep:tower-service", "thread_safe"]
 http2-axum = ["dep:h2", "axum/http2"]
 
 dptree = ["dep:dptree"]

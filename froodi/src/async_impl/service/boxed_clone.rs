@@ -1,19 +1,26 @@
 use alloc::boxed::Box;
 
 use super::base::{Service, ServiceExt as _};
-use crate::utils::future::BoxFuture;
+use crate::utils::{
+    future::BoxFuture,
+    thread_safety::{SendSafety, SyncSafety},
+};
 
-pub(crate) struct BoxCloneService<Request: ?Sized, Response, Error>(
-    pub(crate)  Box<
-        dyn CloneService<Request, Response = Response, Error = Error, Future = BoxFuture<'static, Result<Response, Error>>> + Send + Sync,
-    >,
-);
+#[cfg(feature = "thread_safe")]
+pub(crate) type BoxCloneServiceInner<Request, Response, Error, Future = BoxFuture<'static, Result<Response, Error>>> =
+    Box<dyn CloneService<Request, Response = Response, Error = Error, Future = Future> + Send + Sync>;
+
+#[cfg(not(feature = "thread_safe"))]
+pub(crate) type BoxCloneServiceInner<Request, Response, Error, Future = BoxFuture<'static, Result<Response, Error>>> =
+    Box<dyn CloneService<Request, Response = Response, Error = Error, Future = Future>>;
+
+pub(crate) struct BoxCloneService<Request: ?Sized, Response, Error>(pub(crate) BoxCloneServiceInner<Request, Response, Error>);
 
 impl<Request, Response, Error> BoxCloneService<Request, Response, Error> {
     pub fn new<S>(inner: S) -> Self
     where
-        S: Service<Request, Response = Response, Error = Error> + Clone + Send + Sync + 'static,
-        S::Future: Send + 'static,
+        S: Service<Request, Response = Response, Error = Error> + SendSafety + SyncSafety + Clone + 'static,
+        S::Future: SendSafety + 'static,
     {
         BoxCloneService(Box::new(inner.map_future(|f| Box::pin(f) as _)))
     }
@@ -21,18 +28,16 @@ impl<Request, Response, Error> BoxCloneService<Request, Response, Error> {
 
 pub(crate) trait CloneService<Request: ?Sized>: Service<Request> {
     #[must_use]
-    fn clone_box(
-        &self,
-    ) -> Box<dyn CloneService<Request, Response = Self::Response, Error = Self::Error, Future = Self::Future> + Send + Sync>;
+    fn clone_box(&self) -> BoxCloneServiceInner<Request, Self::Response, Self::Error, Self::Future>;
 }
 
 impl<Request, T> CloneService<Request> for T
 where
     Request: ?Sized,
-    T: Service<Request> + Clone + Send + Sync + 'static,
+    T: Service<Request> + SendSafety + SyncSafety + Clone + 'static,
 {
     #[inline]
-    fn clone_box(&self) -> Box<dyn CloneService<Request, Response = T::Response, Error = T::Error, Future = T::Future> + Send + Sync> {
+    fn clone_box(&self) -> BoxCloneServiceInner<Request, T::Response, T::Error, T::Future> {
         Box::new(self.clone())
     }
 }

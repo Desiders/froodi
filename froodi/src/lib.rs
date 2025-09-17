@@ -18,7 +18,8 @@ pub(crate) mod integrations;
 pub(crate) mod registry;
 pub(crate) mod scope;
 pub(crate) mod service;
-pub(crate) mod utils;
+
+pub mod utils;
 
 #[cfg(feature = "async")]
 pub mod async_impl;

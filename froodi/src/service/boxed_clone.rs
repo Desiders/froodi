@@ -1,23 +1,30 @@
 use alloc::boxed::Box;
 
+use crate::utils::thread_safety::{SendSafety, SyncSafety};
+
 use super::base::Service;
 
-pub(crate) struct BoxCloneService<Request: ?Sized, Response, Error>(
-    pub(crate) Box<dyn CloneService<Request, Response = Response, Error = Error> + Send + Sync>,
-);
+#[cfg(feature = "thread_safe")]
+pub(crate) type BoxCloneServiceInner<Request, Response, Error> =
+    Box<dyn CloneService<Request, Response = Response, Error = Error> + Send + Sync>;
+
+#[cfg(not(feature = "thread_safe"))]
+pub(crate) type BoxCloneServiceInner<Request, Response, Error> = Box<dyn CloneService<Request, Response = Response, Error = Error>>;
+
+pub(crate) struct BoxCloneService<Request: ?Sized, Response, Error>(pub(crate) BoxCloneServiceInner<Request, Response, Error>);
 
 pub(crate) trait CloneService<Request: ?Sized>: Service<Request> {
     #[must_use]
-    fn clone_box(&self) -> Box<dyn CloneService<Request, Response = Self::Response, Error = Self::Error> + Send + Sync>;
+    fn clone_box(&self) -> BoxCloneServiceInner<Request, Self::Response, Self::Error>;
 }
 
 impl<Request, T> CloneService<Request> for T
 where
     Request: ?Sized,
-    T: Service<Request> + Clone + Send + Sync + 'static,
+    T: Service<Request> + SendSafety + SyncSafety + Clone + 'static,
 {
     #[inline]
-    fn clone_box(&self) -> Box<dyn CloneService<Request, Response = T::Response, Error = T::Error> + Send + Sync> {
+    fn clone_box(&self) -> BoxCloneServiceInner<Request, T::Response, T::Error> {
         Box::new(self.clone())
     }
 }

@@ -9,6 +9,7 @@ use super::{
 use crate::{
     dependency_resolver::DependencyResolver,
     errors::{InstantiateErrorKind, InstantiatorErrorKind},
+    utils::thread_safety::{SendSafety, SyncSafety},
     ResolveErrorKind,
 };
 
@@ -19,7 +20,7 @@ where
     type Provides: 'static;
     type Error: Into<InstantiateErrorKind>;
 
-    fn instantiate(&mut self, dependencies: Deps) -> impl Future<Output = Result<Self::Provides, Self::Error>> + Send;
+    fn instantiate(&mut self, dependencies: Deps) -> impl Future<Output = Result<Self::Provides, Self::Error>> + SendSafety;
 }
 
 /// Config for an instantiator
@@ -41,12 +42,12 @@ impl Default for Config {
 }
 
 pub(crate) type BoxedCloneInstantiator<DepsErr, FactoryErr> =
-    BoxCloneService<Container, Box<dyn Any + Send>, InstantiatorErrorKind<DepsErr, FactoryErr>>;
+    BoxCloneService<Container, Box<dyn Any>, InstantiatorErrorKind<DepsErr, FactoryErr>>;
 
 #[must_use]
 pub(crate) fn boxed_instantiator<Inst, Deps>(instantiator: Inst) -> BoxedCloneInstantiator<Deps::Error, Inst::Error>
 where
-    Inst: Instantiator<Deps, Provides: Send> + Send + Sync,
+    Inst: Instantiator<Deps> + SendSafety + SyncSafety,
     Deps: DependencyResolver,
 {
     BoxCloneService::new(Box::new(service_fn({
@@ -83,16 +84,16 @@ macro_rules! impl_instantiator {
         #[allow(non_snake_case)]
         impl<F, Fut, Response, Err, $($ty,)*> Instantiator<($($ty,)*)> for F
         where
-            F: FnMut($($ty,)*) -> Fut + Send + Clone + 'static,
-            Fut: Future<Output = Result<Response, Err>> + Send,
+            F: FnMut($($ty,)*) -> Fut + SendSafety + Clone + 'static,
+            Fut: Future<Output = Result<Response, Err>> + SendSafety,
             Response: 'static,
             Err: Into<InstantiateErrorKind>,
-            $( $ty: DependencyResolver + Send, )*
+            $( $ty: DependencyResolver + SendSafety, )*
         {
             type Provides = Response;
             type Error = Err;
 
-            fn instantiate(&mut self, ($($ty,)*): ($($ty,)*)) -> impl Future<Output = Result<Self::Provides, Self::Error>> + Send {
+            fn instantiate(&mut self, ($($ty,)*): ($($ty,)*)) -> impl Future<Output = Result<Self::Provides, Self::Error>> + SendSafety  {
                 async move { self($($ty,)*).await }
             }
         }
@@ -109,13 +110,13 @@ mod tests {
     use crate::{
         async_impl::{registry::BoxedInstantiator, service::Service as _, Container, RegistryBuilder},
         scope::DefaultScope::*,
+        utils::thread_safety::RcThreadSafety,
         Inject, InjectTransient,
     };
 
     use alloc::{
         format,
         string::{String, ToString as _},
-        sync::Arc,
     };
     use core::sync::atomic::{AtomicU8, Ordering};
     use tracing::debug;
@@ -136,8 +137,8 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_boxed_instantiator_factory() {
-        let instantiator_request_call_count = Arc::new(AtomicU8::new(0));
-        let instantiator_response_call_count = Arc::new(AtomicU8::new(0));
+        let instantiator_request_call_count = RcThreadSafety::new(AtomicU8::new(0));
+        let instantiator_response_call_count = RcThreadSafety::new(AtomicU8::new(0));
 
         let instantiator_request = boxed_instantiator({
             let instantiator_request_call_count = instantiator_request_call_count.clone();
@@ -185,8 +186,8 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_boxed_instantiator_cached_factory() {
-        let instantiator_request_call_count = Arc::new(AtomicU8::new(0));
-        let instantiator_response_call_count = Arc::new(AtomicU8::new(0));
+        let instantiator_request_call_count = RcThreadSafety::new(AtomicU8::new(0));
+        let instantiator_response_call_count = RcThreadSafety::new(AtomicU8::new(0));
 
         let instantiator_request = boxed_instantiator({
             let instantiator_request_call_count = instantiator_request_call_count.clone();

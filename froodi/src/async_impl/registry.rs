@@ -18,6 +18,7 @@ use crate::{
     },
     registry::{InstantiatorInnerData as SyncInstantiatorInnerData, ScopedRegistry as ScopedSyncRegistry},
     scope::{Scope, ScopeInnerData},
+    utils::thread_safety::{SendSafety, SyncSafety},
     Container as SyncContainer, DefaultScope, Scopes as ScopesTrait,
 };
 
@@ -80,7 +81,7 @@ impl<S> RegistryBuilder<S> {
     #[must_use]
     pub fn provide<Inst, Deps>(mut self, instantiator: Inst, scope: S) -> Self
     where
-        Inst: Instantiator<Deps, Error = InstantiateErrorKind> + Send + Sync,
+        Inst: Instantiator<Deps, Error = InstantiateErrorKind> + SendSafety + SyncSafety,
         Deps: DependencyResolver<Error = ResolveErrorKind>,
     {
         self.add_instantiator::<Inst::Provides>(BoxedInstantiator::Sync(boxed_instantiator(instantiator)), scope);
@@ -91,7 +92,7 @@ impl<S> RegistryBuilder<S> {
     #[must_use]
     pub fn provide_with_config<Inst, Deps>(mut self, instantiator: Inst, config: Config, scope: S) -> Self
     where
-        Inst: Instantiator<Deps, Error = InstantiateErrorKind> + Send + Sync,
+        Inst: Instantiator<Deps, Error = InstantiateErrorKind> + SendSafety + SyncSafety,
         Deps: DependencyResolver<Error = ResolveErrorKind>,
     {
         self.add_instantiator_with_config::<Inst::Provides>(BoxedInstantiator::Sync(boxed_instantiator(instantiator)), config, scope);
@@ -102,7 +103,7 @@ impl<S> RegistryBuilder<S> {
     #[must_use]
     pub fn provide_async<Inst, Deps>(mut self, instantiator: Inst, scope: S) -> Self
     where
-        Inst: AsyncInstantiator<Deps, Provides: Send, Error = InstantiateErrorKind> + Send + Sync,
+        Inst: AsyncInstantiator<Deps, Error = InstantiateErrorKind> + SendSafety + SyncSafety,
         Deps: DependencyResolver<Error = ResolveErrorKind>,
     {
         self.add_instantiator::<Inst::Provides>(BoxedInstantiator::Async(boxed_async_instantiator_factory(instantiator)), scope);
@@ -113,7 +114,7 @@ impl<S> RegistryBuilder<S> {
     #[must_use]
     pub fn provide_async_with_config<Inst, Deps>(mut self, instantiator: Inst, config: Config, scope: S) -> Self
     where
-        Inst: AsyncInstantiator<Deps, Provides: Send, Error = InstantiateErrorKind> + Send + Sync,
+        Inst: AsyncInstantiator<Deps, Error = InstantiateErrorKind> + SendSafety + SyncSafety,
         Deps: DependencyResolver<Error = ResolveErrorKind>,
     {
         self.add_instantiator_with_config::<Inst::Provides>(
@@ -138,10 +139,10 @@ impl<S> RegistryBuilder<S> {
     ///     2. The finalized used for life cycle management, while [`Drop`] is used for resource management.
     #[inline]
     #[must_use]
-    pub fn add_finalizer<Dep>(mut self, finalizer: impl Finalizer<Dep> + Send + Sync) -> Self
-    where
-        Dep: Send + Sync + 'static,
-    {
+    pub fn add_finalizer<Dep: SendSafety + SyncSafety + 'static>(
+        mut self,
+        finalizer: impl Finalizer<Dep> + SendSafety + SyncSafety,
+    ) -> Self {
         self.sync_finalizers.insert(TypeId::of::<Dep>(), boxed_finalizer_factory(finalizer));
         self
     }
@@ -160,10 +161,10 @@ impl<S> RegistryBuilder<S> {
     ///     2. The finalized used for life cycle management, while [`Drop`] is used for resource management.
     #[inline]
     #[must_use]
-    pub fn add_async_finalizer<Dep>(mut self, finalizer: impl AsyncFinalizer<Dep> + Send + Sync) -> Self
-    where
-        Dep: Send + Sync + 'static,
-    {
+    pub fn add_async_finalizer<Dep: SendSafety + SyncSafety + 'static>(
+        mut self,
+        finalizer: impl AsyncFinalizer<Dep> + SendSafety + SyncSafety,
+    ) -> Self {
         self.finalizers
             .insert(TypeId::of::<Dep>(), boxed_async_finalizer_factory(finalizer));
         self
@@ -334,13 +335,12 @@ impl ScopedRegistry {
 
 #[cfg(test)]
 mod tests {
-    use super::RegistryBuilder;
+    use super::{BoxedCloneInstantiator, InstantiateErrorKind, RegistryBuilder, ResolveErrorKind};
     use crate::{
         scope::DefaultScope::{self, *},
+        utils::thread_safety::RcThreadSafety,
         Scopes,
     };
-
-    use alloc::sync::Arc;
     use core::any::TypeId;
 
     #[test]
@@ -423,10 +423,10 @@ mod tests {
             .provide_async(async || Ok(1u16), Runtime)
             .provide_async(async || Ok(1u32), App)
             .provide_async(async || Ok(1u64), App)
-            .add_finalizer(|_: Arc<i8>| {})
-            .add_finalizer(|_: Arc<i32>| {})
-            .add_async_finalizer(async |_: Arc<u8>| {})
-            .add_async_finalizer(async |_: Arc<u32>| {})
+            .add_finalizer(|_: RcThreadSafety<i8>| {})
+            .add_finalizer(|_: RcThreadSafety<i32>| {})
+            .add_async_finalizer(async |_: RcThreadSafety<u8>| {})
+            .add_async_finalizer(async |_: RcThreadSafety<u32>| {})
             .build();
 
         let i8_type_id = TypeId::of::<i8>();
@@ -472,5 +472,12 @@ mod tests {
                 assert!(data.finalizer.is_none());
             }
         }
+    }
+
+    #[test]
+    fn test_bounds() {
+        fn impl_bounds<T: Send>() {}
+
+        impl_bounds::<(BoxedCloneInstantiator<ResolveErrorKind, InstantiateErrorKind>,)>();
     }
 }

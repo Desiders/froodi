@@ -1,7 +1,9 @@
-use alloc::sync::Arc;
 use core::any::TypeId;
 
-use crate::any;
+use crate::{
+    any,
+    utils::thread_safety::{RcThreadSafety, SendSafety, SyncSafety},
+};
 
 #[derive(Clone)]
 pub struct Context {
@@ -22,14 +24,14 @@ impl Context {
     }
 
     #[inline]
-    pub fn insert<T: Send + Sync + 'static>(&mut self, value: T) -> Option<Arc<T>> {
+    pub fn insert<T: SendSafety + SyncSafety + 'static>(&mut self, value: T) -> Option<RcThreadSafety<T>> {
         self.map
-            .insert(TypeId::of::<T>(), Arc::new(value))
+            .insert(TypeId::of::<T>(), RcThreadSafety::new(value))
             .and_then(|boxed| boxed.downcast().ok())
     }
 
     #[inline]
-    pub fn insert_rc<T: Send + Sync + 'static>(&mut self, value: Arc<T>) -> Option<Arc<T>> {
+    pub fn insert_rc<T: SendSafety + SyncSafety + 'static>(&mut self, value: RcThreadSafety<T>) -> Option<RcThreadSafety<T>> {
         self.map.insert(TypeId::of::<T>(), value).and_then(|boxed| boxed.downcast().ok())
     }
 }

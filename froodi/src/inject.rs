@@ -1,12 +1,14 @@
-use alloc::sync::Arc;
-
 #[cfg(feature = "async")]
 use crate::async_impl::Container as AsyncContainer;
-use crate::{dependency_resolver::DependencyResolver, Container, ResolveErrorKind};
+use crate::{
+    dependency_resolver::DependencyResolver,
+    utils::thread_safety::{RcThreadSafety, SendSafety, SyncSafety},
+    Container, ResolveErrorKind,
+};
 
-pub struct Inject<Dep, const PREFER_SYNC_OVER_ASYNC: bool = true>(pub Arc<Dep>);
+pub struct Inject<Dep, const PREFER_SYNC_OVER_ASYNC: bool = true>(pub RcThreadSafety<Dep>);
 
-impl<Dep: Send + Sync + 'static> DependencyResolver for Inject<Dep> {
+impl<Dep: SendSafety + SyncSafety + 'static> DependencyResolver for Inject<Dep> {
     type Error = ResolveErrorKind;
 
     fn resolve(container: &Container) -> Result<Self, Self::Error> {
