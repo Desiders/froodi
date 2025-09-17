@@ -1,11 +1,38 @@
-pub(crate) use tower::util::service_fn;
+use core::future::Future;
+
+use super::base::Service;
+
+#[inline]
+#[must_use]
+pub(crate) const fn service_fn<T>(f: T) -> ServiceFn<T> {
+    ServiceFn { f }
+}
+
+#[derive(Clone)]
+pub(crate) struct ServiceFn<T> {
+    f: T,
+}
+
+impl<F, Fut, Request, Response, Error> Service<Request> for ServiceFn<F>
+where
+    F: FnMut(Request) -> Fut,
+    Fut: Future<Output = Result<Response, Error>>,
+{
+    type Response = Response;
+    type Error = Error;
+    type Future = Fut;
+
+    #[inline]
+    fn call(&mut self, request: Request) -> Self::Future {
+        (self.f)(request)
+    }
+}
 
 #[cfg(test)]
 mod tests {
-    use super::service_fn;
+    use super::{service_fn, Service as _};
 
     use core::convert::Infallible;
-    use tower::Service as _;
 
     #[derive(Clone, Copy)]
     struct Request(bool);
