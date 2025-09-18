@@ -219,9 +219,9 @@ impl Container {
     /// so it should be used for dependencies that are cached or shared,
     /// and with optional finalizer.
     #[allow(clippy::missing_errors_doc, clippy::multiple_bound_locations)]
-    pub fn get<'a, Dep: SendSafety + SyncSafety + 'static>(
-        &'a self,
-    ) -> impl Future<Output = Result<RcThreadSafety<Dep>, ResolveErrorKind>> + SendSafety + 'a {
+    pub fn get<Dep: SendSafety + SyncSafety + 'static>(
+        &self,
+    ) -> impl Future<Output = Result<RcThreadSafety<Dep>, ResolveErrorKind>> + SendSafety + '_ {
         let span = debug_span!("resolve", dependency = type_name::<Dep>());
         let type_id = TypeId::of::<Dep>();
 
@@ -303,7 +303,7 @@ impl Container {
     /// This method resolves a new instance of the dependency each time it is called,
     /// so it should be used for dependencies that are not cached or shared, and without finalizer.
     #[allow(clippy::missing_errors_doc, clippy::multiple_bound_locations)]
-    pub fn get_transient<'a, Dep: 'static>(&'a self) -> impl Future<Output = Result<Dep, ResolveErrorKind>> + SendSafety + 'a {
+    pub fn get_transient<Dep: 'static>(&self) -> impl Future<Output = Result<Dep, ResolveErrorKind>> + SendSafety + '_ {
         let span = debug_span!("resolve", dependency = type_name::<Dep>());
         let _guard = span.enter();
 
@@ -354,7 +354,7 @@ impl Container {
     ///
     /// # Warning
     /// This method can be called multiple times, but it will only call finalizers for dependencies that were resolved since the last call
-    pub fn close<'a>(&'a self) -> impl Future<Output = ()> + SendSafety + 'a {
+    pub fn close(&self) -> impl Future<Output = ()> + SendSafety + '_ {
         let close_parent = self.inner.close_parent;
 
         Box::pin(async move {
@@ -829,7 +829,7 @@ struct ContainerInner {
 
 impl ContainerInner {
     #[allow(clippy::missing_panics_doc)]
-    fn close_with_parent_flag<'a>(&'a self, close_parent: bool) -> impl Future<Output = ()> + SendSafety + 'a {
+    fn close_with_parent_flag(&self, close_parent: bool) -> impl Future<Output = ()> + SendSafety + '_ {
         let mut resolved_set = self.cache.lock().take_resolved_set();
 
         Box::pin(async move {
