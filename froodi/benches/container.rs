@@ -1,8 +1,7 @@
 #![allow(dead_code)]
 
 use criterion::{criterion_group, criterion_main, Criterion};
-use froodi::{Container, DefaultScope::*, Inject, InjectTransient, RegistryBuilder};
-use std::sync::Arc;
+use froodi::{utils::thread_safety::RcThreadSafety, Container, DefaultScope::*, Inject, InjectTransient, RegistryBuilder};
 
 fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("container_new_with_registry_builder", |b| {
@@ -15,12 +14,12 @@ fn criterion_benchmark(c: &mut Criterion) {
                     .provide(|| Ok(((), (), (), ())), Request)
                     .provide(|| Ok(((), (), (), (), ())), Action)
                     .provide(|| Ok(((), (), (), (), (), ())), Step)
-                    .add_finalizer(|_: Arc<()>| {})
-                    .add_finalizer(|_: Arc<((), ())>| {})
-                    .add_finalizer(|_: Arc<((), (), ())>| {})
-                    .add_finalizer(|_: Arc<((), (), (), ())>| {})
-                    .add_finalizer(|_: Arc<((), (), (), (), ())>| {})
-                    .add_finalizer(|_: Arc<((), (), (), (), (), ())>| {}),
+                    .add_finalizer(|_: RcThreadSafety<()>| {})
+                    .add_finalizer(|_: RcThreadSafety<((), ())>| {})
+                    .add_finalizer(|_: RcThreadSafety<((), (), ())>| {})
+                    .add_finalizer(|_: RcThreadSafety<((), (), (), ())>| {})
+                    .add_finalizer(|_: RcThreadSafety<((), (), (), (), ())>| {})
+                    .add_finalizer(|_: RcThreadSafety<((), (), (), (), (), ())>| {}),
             )
         })
     })
@@ -60,13 +59,13 @@ fn criterion_benchmark(c: &mut Criterion) {
         })
     })
     .bench_function("container_get_with_cache", |b| {
-        struct A(Arc<B>, Arc<C>);
+        struct A(RcThreadSafety<B>, RcThreadSafety<C>);
         struct B(i32);
-        struct C(Arc<CA>);
-        struct CA(Arc<CAA>);
-        struct CAA(Arc<CAAA>);
-        struct CAAA(Arc<CAAAA>);
-        struct CAAAA(Arc<CAAAAA>);
+        struct C(RcThreadSafety<CA>);
+        struct CA(RcThreadSafety<CAA>);
+        struct CAA(RcThreadSafety<CAAA>);
+        struct CAAA(RcThreadSafety<CAAAA>);
+        struct CAAAA(RcThreadSafety<CAAAAA>);
         struct CAAAAA;
 
         let container = Container::new(

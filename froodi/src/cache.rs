@@ -1,10 +1,11 @@
-use alloc::{collections::vec_deque::VecDeque, sync::Arc};
-use core::{
-    any::{Any, TypeId},
-    mem,
-};
+use alloc::collections::vec_deque::VecDeque;
+use core::{any::TypeId, mem};
 
-use crate::{any, Context};
+use crate::{
+    any,
+    utils::thread_safety::{RcAnyThreadSafety, RcThreadSafety, SendSafety, SyncSafety},
+    Context,
+};
 
 #[derive(Clone)]
 pub(crate) struct Cache {
@@ -22,7 +23,7 @@ impl Cache {
     }
 
     #[inline]
-    pub(crate) fn insert_rc<T: Send + Sync + 'static>(&mut self, value: Arc<T>) -> Option<Arc<T>> {
+    pub(crate) fn insert_rc<T: SendSafety + SyncSafety + 'static>(&mut self, value: RcThreadSafety<T>) -> Option<RcThreadSafety<T>> {
         self.map.insert(TypeId::of::<T>(), value).and_then(|boxed| boxed.downcast().ok())
     }
 
@@ -41,7 +42,7 @@ impl Cache {
     }
 
     #[must_use]
-    pub(crate) fn get<T: Send + Sync + 'static>(&self, type_id: &TypeId) -> Option<Arc<T>> {
+    pub(crate) fn get<T: SendSafety + SyncSafety + 'static>(&self, type_id: &TypeId) -> Option<RcThreadSafety<T>> {
         self.map.get(type_id).and_then(|boxed| boxed.clone().downcast().ok())
     }
 
@@ -60,7 +61,7 @@ impl Cache {
 #[derive(Clone)]
 pub(crate) struct Resolved {
     pub(crate) type_id: TypeId,
-    pub(crate) dependency: Arc<dyn Any + Send + Sync>,
+    pub(crate) dependency: RcAnyThreadSafety,
 }
 
 #[derive(Default, Clone)]

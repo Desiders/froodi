@@ -1,21 +1,22 @@
-use alloc::{boxed::Box, sync::Arc};
-use core::{any::Any, future::Future};
+use alloc::boxed::Box;
+use core::future::Future;
 
 use super::service::{service_fn, BoxCloneService};
+use crate::utils::thread_safety::{RcAnyThreadSafety, RcThreadSafety, SendSafety, SyncSafety};
 
 pub trait Finalizer<Dep>: Clone + 'static {
-    fn finalize(&mut self, dependency: Arc<Dep>) -> impl Future<Output = ()> + Send;
+    fn finalize(&mut self, dependency: RcThreadSafety<Dep>) -> impl Future<Output = ()> + SendSafety;
 }
 
-pub(crate) type BoxedCloneFinalizer = BoxCloneService<Arc<dyn Any + Send + Sync>, (), ()>;
+pub(crate) type BoxedCloneFinalizer = BoxCloneService<RcAnyThreadSafety, (), ()>;
 
 #[must_use]
 pub(crate) fn boxed_finalizer_factory<Dep, Fin>(finalizer: Fin) -> BoxedCloneFinalizer
 where
-    Dep: Send + Sync + 'static,
-    Fin: Finalizer<Dep> + Send + Sync,
+    Dep: SendSafety + SyncSafety + 'static,
+    Fin: Finalizer<Dep> + SendSafety + SyncSafety,
 {
-    BoxCloneService::new(Box::new(service_fn(move |dependency: Arc<dyn Any + Send + Sync>| {
+    BoxCloneService::new(Box::new(service_fn(move |dependency: RcAnyThreadSafety| {
         let mut finalizer = finalizer.clone();
         let dependency = dependency.downcast::<Dep>().expect("Failed to downcast value in finalizer factory");
 
@@ -28,11 +29,11 @@ where
 
 impl<F, Fut, Dep> Finalizer<Dep> for F
 where
-    F: FnMut(Arc<Dep>) -> Fut + Clone + 'static,
-    Fut: Future<Output = ()> + Send,
+    F: FnMut(RcThreadSafety<Dep>) -> Fut + Clone + 'static,
+    Fut: Future<Output = ()> + SendSafety,
 {
     #[inline]
-    fn finalize(&mut self, dependency: Arc<Dep>) -> impl Future<Output = ()> + Send {
+    fn finalize(&mut self, dependency: RcThreadSafety<Dep>) -> impl Future<Output = ()> + SendSafety {
         self(dependency)
     }
 }

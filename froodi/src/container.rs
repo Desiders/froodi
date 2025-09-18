@@ -1,6 +1,6 @@
 use core::any::{type_name, TypeId};
 
-use alloc::{boxed::Box, sync::Arc};
+use alloc::boxed::Box;
 use parking_lot::Mutex;
 use tracing::{debug, debug_span, error, warn};
 
@@ -12,11 +12,12 @@ use crate::{
     registry::{InstantiatorInnerData, ScopedRegistry},
     scope::Scope,
     service::Service as _,
+    utils::thread_safety::{RcThreadSafety, SendSafety, SyncSafety},
 };
 
 #[derive(Clone)]
 pub struct Container {
-    pub(crate) inner: Arc<ContainerInner>,
+    pub(crate) inner: RcThreadSafety<ContainerInner>,
 }
 
 impl Container {
@@ -38,7 +39,7 @@ impl Container {
     pub fn new<S: Scope>(registry_builder: RegistryBuilder<S>) -> Self {
         let mut registries = registry_builder.build().into_iter();
         let (root_registry, child_registries) = if let Some(root_registry) = registries.next() {
-            (Arc::new(root_registry), registries.map(Arc::new).collect())
+            (RcThreadSafety::new(root_registry), registries.map(RcThreadSafety::new).collect())
         } else {
             panic!("registries len (is 0) should be > 1");
         };
@@ -84,7 +85,7 @@ impl Container {
     pub fn new_with_start_scope<S: Scope>(registry_builder: RegistryBuilder<S>, scope: S) -> Self {
         let mut registries = registry_builder.build().into_iter();
         let (root_registry, child_registries) = if let Some(root_registry) = registries.next() {
-            (Arc::new(root_registry), registries.map(Arc::new).collect())
+            (RcThreadSafety::new(root_registry), registries.map(RcThreadSafety::new).collect())
         } else {
             panic!("registries len (is 0) should be > 1");
         };
@@ -155,7 +156,7 @@ impl Container {
     /// so it should be used for dependencies that are cached or shared,
     /// and with optional finalizer.
     #[allow(clippy::missing_errors_doc)]
-    pub fn get<Dep: Send + Sync + 'static>(&self) -> Result<Arc<Dep>, ResolveErrorKind> {
+    pub fn get<Dep: SendSafety + SyncSafety + 'static>(&self) -> Result<RcThreadSafety<Dep>, ResolveErrorKind> {
         let span = debug_span!("resolve", dependency = type_name::<Dep>());
         let _guard = span.enter();
 
@@ -192,7 +193,7 @@ impl Container {
         match instantiator.call(self.clone()) {
             Ok(dependency) => match dependency.downcast::<Dep>() {
                 Ok(dependency) => {
-                    let dependency = Arc::new(*dependency);
+                    let dependency = RcThreadSafety::new(*dependency);
                     let mut guard = self.inner.cache.lock();
                     if config.cache_provides {
                         guard.insert_rc(dependency.clone());
@@ -291,15 +292,15 @@ impl Container {
     fn init_child_with_context(
         self,
         context: Context,
-        root_registry: Arc<ScopedRegistry>,
-        child_registries: Box<[Arc<ScopedRegistry>]>,
+        root_registry: RcThreadSafety<ScopedRegistry>,
+        child_registries: Box<[RcThreadSafety<ScopedRegistry>]>,
         close_parent: bool,
     ) -> Container {
         let mut cache = self.inner.cache.lock().child();
         cache.append_context(&mut context.clone());
 
         Container {
-            inner: Arc::new(ContainerInner {
+            inner: RcThreadSafety::new(ContainerInner {
                 cache: Mutex::new(cache),
                 context: Mutex::new(context),
                 root_registry,
@@ -312,13 +313,18 @@ impl Container {
 
     #[inline]
     #[must_use]
-    fn init_child(self, root_registry: Arc<ScopedRegistry>, child_registries: Box<[Arc<ScopedRegistry>]>, close_parent: bool) -> Container {
+    fn init_child(
+        self,
+        root_registry: RcThreadSafety<ScopedRegistry>,
+        child_registries: Box<[RcThreadSafety<ScopedRegistry>]>,
+        close_parent: bool,
+    ) -> Container {
         let mut cache = self.inner.cache.lock().child();
         let context = self.inner.context.lock().clone();
         cache.append_context(&mut context.clone());
 
         Container {
-            inner: Arc::new(ContainerInner {
+            inner: RcThreadSafety::new(ContainerInner {
                 cache: Mutex::new(cache),
                 context: Mutex::new(context),
                 root_registry,
@@ -532,8 +538,8 @@ where
 pub(crate) struct BoxedContainerInner {
     pub(crate) cache: Cache,
     pub(crate) context: Context,
-    pub(crate) root_registry: Arc<ScopedRegistry>,
-    pub(crate) child_registries: Box<[Arc<ScopedRegistry>]>,
+    pub(crate) root_registry: RcThreadSafety<ScopedRegistry>,
+    pub(crate) child_registries: Box<[RcThreadSafety<ScopedRegistry>]>,
     pub(crate) parent: Option<Box<BoxedContainerInner>>,
     pub(crate) close_parent: bool,
 }
@@ -543,8 +549,8 @@ impl BoxedContainerInner {
     #[must_use]
     pub(crate) fn init_child(
         self,
-        root_registry: Arc<ScopedRegistry>,
-        child_registries: Box<[Arc<ScopedRegistry>]>,
+        root_registry: RcThreadSafety<ScopedRegistry>,
+        child_registries: Box<[RcThreadSafety<ScopedRegistry>]>,
         close_parent: bool,
     ) -> Self {
         let mut cache = self.cache.child();
@@ -574,7 +580,7 @@ impl From<BoxedContainerInner> for Container {
         }: BoxedContainerInner,
     ) -> Self {
         Self {
-            inner: Arc::new(ContainerInner {
+            inner: RcThreadSafety::new(ContainerInner {
                 cache: Mutex::new(cache),
                 context: Mutex::new(context),
                 root_registry,
@@ -589,8 +595,8 @@ impl From<BoxedContainerInner> for Container {
 pub(crate) struct ContainerInner {
     pub(crate) cache: Mutex<Cache>,
     pub(crate) context: Mutex<Context>,
-    pub(crate) root_registry: Arc<ScopedRegistry>,
-    pub(crate) child_registries: Box<[Arc<ScopedRegistry>]>,
+    pub(crate) root_registry: RcThreadSafety<ScopedRegistry>,
+    pub(crate) child_registries: Box<[RcThreadSafety<ScopedRegistry>]>,
     pub(crate) parent: Option<Container>,
     pub(crate) close_parent: bool,
 }
@@ -647,32 +653,32 @@ mod tests {
         container::ContainerInner,
         inject::{Inject, InjectTransient},
         scope::DefaultScope::*,
+        utils::thread_safety::RcThreadSafety,
         Scope,
     };
 
     use alloc::{
         format,
         string::{String, ToString as _},
-        sync::Arc,
     };
     use core::sync::atomic::{AtomicU8, Ordering};
     use tracing::debug;
     use tracing_test::traced_test;
 
     struct Request1;
-    struct Request2(Arc<Request1>);
-    struct Request3(Arc<Request1>, Arc<Request2>);
+    struct Request2(RcThreadSafety<Request1>);
+    struct Request3(RcThreadSafety<Request1>, RcThreadSafety<Request2>);
 
     #[test]
     #[traced_test]
     fn test_scoped_get() {
-        struct A(Arc<B>, Arc<C>);
+        struct A(RcThreadSafety<B>, RcThreadSafety<C>);
         struct B(i32);
-        struct C(Arc<CA>);
-        struct CA(Arc<CAA>);
-        struct CAA(Arc<CAAA>);
-        struct CAAA(Arc<CAAAA>);
-        struct CAAAA(Arc<CAAAAA>);
+        struct C(RcThreadSafety<CA>);
+        struct CA(RcThreadSafety<CAA>);
+        struct CAA(RcThreadSafety<CAAA>);
+        struct CAAA(RcThreadSafety<CAAAA>);
+        struct CAAAA(RcThreadSafety<CAAAAA>);
         struct CAAAAA;
 
         let registry = RegistryBuilder::new()
@@ -767,11 +773,11 @@ mod tests {
         assert_eq!(request_container_inner.child_registries.len(), 2);
         assert_eq!(request_container_inner.root_registry.scope.priority, Request.priority());
         // Session scope is skipped by default, so it is not the first child registry
-        assert!(Arc::ptr_eq(
+        assert!(RcThreadSafety::ptr_eq(
             &request_container_inner.root_registry,
             &app_container_inner.child_registries[1]
         ));
-        assert!(Arc::ptr_eq(
+        assert!(RcThreadSafety::ptr_eq(
             &action_container_inner.root_registry,
             &request_container_inner.child_registries[0]
         ));
@@ -781,7 +787,7 @@ mod tests {
 
         assert_eq!(step_container_inner.child_registries.len(), 0);
         assert_eq!(step_container_inner.root_registry.scope.priority, Step.priority());
-        assert!(Arc::ptr_eq(
+        assert!(RcThreadSafety::ptr_eq(
             &step_container_inner.root_registry,
             &action_container_inner.child_registries[0]
         ));
@@ -815,35 +821,35 @@ mod tests {
         assert!(runtime_container_inner.parent.is_none());
         assert_eq!(runtime_container_inner.child_registries.len(), 5);
         assert_eq!(runtime_container_inner.root_registry.scope.priority, Runtime.priority());
-        assert!(Arc::ptr_eq(
+        assert!(RcThreadSafety::ptr_eq(
             &app_container_inner.root_registry,
             &runtime_container_inner.child_registries[0]
         ));
 
         assert_eq!(app_container_inner.child_registries.len(), 4);
         assert_eq!(app_container_inner.root_registry.scope.priority, App.priority());
-        assert!(Arc::ptr_eq(
+        assert!(RcThreadSafety::ptr_eq(
             &session_container_inner.root_registry,
             &app_container_inner.child_registries[0]
         ));
 
         assert_eq!(session_container_inner.child_registries.len(), 3);
         assert_eq!(session_container_inner.root_registry.scope.priority, Session.priority());
-        assert!(Arc::ptr_eq(
+        assert!(RcThreadSafety::ptr_eq(
             &request_container_inner.root_registry,
             &session_container_inner.child_registries[0]
         ));
 
         assert_eq!(request_container_inner.child_registries.len(), 2);
         assert_eq!(request_container_inner.root_registry.scope.priority, Request.priority());
-        assert!(Arc::ptr_eq(
+        assert!(RcThreadSafety::ptr_eq(
             &action_container_inner.root_registry,
             &request_container_inner.child_registries[0]
         ));
 
         assert_eq!(action_container_inner.child_registries.len(), 1);
         assert_eq!(action_container_inner.root_registry.scope.priority, Action.priority());
-        assert!(Arc::ptr_eq(
+        assert!(RcThreadSafety::ptr_eq(
             &step_container_inner.root_registry,
             &action_container_inner.child_registries[0]
         ));
@@ -855,9 +861,9 @@ mod tests {
     #[test]
     #[traced_test]
     fn test_close_for_unresolved() {
-        let finalizer_1_request_call_count = Arc::new(AtomicU8::new(0));
-        let finalizer_2_request_call_count = Arc::new(AtomicU8::new(0));
-        let finalizer_3_request_call_count = Arc::new(AtomicU8::new(0));
+        let finalizer_1_request_call_count = RcThreadSafety::new(AtomicU8::new(0));
+        let finalizer_2_request_call_count = RcThreadSafety::new(AtomicU8::new(0));
+        let finalizer_3_request_call_count = RcThreadSafety::new(AtomicU8::new(0));
 
         let registry = RegistryBuilder::new()
             .provide(|| Ok(()), Runtime)
@@ -865,19 +871,19 @@ mod tests {
             .provide(|| Ok(((), (), (), ())), Request)
             .add_finalizer({
                 let finalizer_1_request_call_count = finalizer_1_request_call_count.clone();
-                move |_: Arc<()>| {
+                move |_: RcThreadSafety<()>| {
                     finalizer_1_request_call_count.fetch_add(1, Ordering::SeqCst);
                 }
             })
             .add_finalizer({
                 let finalizer_2_request_call_count = finalizer_2_request_call_count.clone();
-                move |_: Arc<((), ())>| {
+                move |_: RcThreadSafety<((), ())>| {
                     finalizer_2_request_call_count.fetch_add(1, Ordering::SeqCst);
                 }
             })
             .add_finalizer({
                 let finalizer_3_request_call_count = finalizer_3_request_call_count.clone();
-                move |_: Arc<((), (), (), ())>| {
+                move |_: RcThreadSafety<((), (), (), ())>| {
                     finalizer_3_request_call_count.fetch_add(1, Ordering::SeqCst);
                 }
             });
@@ -896,16 +902,16 @@ mod tests {
     #[test]
     #[traced_test]
     fn test_close_for_resolved() {
-        let request_call_count = Arc::new(AtomicU8::new(0));
+        let request_call_count = RcThreadSafety::new(AtomicU8::new(0));
 
-        let finalizer_1_request_call_count = Arc::new(AtomicU8::new(0));
-        let finalizer_1_request_call_position = Arc::new(AtomicU8::new(0));
-        let finalizer_2_request_call_count = Arc::new(AtomicU8::new(0));
-        let finalizer_2_request_call_position = Arc::new(AtomicU8::new(0));
-        let finalizer_3_request_call_count = Arc::new(AtomicU8::new(0));
-        let finalizer_3_request_call_position = Arc::new(AtomicU8::new(0));
-        let finalizer_4_request_call_count = Arc::new(AtomicU8::new(0));
-        let finalizer_4_request_call_position = Arc::new(AtomicU8::new(0));
+        let finalizer_1_request_call_count = RcThreadSafety::new(AtomicU8::new(0));
+        let finalizer_1_request_call_position = RcThreadSafety::new(AtomicU8::new(0));
+        let finalizer_2_request_call_count = RcThreadSafety::new(AtomicU8::new(0));
+        let finalizer_2_request_call_position = RcThreadSafety::new(AtomicU8::new(0));
+        let finalizer_3_request_call_count = RcThreadSafety::new(AtomicU8::new(0));
+        let finalizer_3_request_call_position = RcThreadSafety::new(AtomicU8::new(0));
+        let finalizer_4_request_call_count = RcThreadSafety::new(AtomicU8::new(0));
+        let finalizer_4_request_call_position = RcThreadSafety::new(AtomicU8::new(0));
 
         let registry = RegistryBuilder::new()
             .provide(|| Ok(()), Runtime)
@@ -916,7 +922,7 @@ mod tests {
                 let request_call_count = request_call_count.clone();
                 let finalizer_1_request_call_position = finalizer_1_request_call_position.clone();
                 let finalizer_1_request_call_count = finalizer_1_request_call_count.clone();
-                move |_: Arc<()>| {
+                move |_: RcThreadSafety<()>| {
                     request_call_count.fetch_add(1, Ordering::SeqCst);
                     finalizer_1_request_call_position.store(request_call_count.load(Ordering::SeqCst), Ordering::SeqCst);
                     finalizer_1_request_call_count.fetch_add(1, Ordering::SeqCst);
@@ -928,7 +934,7 @@ mod tests {
                 let request_call_count = request_call_count.clone();
                 let finalizer_2_request_call_position = finalizer_2_request_call_position.clone();
                 let finalizer_2_request_call_count = finalizer_2_request_call_count.clone();
-                move |_: Arc<((), ())>| {
+                move |_: RcThreadSafety<((), ())>| {
                     request_call_count.fetch_add(1, Ordering::SeqCst);
                     finalizer_2_request_call_position.store(request_call_count.load(Ordering::SeqCst), Ordering::SeqCst);
                     finalizer_2_request_call_count.fetch_add(1, Ordering::SeqCst);
@@ -940,7 +946,7 @@ mod tests {
                 let request_call_count = request_call_count.clone();
                 let finalizer_3_request_call_position = finalizer_3_request_call_position.clone();
                 let finalizer_3_request_call_count = finalizer_3_request_call_count.clone();
-                move |_: Arc<((), (), (), ())>| {
+                move |_: RcThreadSafety<((), (), (), ())>| {
                     request_call_count.fetch_add(1, Ordering::SeqCst);
                     finalizer_3_request_call_position.store(request_call_count.load(Ordering::SeqCst), Ordering::SeqCst);
                     finalizer_3_request_call_count.fetch_add(1, Ordering::SeqCst);
@@ -952,7 +958,7 @@ mod tests {
                 let request_call_count = request_call_count.clone();
                 let finalizer_4_request_call_position = finalizer_4_request_call_position.clone();
                 let finalizer_4_request_call_count = finalizer_4_request_call_count.clone();
-                move |_: Arc<((), (), (), (), ())>| {
+                move |_: RcThreadSafety<((), (), (), (), ())>| {
                     request_call_count.fetch_add(1, Ordering::SeqCst);
                     finalizer_4_request_call_position.store(request_call_count.load(Ordering::SeqCst), Ordering::SeqCst);
                     finalizer_4_request_call_count.fetch_add(1, Ordering::SeqCst);
@@ -1003,25 +1009,25 @@ mod tests {
     #[test]
     #[traced_test]
     fn test_close_on_drop() {
-        let call_count = Arc::new(AtomicU8::new(0));
+        let call_count = RcThreadSafety::new(AtomicU8::new(0));
 
-        let drop_call_count = Arc::new(AtomicU8::new(0));
-        let drop_call_position = Arc::new(AtomicU8::new(0));
-        let instantiator_call_count = Arc::new(AtomicU8::new(0));
-        let instantiator_call_position = Arc::new(AtomicU8::new(0));
-        let finalizer_1_call_count = Arc::new(AtomicU8::new(0));
-        let finalizer_1_call_position = Arc::new(AtomicU8::new(0));
-        let finalizer_2_call_count = Arc::new(AtomicU8::new(0));
-        let finalizer_2_call_position = Arc::new(AtomicU8::new(0));
+        let drop_call_count = RcThreadSafety::new(AtomicU8::new(0));
+        let drop_call_position = RcThreadSafety::new(AtomicU8::new(0));
+        let instantiator_call_count = RcThreadSafety::new(AtomicU8::new(0));
+        let instantiator_call_position = RcThreadSafety::new(AtomicU8::new(0));
+        let finalizer_1_call_count = RcThreadSafety::new(AtomicU8::new(0));
+        let finalizer_1_call_position = RcThreadSafety::new(AtomicU8::new(0));
+        let finalizer_2_call_count = RcThreadSafety::new(AtomicU8::new(0));
+        let finalizer_2_call_position = RcThreadSafety::new(AtomicU8::new(0));
 
         struct Type1;
-        struct Type2(Arc<Type1>);
+        struct Type2(RcThreadSafety<Type1>);
 
         struct DropWrapper<T> {
             val: T,
-            call_count: Arc<AtomicU8>,
-            drop_call_count: Arc<AtomicU8>,
-            drop_call_position: Arc<AtomicU8>,
+            call_count: RcThreadSafety<AtomicU8>,
+            drop_call_count: RcThreadSafety<AtomicU8>,
+            drop_call_position: RcThreadSafety<AtomicU8>,
         }
 
         impl<T> Drop for DropWrapper<T> {
@@ -1042,7 +1048,7 @@ mod tests {
                 let call_count = call_count.clone();
                 let finalizer_1_call_count = finalizer_1_call_count.clone();
                 let finalizer_1_call_position = finalizer_1_call_position.clone();
-                move |_: Arc<Type1>| {
+                move |_: RcThreadSafety<Type1>| {
                     call_count.fetch_add(1, Ordering::SeqCst);
                     finalizer_1_call_position.store(call_count.load(Ordering::SeqCst), Ordering::SeqCst);
                     finalizer_1_call_count.fetch_add(1, Ordering::SeqCst);
@@ -1054,7 +1060,7 @@ mod tests {
                 let call_count = call_count.clone();
                 let finalizer_2_call_count = finalizer_2_call_count.clone();
                 let finalizer_2_call_position = finalizer_2_call_position.clone();
-                move |_: Arc<Type2>| {
+                move |_: RcThreadSafety<Type2>| {
                     call_count.fetch_add(1, Ordering::SeqCst);
                     finalizer_2_call_position.store(call_count.load(Ordering::SeqCst), Ordering::SeqCst);
                     finalizer_2_call_count.fetch_add(1, Ordering::SeqCst);
@@ -1092,9 +1098,25 @@ mod tests {
     }
 
     #[test]
-    fn test_bounds() {
+    #[traced_test]
+    fn test_thread_safe() {
+        struct Request1 {
+            #[cfg(not(feature = "thread_safe"))]
+            _phantom: core::marker::PhantomData<*const ()>,
+        }
+
         fn impl_bounds<T: Send + Sync + 'static>() {}
 
         impl_bounds::<(Container, ContainerInner)>();
+
+        let registry = RegistryBuilder::new().provide(|| Ok(RequestTransient1), App);
+        let app_container = Container::new(registry);
+        std::thread::spawn(move || {
+            let request1 = app_container.get_transient::<Request1>();
+            let request2 = app_container.get::<Request1>();
+
+            assert!(request1.is_ok());
+            assert!(request2.is_ok());
+        });
     }
 }

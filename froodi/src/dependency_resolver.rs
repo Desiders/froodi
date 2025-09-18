@@ -4,7 +4,7 @@ use core::future::Future;
 use super::errors::ResolveErrorKind;
 #[cfg(feature = "async")]
 use crate::async_impl::Container as AsyncContainer;
-use crate::Container;
+use crate::{utils::thread_safety::SendSafety, Container};
 
 pub trait DependencyResolver: Sized {
     type Error: Into<ResolveErrorKind>;
@@ -12,7 +12,7 @@ pub trait DependencyResolver: Sized {
     fn resolve(container: &Container) -> Result<Self, Self::Error>;
 
     #[cfg(feature = "async")]
-    fn resolve_async(container: &AsyncContainer) -> impl Future<Output = Result<Self, Self::Error>> + Send;
+    fn resolve_async(container: &AsyncContainer) -> impl Future<Output = Result<Self, Self::Error>> + SendSafety;
 }
 
 macro_rules! impl_dependency_resolver {
@@ -22,7 +22,7 @@ macro_rules! impl_dependency_resolver {
         #[allow(non_snake_case, unused_mut)]
         impl<$($ty,)*> DependencyResolver for ($($ty,)*)
         where
-            $( $ty: DependencyResolver + Send, )*
+            $( $ty: DependencyResolver + SendSafety, )*
         {
             type Error = ResolveErrorKind;
 
@@ -54,13 +54,13 @@ mod tests {
         inject::{Inject, InjectTransient},
         instance,
         scope::DefaultScope::*,
+        utils::thread_safety::RcThreadSafety,
         Container, RegistryBuilder,
     };
 
     use alloc::{
         format,
         string::{String, ToString as _},
-        sync::Arc,
     };
     use core::sync::atomic::{AtomicU8, Ordering};
     use tracing::debug;
@@ -85,7 +85,7 @@ mod tests {
     #[test]
     #[traced_test]
     fn test_scoped_resolve() {
-        let instantiator_request_call_count = Arc::new(AtomicU8::new(0));
+        let instantiator_request_call_count = RcThreadSafety::new(AtomicU8::new(0));
 
         let registry_builder = RegistryBuilder::new()
             .provide(
@@ -108,14 +108,14 @@ mod tests {
         let request_2 = Inject::<Request>::resolve(&container).unwrap();
         let _ = Inject::<Instance>::resolve(&container).unwrap();
 
-        assert!(Arc::ptr_eq(&request_1.0, &request_2.0));
+        assert!(RcThreadSafety::ptr_eq(&request_1.0, &request_2.0));
         assert_eq!(instantiator_request_call_count.load(Ordering::SeqCst), 1);
     }
 
     #[test]
     #[traced_test]
     fn test_transient_resolve() {
-        let instantiator_request_call_count = Arc::new(AtomicU8::new(0));
+        let instantiator_request_call_count = RcThreadSafety::new(AtomicU8::new(0));
 
         let registry_builder = RegistryBuilder::new().provide(
             {

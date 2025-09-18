@@ -1,6 +1,8 @@
-use alloc::{boxed::Box, sync::Arc};
-use async_recursion::async_recursion;
-use core::any::{type_name, TypeId};
+use alloc::boxed::Box;
+use core::{
+    any::{type_name, TypeId},
+    future::Future,
+};
 use parking_lot::Mutex;
 use tracing::{debug, debug_span, error};
 
@@ -15,11 +17,12 @@ use crate::{
     errors::{InstantiatorErrorKind, ResolveErrorKind, ScopeErrorKind, ScopeWithErrorKind},
     registry::ScopedRegistry as SyncRegistry,
     scope::Scope,
+    utils::thread_safety::{RcThreadSafety, SendSafety, SyncSafety},
 };
 
 #[derive(Clone)]
 pub struct Container {
-    inner: Arc<ContainerInner>,
+    inner: RcThreadSafety<ContainerInner>,
     sync: SyncContainer,
 }
 
@@ -43,13 +46,16 @@ impl Container {
         let (registries, sync_registries) = registry_builder.build();
         let mut registries = registries.into_iter();
         let (root_registry, child_registries) = if let Some(root_registry) = registries.next() {
-            (Arc::new(root_registry), registries.map(Arc::new).collect())
+            (RcThreadSafety::new(root_registry), registries.map(RcThreadSafety::new).collect())
         } else {
             panic!("registries len (is 0) should be > 1");
         };
         let mut sync_registries = sync_registries.into_iter();
         let (root_sync_registry, child_sync_registries) = if let Some(root_registry) = sync_registries.next() {
-            (Arc::new(root_registry), sync_registries.map(Arc::new).collect())
+            (
+                RcThreadSafety::new(root_registry),
+                sync_registries.map(RcThreadSafety::new).collect(),
+            )
         } else {
             panic!("registries len (is 0) should be > 1");
         };
@@ -114,13 +120,16 @@ impl Container {
         let (registries, sync_registries) = registry_builder.build();
         let mut registries = registries.into_iter();
         let (root_registry, child_registries) = if let Some(root_registry) = registries.next() {
-            (Arc::new(root_registry), registries.map(Arc::new).collect())
+            (RcThreadSafety::new(root_registry), registries.map(RcThreadSafety::new).collect())
         } else {
             panic!("registries len (is 0) should be > 1");
         };
         let mut sync_registries = sync_registries.into_iter();
         let (root_sync_registry, child_sync_registries) = if let Some(root_registry) = sync_registries.next() {
-            (Arc::new(root_registry), sync_registries.map(Arc::new).collect())
+            (
+                RcThreadSafety::new(root_registry),
+                sync_registries.map(RcThreadSafety::new).collect(),
+            )
         } else {
             panic!("registries len (is 0) should be > 1");
         };
@@ -210,79 +219,82 @@ impl Container {
     /// so it should be used for dependencies that are cached or shared,
     /// and with optional finalizer.
     #[allow(clippy::missing_errors_doc, clippy::multiple_bound_locations)]
-    #[async_recursion]
-    pub async fn get<Dep: Send + Sync + 'static>(&self) -> Result<Arc<Dep>, ResolveErrorKind> {
+    pub fn get<'a, Dep: SendSafety + SyncSafety + 'static>(
+        &'a self,
+    ) -> impl Future<Output = Result<RcThreadSafety<Dep>, ResolveErrorKind>> + SendSafety + 'a {
         let span = debug_span!("resolve", dependency = type_name::<Dep>());
-        let _guard = span.enter();
-
         let type_id = TypeId::of::<Dep>();
 
-        if let Some(dependency) = self.inner.cache.lock().get(&type_id) {
-            debug!("Found in cache");
-            return Ok(dependency);
-        }
-        debug!("Not found in cache");
+        Box::pin(async move {
+            let _guard = span.enter();
 
-        let Some(InstantiatorInnerData {
-            mut instantiator,
-            finalizer,
-            config,
-        }) = self.inner.root_registry.get_instantiator_data(&type_id)
-        else {
-            if let Some(parent) = &self.inner.parent {
-                debug!("No instantiator found, trying parent container");
-                return match parent.get::<Dep>().await {
+            if let Some(dependency) = self.inner.cache.lock().get(&type_id) {
+                debug!("Found in cache");
+                return Ok(dependency);
+            }
+            debug!("Not found in cache");
+
+            let Some(InstantiatorInnerData {
+                mut instantiator,
+                finalizer,
+                config,
+            }) = self.inner.root_registry.get_instantiator_data(&type_id)
+            else {
+                if let Some(parent) = &self.inner.parent {
+                    debug!("No instantiator found, trying parent container");
+                    return match parent.get::<Dep>().await {
+                        Ok(dependency) => {
+                            self.inner.cache.lock().insert_rc(dependency.clone());
+                            Ok(dependency)
+                        }
+                        Err(_err) => {
+                            debug!("No instantiator found, trying sync container");
+                            return self.sync.get();
+                        }
+                    };
+                }
+
+                debug!("No instantiator found, trying sync container");
+                return self.sync.get();
+            };
+
+            match instantiator.call(self.clone()).await {
+                Ok(dependency) => match dependency.downcast::<Dep>() {
                     Ok(dependency) => {
-                        self.inner.cache.lock().insert_rc(dependency.clone());
+                        let dependency = RcThreadSafety::new(*dependency);
+                        let mut guard = self.inner.cache.lock();
+                        if config.cache_provides {
+                            guard.insert_rc(dependency.clone());
+                            debug!("Cached");
+                        }
+                        if finalizer.is_some() {
+                            guard.push_resolved(Resolved {
+                                type_id,
+                                dependency: dependency.clone(),
+                            });
+                            debug!("Pushed to resolved set");
+                        }
                         Ok(dependency)
                     }
-                    Err(_err) => {
-                        debug!("No instantiator found, trying sync container");
-                        return self.sync.get();
+                    Err(incorrect_type) => {
+                        let err = ResolveErrorKind::IncorrectType {
+                            expected: type_id,
+                            actual: (*incorrect_type).type_id(),
+                        };
+                        error!("{}", err);
+                        Err(err)
                     }
-                };
-            }
-
-            debug!("No instantiator found, trying sync container");
-            return self.sync.get();
-        };
-
-        match instantiator.call(self.clone()).await {
-            Ok(dependency) => match dependency.downcast::<Dep>() {
-                Ok(dependency) => {
-                    let dependency = Arc::new(*dependency);
-                    let mut guard = self.inner.cache.lock();
-                    if config.cache_provides {
-                        guard.insert_rc(dependency.clone());
-                        debug!("Cached");
-                    }
-                    if finalizer.is_some() {
-                        guard.push_resolved(Resolved {
-                            type_id,
-                            dependency: dependency.clone(),
-                        });
-                        debug!("Pushed to resolved set");
-                    }
-                    Ok(dependency)
-                }
-                Err(incorrect_type) => {
-                    let err = ResolveErrorKind::IncorrectType {
-                        expected: type_id,
-                        actual: (*incorrect_type).type_id(),
-                    };
+                },
+                Err(InstantiatorErrorKind::Deps(err)) => {
                     error!("{}", err);
-                    Err(err)
+                    Err(ResolveErrorKind::Instantiator(InstantiatorErrorKind::Deps(Box::new(err))))
                 }
-            },
-            Err(InstantiatorErrorKind::Deps(err)) => {
-                error!("{}", err);
-                Err(ResolveErrorKind::Instantiator(InstantiatorErrorKind::Deps(Box::new(err))))
+                Err(InstantiatorErrorKind::Factory(err)) => {
+                    error!("{}", err);
+                    Err(ResolveErrorKind::Instantiator(InstantiatorErrorKind::Factory(err)))
+                }
             }
-            Err(InstantiatorErrorKind::Factory(err)) => {
-                error!("{}", err);
-                Err(ResolveErrorKind::Instantiator(InstantiatorErrorKind::Factory(err)))
-            }
-        }
+        })
     }
 
     /// Gets a transient dependency from the container
@@ -291,68 +303,70 @@ impl Container {
     /// This method resolves a new instance of the dependency each time it is called,
     /// so it should be used for dependencies that are not cached or shared, and without finalizer.
     #[allow(clippy::missing_errors_doc, clippy::multiple_bound_locations)]
-    #[async_recursion]
-    pub async fn get_transient<Dep: 'static>(&self) -> Result<Dep, ResolveErrorKind> {
+    pub fn get_transient<'a, Dep: 'static>(&'a self) -> impl Future<Output = Result<Dep, ResolveErrorKind>> + SendSafety + 'a {
         let span = debug_span!("resolve", dependency = type_name::<Dep>());
         let _guard = span.enter();
 
         let type_id = TypeId::of::<Dep>();
 
-        let Some(mut instantiator) = self.inner.root_registry.get_instantiator(&type_id) else {
-            if let Some(parent) = &self.inner.parent {
-                debug!("No instantiator found, trying parent container");
-                return match parent.get_transient().await {
-                    Ok(dependency) => Ok(dependency),
-                    Err(_err) => {
-                        debug!("No instantiator found, trying sync container");
-                        self.sync.get_transient()
-                    }
-                };
-            }
-
-            debug!("No instantiator found, trying sync container");
-            return self.sync.get_transient();
-        };
-
-        match instantiator.call(self.clone()).await {
-            Ok(dependency) => match dependency.downcast::<Dep>() {
-                Ok(dependency) => Ok(*dependency),
-                Err(incorrect_type) => {
-                    let err = ResolveErrorKind::IncorrectType {
-                        expected: type_id,
-                        actual: (*incorrect_type).type_id(),
+        Box::pin(async move {
+            let Some(mut instantiator) = self.inner.root_registry.get_instantiator(&type_id) else {
+                if let Some(parent) = &self.inner.parent {
+                    debug!("No instantiator found, trying parent container");
+                    return match parent.get_transient().await {
+                        Ok(dependency) => Ok(dependency),
+                        Err(_err) => {
+                            debug!("No instantiator found, trying sync container");
+                            self.sync.get_transient()
+                        }
                     };
-                    error!("{}", err);
-                    Err(err)
                 }
-            },
-            Err(InstantiatorErrorKind::Deps(err)) => {
-                error!("{}", err);
-                Err(ResolveErrorKind::Instantiator(InstantiatorErrorKind::Deps(Box::new(err))))
+
+                debug!("No instantiator found, trying sync container");
+                return self.sync.get_transient();
+            };
+
+            match instantiator.call(self.clone()).await {
+                Ok(dependency) => match dependency.downcast::<Dep>() {
+                    Ok(dependency) => Ok(*dependency),
+                    Err(incorrect_type) => {
+                        let err = ResolveErrorKind::IncorrectType {
+                            expected: type_id,
+                            actual: (*incorrect_type).type_id(),
+                        };
+                        error!("{}", err);
+                        Err(err)
+                    }
+                },
+                Err(InstantiatorErrorKind::Deps(err)) => {
+                    error!("{}", err);
+                    Err(ResolveErrorKind::Instantiator(InstantiatorErrorKind::Deps(Box::new(err))))
+                }
+                Err(InstantiatorErrorKind::Factory(err)) => {
+                    error!("{}", err);
+                    Err(ResolveErrorKind::Instantiator(InstantiatorErrorKind::Factory(err)))
+                }
             }
-            Err(InstantiatorErrorKind::Factory(err)) => {
-                error!("{}", err);
-                Err(ResolveErrorKind::Instantiator(InstantiatorErrorKind::Factory(err)))
-            }
-        }
+        })
     }
 
     /// Closes the container, calling finalizers for resolved dependencies in LIFO order.
     ///
     /// # Warning
     /// This method can be called multiple times, but it will only call finalizers for dependencies that were resolved since the last call
-    #[async_recursion]
-    pub async fn close(&self) {
+    pub fn close<'a>(&'a self) -> impl Future<Output = ()> + SendSafety + 'a {
         let close_parent = self.inner.close_parent;
 
-        self.inner.close_with_parent_flag(false).await;
-        self.sync.inner.close_with_parent_flag(false);
+        Box::pin(async move {
+            self.inner.close_with_parent_flag(false).await;
+            self.sync.inner.close_with_parent_flag(false);
 
-        if close_parent {
-            if let Some(parent) = &self.inner.parent {
-                parent.close().await;
+            if close_parent {
+                if let Some(parent) = &self.inner.parent {
+                    parent.close().await;
+                }
             }
-        }
+        })
     }
 }
 
@@ -364,10 +378,10 @@ impl Container {
         self,
         sync_container: SyncContainer,
         context: Context,
-        root_registry: Arc<ScopedRegistry>,
-        child_registries: Box<[Arc<ScopedRegistry>]>,
-        root_sync_registry: Arc<SyncRegistry>,
-        child_sync_registries: Box<[Arc<SyncRegistry>]>,
+        root_registry: RcThreadSafety<ScopedRegistry>,
+        child_registries: Box<[RcThreadSafety<ScopedRegistry>]>,
+        root_sync_registry: RcThreadSafety<SyncRegistry>,
+        child_sync_registries: Box<[RcThreadSafety<SyncRegistry>]>,
         close_parent: bool,
     ) -> Self {
         let mut cache = self.inner.cache.lock().child();
@@ -377,7 +391,7 @@ impl Container {
         sync_cache.append_context(&mut context.clone());
 
         Self {
-            inner: Arc::new(ContainerInner {
+            inner: RcThreadSafety::new(ContainerInner {
                 cache: Mutex::new(cache),
                 context: Mutex::new(context.clone()),
                 root_registry,
@@ -386,7 +400,7 @@ impl Container {
                 close_parent,
             }),
             sync: SyncContainer {
-                inner: Arc::new(SyncContainerInner {
+                inner: RcThreadSafety::new(SyncContainerInner {
                     cache: Mutex::new(sync_cache),
                     context: Mutex::new(context),
                     root_registry: root_sync_registry,
@@ -403,10 +417,10 @@ impl Container {
     fn init_child(
         self,
         sync_container: SyncContainer,
-        root_registry: Arc<ScopedRegistry>,
-        child_registries: Box<[Arc<ScopedRegistry>]>,
-        root_sync_registry: Arc<SyncRegistry>,
-        child_sync_registries: Box<[Arc<SyncRegistry>]>,
+        root_registry: RcThreadSafety<ScopedRegistry>,
+        child_registries: Box<[RcThreadSafety<ScopedRegistry>]>,
+        root_sync_registry: RcThreadSafety<SyncRegistry>,
+        child_sync_registries: Box<[RcThreadSafety<SyncRegistry>]>,
         close_parent: bool,
     ) -> Self {
         let mut cache = self.inner.cache.lock().child();
@@ -418,7 +432,7 @@ impl Container {
         sync_cache.append_context(&mut sync_context.clone());
 
         Self {
-            inner: Arc::new(ContainerInner {
+            inner: RcThreadSafety::new(ContainerInner {
                 cache: Mutex::new(cache),
                 context: Mutex::new(context),
                 root_registry,
@@ -427,7 +441,7 @@ impl Container {
                 close_parent,
             }),
             sync: SyncContainer {
-                inner: Arc::new(SyncContainerInner {
+                inner: RcThreadSafety::new(SyncContainerInner {
                     cache: Mutex::new(sync_cache),
                     context: Mutex::new(sync_context),
                     root_registry: root_sync_registry,
@@ -745,8 +759,8 @@ where
 struct BoxedContainerInner {
     cache: Cache,
     context: Context,
-    root_registry: Arc<ScopedRegistry>,
-    child_registries: Box<[Arc<ScopedRegistry>]>,
+    root_registry: RcThreadSafety<ScopedRegistry>,
+    child_registries: Box<[RcThreadSafety<ScopedRegistry>]>,
     parent: Option<Box<BoxedContainerInner>>,
     close_parent: bool,
     sync_container: BoxedSyncContainerInner,
@@ -757,8 +771,8 @@ impl BoxedContainerInner {
     #[must_use]
     fn init_child(
         self,
-        root_registry: Arc<ScopedRegistry>,
-        child_registries: Box<[Arc<ScopedRegistry>]>,
+        root_registry: RcThreadSafety<ScopedRegistry>,
+        child_registries: Box<[RcThreadSafety<ScopedRegistry>]>,
         close_parent: bool,
         sync_container: BoxedSyncContainerInner,
     ) -> Self {
@@ -791,7 +805,7 @@ impl From<BoxedContainerInner> for Container {
         }: BoxedContainerInner,
     ) -> Self {
         Self {
-            inner: Arc::new(ContainerInner {
+            inner: RcThreadSafety::new(ContainerInner {
                 cache: Mutex::new(cache),
                 context: Mutex::new(context),
                 root_registry,
@@ -807,41 +821,43 @@ impl From<BoxedContainerInner> for Container {
 struct ContainerInner {
     cache: Mutex<Cache>,
     context: Mutex<Context>,
-    root_registry: Arc<ScopedRegistry>,
-    child_registries: Box<[Arc<ScopedRegistry>]>,
+    root_registry: RcThreadSafety<ScopedRegistry>,
+    child_registries: Box<[RcThreadSafety<ScopedRegistry>]>,
     parent: Option<Container>,
     close_parent: bool,
 }
 
 impl ContainerInner {
     #[allow(clippy::missing_panics_doc)]
-    #[async_recursion]
-    async fn close_with_parent_flag(&self, close_parent: bool) {
+    fn close_with_parent_flag<'a>(&'a self, close_parent: bool) -> impl Future<Output = ()> + SendSafety + 'a {
         let mut resolved_set = self.cache.lock().take_resolved_set();
-        while let Some(Resolved { type_id, dependency }) = resolved_set.0.pop_back() {
-            let InstantiatorInnerData { finalizer, .. } = self
-                .root_registry
-                .get_instantiator_data(&type_id)
-                .expect("Instantiator should be present for resolved type");
 
-            if let Some(mut finalizer) = finalizer {
-                let _ = finalizer.call(dependency).await;
-                debug!(?type_id, "Finalizer called");
+        Box::pin(async move {
+            while let Some(Resolved { type_id, dependency }) = resolved_set.0.pop_back() {
+                let InstantiatorInnerData { finalizer, .. } = self
+                    .root_registry
+                    .get_instantiator_data(&type_id)
+                    .expect("Instantiator should be present for resolved type");
+
+                if let Some(mut finalizer) = finalizer {
+                    let _ = finalizer.call(dependency).await;
+                    debug!(?type_id, "Finalizer called");
+                }
             }
-        }
 
-        // We need to clear cache and fill it with the context as in start of the container usage
-        #[allow(clippy::assigning_clones)]
-        {
-            self.cache.lock().map = self.context.lock().map.clone();
-        }
-
-        if close_parent {
-            if let Some(parent) = &self.parent {
-                parent.close().await;
-                debug!("Parent container closed");
+            // We need to clear cache and fill it with the context as in start of the container usage
+            #[allow(clippy::assigning_clones)]
+            {
+                self.cache.lock().map = self.context.lock().map.clone();
             }
-        }
+
+            if close_parent {
+                if let Some(parent) = &self.parent {
+                    parent.close().await;
+                    debug!("Parent container closed");
+                }
+            }
+        })
     }
 }
 
@@ -851,31 +867,30 @@ mod tests {
     extern crate std;
 
     use super::{Container, ContainerInner, RegistryBuilder};
-    use crate::{scope::DefaultScope::*, Inject, InjectTransient, Scope};
+    use crate::{scope::DefaultScope::*, utils::thread_safety::RcThreadSafety, Inject, InjectTransient, Scope};
 
     use alloc::{
         format,
         string::{String, ToString as _},
-        sync::Arc,
     };
     use core::sync::atomic::{AtomicU8, Ordering};
     use tracing::debug;
     use tracing_test::traced_test;
 
     struct Request1;
-    struct Request2(Arc<Request1>);
-    struct Request3(Arc<Request1>, Arc<Request2>);
+    struct Request2(RcThreadSafety<Request1>);
+    struct Request3(RcThreadSafety<Request1>, RcThreadSafety<Request2>);
 
     #[tokio::test]
     #[traced_test]
     async fn test_scoped_get() {
-        struct A(Arc<B>, Arc<C>);
+        struct A(RcThreadSafety<B>, RcThreadSafety<C>);
         struct B(i32);
-        struct C(Arc<CA>);
-        struct CA(Arc<CAA>);
-        struct CAA(Arc<CAAA>);
-        struct CAAA(Arc<CAAAA>);
-        struct CAAAA(Arc<CAAAAA>);
+        struct C(RcThreadSafety<CA>);
+        struct CA(RcThreadSafety<CAA>);
+        struct CAA(RcThreadSafety<CAAA>);
+        struct CAAA(RcThreadSafety<CAAAA>);
+        struct CAAAA(RcThreadSafety<CAAAAA>);
         struct CAAAAA;
 
         let registry = RegistryBuilder::new()
@@ -905,13 +920,13 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_async_scoped_get() {
-        struct A(Arc<B>, Arc<C>);
+        struct A(RcThreadSafety<B>, RcThreadSafety<C>);
         struct B(i32);
-        struct C(Arc<CA>);
-        struct CA(Arc<CAA>);
-        struct CAA(Arc<CAAA>);
-        struct CAAA(Arc<CAAAA>);
-        struct CAAAA(Arc<CAAAAA>);
+        struct C(RcThreadSafety<CA>);
+        struct CA(RcThreadSafety<CAA>);
+        struct CAA(RcThreadSafety<CAAA>);
+        struct CAAA(RcThreadSafety<CAAAA>);
+        struct CAAAA(RcThreadSafety<CAAAAA>);
         struct CAAAAA;
 
         let registry = RegistryBuilder::new()
@@ -1032,11 +1047,11 @@ mod tests {
         assert_eq!(request_container_inner.child_registries.len(), 2);
         assert_eq!(request_container_inner.root_registry.scope.priority, Request.priority());
         // Session scope is skipped by default, so it is not the first child registry
-        assert!(Arc::ptr_eq(
+        assert!(RcThreadSafety::ptr_eq(
             &request_container_inner.root_registry,
             &app_container_inner.child_registries[1]
         ));
-        assert!(Arc::ptr_eq(
+        assert!(RcThreadSafety::ptr_eq(
             &action_container_inner.root_registry,
             &request_container_inner.child_registries[0]
         ));
@@ -1046,7 +1061,7 @@ mod tests {
 
         assert_eq!(step_container_inner.child_registries.len(), 0);
         assert_eq!(step_container_inner.root_registry.scope.priority, Step.priority());
-        assert!(Arc::ptr_eq(
+        assert!(RcThreadSafety::ptr_eq(
             &step_container_inner.root_registry,
             &action_container_inner.child_registries[0]
         ));
@@ -1080,35 +1095,35 @@ mod tests {
         assert!(runtime_container_inner.parent.is_none());
         assert_eq!(runtime_container_inner.child_registries.len(), 5);
         assert_eq!(runtime_container_inner.root_registry.scope.priority, Runtime.priority());
-        assert!(Arc::ptr_eq(
+        assert!(RcThreadSafety::ptr_eq(
             &app_container_inner.root_registry,
             &runtime_container_inner.child_registries[0]
         ));
 
         assert_eq!(app_container_inner.child_registries.len(), 4);
         assert_eq!(app_container_inner.root_registry.scope.priority, App.priority());
-        assert!(Arc::ptr_eq(
+        assert!(RcThreadSafety::ptr_eq(
             &session_container_inner.root_registry,
             &app_container_inner.child_registries[0]
         ));
 
         assert_eq!(session_container_inner.child_registries.len(), 3);
         assert_eq!(session_container_inner.root_registry.scope.priority, Session.priority());
-        assert!(Arc::ptr_eq(
+        assert!(RcThreadSafety::ptr_eq(
             &request_container_inner.root_registry,
             &session_container_inner.child_registries[0]
         ));
 
         assert_eq!(request_container_inner.child_registries.len(), 2);
         assert_eq!(request_container_inner.root_registry.scope.priority, Request.priority());
-        assert!(Arc::ptr_eq(
+        assert!(RcThreadSafety::ptr_eq(
             &action_container_inner.root_registry,
             &request_container_inner.child_registries[0]
         ));
 
         assert_eq!(action_container_inner.child_registries.len(), 1);
         assert_eq!(action_container_inner.root_registry.scope.priority, Action.priority());
-        assert!(Arc::ptr_eq(
+        assert!(RcThreadSafety::ptr_eq(
             &step_container_inner.root_registry,
             &action_container_inner.child_registries[0]
         ));
@@ -1120,10 +1135,10 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_close_for_unresolved() {
-        let finalizer_1_request_call_count = Arc::new(AtomicU8::new(0));
-        let finalizer_2_request_call_count = Arc::new(AtomicU8::new(0));
-        let finalizer_3_request_call_count = Arc::new(AtomicU8::new(0));
-        let finalizer_4_request_call_count = Arc::new(AtomicU8::new(0));
+        let finalizer_1_request_call_count = RcThreadSafety::new(AtomicU8::new(0));
+        let finalizer_2_request_call_count = RcThreadSafety::new(AtomicU8::new(0));
+        let finalizer_3_request_call_count = RcThreadSafety::new(AtomicU8::new(0));
+        let finalizer_4_request_call_count = RcThreadSafety::new(AtomicU8::new(0));
 
         let registry = RegistryBuilder::new()
             .provide(|| Ok(()), Runtime)
@@ -1132,19 +1147,19 @@ mod tests {
             .provide(|| Ok(((), (), (), ())), Request)
             .add_finalizer({
                 let finalizer_1_request_call_count = finalizer_1_request_call_count.clone();
-                move |_: Arc<()>| {
+                move |_: RcThreadSafety<()>| {
                     finalizer_1_request_call_count.fetch_add(1, Ordering::SeqCst);
                 }
             })
             .add_finalizer({
                 let finalizer_2_request_call_count = finalizer_2_request_call_count.clone();
-                move |_: Arc<((), ())>| {
+                move |_: RcThreadSafety<((), ())>| {
                     finalizer_2_request_call_count.fetch_add(1, Ordering::SeqCst);
                 }
             })
             .add_async_finalizer({
                 let finalizer_3_request_call_count = finalizer_3_request_call_count.clone();
-                move |_: Arc<((), (), ())>| {
+                move |_: RcThreadSafety<((), (), ())>| {
                     let finalizer_3_request_call_count = finalizer_3_request_call_count.clone();
                     async move {
                         finalizer_3_request_call_count.fetch_add(1, Ordering::SeqCst);
@@ -1153,7 +1168,7 @@ mod tests {
             })
             .add_finalizer({
                 let finalizer_4_request_call_count = finalizer_4_request_call_count.clone();
-                move |_: Arc<((), (), (), ())>| {
+                move |_: RcThreadSafety<((), (), (), ())>| {
                     finalizer_4_request_call_count.fetch_add(1, Ordering::SeqCst);
                 }
             });
@@ -1175,18 +1190,18 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_close_for_resolved() {
-        let request_call_count = Arc::new(AtomicU8::new(0));
+        let request_call_count = RcThreadSafety::new(AtomicU8::new(0));
 
-        let finalizer_1_request_call_count = Arc::new(AtomicU8::new(0));
-        let finalizer_1_request_call_position = Arc::new(AtomicU8::new(0));
-        let finalizer_2_request_call_count = Arc::new(AtomicU8::new(0));
-        let finalizer_2_request_call_position = Arc::new(AtomicU8::new(0));
-        let finalizer_3_request_call_count = Arc::new(AtomicU8::new(0));
-        let finalizer_3_request_call_position = Arc::new(AtomicU8::new(0));
-        let finalizer_4_request_call_count = Arc::new(AtomicU8::new(0));
-        let finalizer_4_request_call_position = Arc::new(AtomicU8::new(0));
-        let finalizer_5_request_call_count = Arc::new(AtomicU8::new(0));
-        let finalizer_5_request_call_position = Arc::new(AtomicU8::new(0));
+        let finalizer_1_request_call_count = RcThreadSafety::new(AtomicU8::new(0));
+        let finalizer_1_request_call_position = RcThreadSafety::new(AtomicU8::new(0));
+        let finalizer_2_request_call_count = RcThreadSafety::new(AtomicU8::new(0));
+        let finalizer_2_request_call_position = RcThreadSafety::new(AtomicU8::new(0));
+        let finalizer_3_request_call_count = RcThreadSafety::new(AtomicU8::new(0));
+        let finalizer_3_request_call_position = RcThreadSafety::new(AtomicU8::new(0));
+        let finalizer_4_request_call_count = RcThreadSafety::new(AtomicU8::new(0));
+        let finalizer_4_request_call_position = RcThreadSafety::new(AtomicU8::new(0));
+        let finalizer_5_request_call_count = RcThreadSafety::new(AtomicU8::new(0));
+        let finalizer_5_request_call_position = RcThreadSafety::new(AtomicU8::new(0));
 
         let registry = RegistryBuilder::new()
             .provide(|| Ok(()), Runtime)
@@ -1198,7 +1213,7 @@ mod tests {
                 let request_call_count = request_call_count.clone();
                 let finalizer_1_request_call_position = finalizer_1_request_call_position.clone();
                 let finalizer_1_request_call_count = finalizer_1_request_call_count.clone();
-                move |_: Arc<()>| {
+                move |_: RcThreadSafety<()>| {
                     request_call_count.fetch_add(1, Ordering::SeqCst);
                     finalizer_1_request_call_position.store(request_call_count.load(Ordering::SeqCst), Ordering::SeqCst);
                     finalizer_1_request_call_count.fetch_add(1, Ordering::SeqCst);
@@ -1210,7 +1225,7 @@ mod tests {
                 let request_call_count = request_call_count.clone();
                 let finalizer_2_request_call_position = finalizer_2_request_call_position.clone();
                 let finalizer_2_request_call_count = finalizer_2_request_call_count.clone();
-                move |_: Arc<((), ())>| {
+                move |_: RcThreadSafety<((), ())>| {
                     request_call_count.fetch_add(1, Ordering::SeqCst);
                     finalizer_2_request_call_position.store(request_call_count.load(Ordering::SeqCst), Ordering::SeqCst);
                     finalizer_2_request_call_count.fetch_add(1, Ordering::SeqCst);
@@ -1222,7 +1237,7 @@ mod tests {
                 let request_call_count = request_call_count.clone();
                 let finalizer_3_request_call_position = finalizer_3_request_call_position.clone();
                 let finalizer_3_request_call_count = finalizer_3_request_call_count.clone();
-                move |_: Arc<((), (), ())>| {
+                move |_: RcThreadSafety<((), (), ())>| {
                     let request_call_count = request_call_count.clone();
                     let finalizer_3_request_call_position = finalizer_3_request_call_position.clone();
                     let finalizer_3_request_call_count = finalizer_3_request_call_count.clone();
@@ -1239,7 +1254,7 @@ mod tests {
                 let request_call_count = request_call_count.clone();
                 let finalizer_4_request_call_position = finalizer_4_request_call_position.clone();
                 let finalizer_4_request_call_count = finalizer_4_request_call_count.clone();
-                move |_: Arc<((), (), (), ())>| {
+                move |_: RcThreadSafety<((), (), (), ())>| {
                     request_call_count.fetch_add(1, Ordering::SeqCst);
                     finalizer_4_request_call_position.store(request_call_count.load(Ordering::SeqCst), Ordering::SeqCst);
                     finalizer_4_request_call_count.fetch_add(1, Ordering::SeqCst);
@@ -1251,7 +1266,7 @@ mod tests {
                 let request_call_count = request_call_count.clone();
                 let finalizer_5_request_call_position = finalizer_5_request_call_position.clone();
                 let finalizer_5_request_call_count = finalizer_5_request_call_count.clone();
-                move |_: Arc<((), (), (), (), ())>| {
+                move |_: RcThreadSafety<((), (), (), (), ())>| {
                     request_call_count.fetch_add(1, Ordering::SeqCst);
                     finalizer_5_request_call_position.store(request_call_count.load(Ordering::SeqCst), Ordering::SeqCst);
                     finalizer_5_request_call_count.fetch_add(1, Ordering::SeqCst);
@@ -1319,25 +1334,25 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_close_on_drop() {
-        let call_count = Arc::new(AtomicU8::new(0));
+        let call_count = RcThreadSafety::new(AtomicU8::new(0));
 
-        let drop_call_count = Arc::new(AtomicU8::new(0));
-        let drop_call_position = Arc::new(AtomicU8::new(0));
-        let instantiator_call_count = Arc::new(AtomicU8::new(0));
-        let instantiator_call_position = Arc::new(AtomicU8::new(0));
-        let finalizer_1_call_count = Arc::new(AtomicU8::new(0));
-        let finalizer_1_call_position = Arc::new(AtomicU8::new(0));
-        let finalizer_2_call_count = Arc::new(AtomicU8::new(0));
-        let finalizer_2_call_position = Arc::new(AtomicU8::new(0));
+        let drop_call_count = RcThreadSafety::new(AtomicU8::new(0));
+        let drop_call_position = RcThreadSafety::new(AtomicU8::new(0));
+        let instantiator_call_count = RcThreadSafety::new(AtomicU8::new(0));
+        let instantiator_call_position = RcThreadSafety::new(AtomicU8::new(0));
+        let finalizer_1_call_count = RcThreadSafety::new(AtomicU8::new(0));
+        let finalizer_1_call_position = RcThreadSafety::new(AtomicU8::new(0));
+        let finalizer_2_call_count = RcThreadSafety::new(AtomicU8::new(0));
+        let finalizer_2_call_position = RcThreadSafety::new(AtomicU8::new(0));
 
         struct Type1;
-        struct Type2(Arc<Type1>);
+        struct Type2(RcThreadSafety<Type1>);
 
         struct DropWrapper<T> {
             val: T,
-            call_count: Arc<AtomicU8>,
-            drop_call_count: Arc<AtomicU8>,
-            drop_call_position: Arc<AtomicU8>,
+            call_count: RcThreadSafety<AtomicU8>,
+            drop_call_count: RcThreadSafety<AtomicU8>,
+            drop_call_position: RcThreadSafety<AtomicU8>,
         }
 
         impl<T> Drop for DropWrapper<T> {
@@ -1358,7 +1373,7 @@ mod tests {
                 let call_count = call_count.clone();
                 let finalizer_1_call_count = finalizer_1_call_count.clone();
                 let finalizer_1_call_position = finalizer_1_call_position.clone();
-                move |_: Arc<Type1>| {
+                move |_: RcThreadSafety<Type1>| {
                     call_count.fetch_add(1, Ordering::SeqCst);
                     finalizer_1_call_position.store(call_count.load(Ordering::SeqCst), Ordering::SeqCst);
                     finalizer_1_call_count.fetch_add(1, Ordering::SeqCst);
@@ -1370,7 +1385,7 @@ mod tests {
                 let call_count = call_count.clone();
                 let finalizer_2_call_count = finalizer_2_call_count.clone();
                 let finalizer_2_call_position = finalizer_2_call_position.clone();
-                move |_: Arc<Type2>| {
+                move |_: RcThreadSafety<Type2>| {
                     call_count.fetch_add(1, Ordering::SeqCst);
                     finalizer_2_call_position.store(call_count.load(Ordering::SeqCst), Ordering::SeqCst);
                     finalizer_2_call_count.fetch_add(1, Ordering::SeqCst);
@@ -1411,25 +1426,25 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_async_close_on_drop() {
-        let call_count = Arc::new(AtomicU8::new(0));
+        let call_count = RcThreadSafety::new(AtomicU8::new(0));
 
-        let drop_call_count = Arc::new(AtomicU8::new(0));
-        let drop_call_position = Arc::new(AtomicU8::new(0));
-        let instantiator_call_count = Arc::new(AtomicU8::new(0));
-        let instantiator_call_position = Arc::new(AtomicU8::new(0));
-        let finalizer_1_call_count = Arc::new(AtomicU8::new(0));
-        let finalizer_1_call_position = Arc::new(AtomicU8::new(0));
-        let finalizer_2_call_count = Arc::new(AtomicU8::new(0));
-        let finalizer_2_call_position = Arc::new(AtomicU8::new(0));
+        let drop_call_count = RcThreadSafety::new(AtomicU8::new(0));
+        let drop_call_position = RcThreadSafety::new(AtomicU8::new(0));
+        let instantiator_call_count = RcThreadSafety::new(AtomicU8::new(0));
+        let instantiator_call_position = RcThreadSafety::new(AtomicU8::new(0));
+        let finalizer_1_call_count = RcThreadSafety::new(AtomicU8::new(0));
+        let finalizer_1_call_position = RcThreadSafety::new(AtomicU8::new(0));
+        let finalizer_2_call_count = RcThreadSafety::new(AtomicU8::new(0));
+        let finalizer_2_call_position = RcThreadSafety::new(AtomicU8::new(0));
 
         struct Type1;
-        struct Type2(Arc<Type1>);
+        struct Type2(RcThreadSafety<Type1>);
 
         struct DropWrapper<T> {
             val: T,
-            call_count: Arc<AtomicU8>,
-            drop_call_count: Arc<AtomicU8>,
-            drop_call_position: Arc<AtomicU8>,
+            call_count: RcThreadSafety<AtomicU8>,
+            drop_call_count: RcThreadSafety<AtomicU8>,
+            drop_call_position: RcThreadSafety<AtomicU8>,
         }
 
         impl<T> Drop for DropWrapper<T> {
@@ -1450,7 +1465,7 @@ mod tests {
                 let call_count = call_count.clone();
                 let finalizer_1_call_count = finalizer_1_call_count.clone();
                 let finalizer_1_call_position = finalizer_1_call_position.clone();
-                move |_: Arc<Type1>| {
+                move |_: RcThreadSafety<Type1>| {
                     let call_count = call_count.clone();
                     let finalizer_1_call_count = finalizer_1_call_count.clone();
                     let finalizer_1_call_position = finalizer_1_call_position.clone();
@@ -1467,7 +1482,7 @@ mod tests {
                 let call_count = call_count.clone();
                 let finalizer_2_call_count = finalizer_2_call_count.clone();
                 let finalizer_2_call_position = finalizer_2_call_position.clone();
-                move |_: Arc<Type2>| {
+                move |_: RcThreadSafety<Type2>| {
                     let call_count = call_count.clone();
                     let finalizer_2_call_count = finalizer_2_call_count.clone();
                     let finalizer_2_call_position = finalizer_2_call_position.clone();
@@ -1510,10 +1525,26 @@ mod tests {
         assert_eq!(drop_call_position.load(Ordering::SeqCst), 1);
     }
 
-    #[test]
-    fn test_bounds() {
+    #[tokio::test]
+    #[traced_test]
+    async fn test_thread_safe() {
+        struct Request1 {
+            #[cfg(not(feature = "thread_safe"))]
+            _phantom: core::marker::PhantomData<*const ()>,
+        }
+
         fn impl_bounds<T: Send + Sync + 'static>() {}
 
         impl_bounds::<(Container, ContainerInner)>();
+
+        let registry = RegistryBuilder::new().provide(|| Ok(RequestTransient1), App);
+        let app_container = Container::new(registry);
+        tokio::spawn(async move {
+            let request1 = app_container.get_transient::<RequestTransient1>().await;
+            let request2 = app_container.get::<Request1>().await;
+
+            assert!(request1.is_ok());
+            assert!(request2.is_ok());
+        });
     }
 }
