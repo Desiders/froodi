@@ -18,8 +18,6 @@ thiserror = { version = "2.0", default-features = false }
 tracing = { version = "0.1", default-features = false }
 parking_lot = { version = "0.12", default-features = false }
 
-async-recursion = { version = "1.1", optional = true }
-
 tower-layer = { version = "0.3", optional = true }
 tower-service = { version = "0.3", optional = true }
 h2 = { version = "0.4", optional = true }
@@ -33,8 +31,7 @@ default = ["std", "thread_safe"]
 std = ["anyhow/std", "thiserror/std", "tracing/std"]
 
 thread_safe = []
-
-async = ["dep:async-recursion"]
+async = []
 
 axum = ["dep:axum", "axum/ws", "dep:tower-layer", "dep:tower-service", "thread_safe"]
 http2-axum = ["dep:h2", "axum/http2"]

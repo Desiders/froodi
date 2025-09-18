@@ -1,6 +1,8 @@
 use alloc::boxed::Box;
-use async_recursion::async_recursion;
-use core::any::{type_name, TypeId};
+use core::{
+    any::{type_name, TypeId},
+    future::Future,
+};
 use parking_lot::Mutex;
 use tracing::{debug, debug_span, error};
 
@@ -217,79 +219,82 @@ impl Container {
     /// so it should be used for dependencies that are cached or shared,
     /// and with optional finalizer.
     #[allow(clippy::missing_errors_doc, clippy::multiple_bound_locations)]
-    #[async_recursion]
-    pub async fn get<Dep: SendSafety + SyncSafety + 'static>(&self) -> Result<RcThreadSafety<Dep>, ResolveErrorKind> {
+    pub fn get<'a, Dep: SendSafety + SyncSafety + 'static>(
+        &'a self,
+    ) -> impl Future<Output = Result<RcThreadSafety<Dep>, ResolveErrorKind>> + 'a {
         let span = debug_span!("resolve", dependency = type_name::<Dep>());
-        let _guard = span.enter();
-
         let type_id = TypeId::of::<Dep>();
 
-        if let Some(dependency) = self.inner.cache.lock().get(&type_id) {
-            debug!("Found in cache");
-            return Ok(dependency);
-        }
-        debug!("Not found in cache");
+        Box::pin(async move {
+            let _guard = span.enter();
 
-        let Some(InstantiatorInnerData {
-            mut instantiator,
-            finalizer,
-            config,
-        }) = self.inner.root_registry.get_instantiator_data(&type_id)
-        else {
-            if let Some(parent) = &self.inner.parent {
-                debug!("No instantiator found, trying parent container");
-                return match parent.get::<Dep>().await {
+            if let Some(dependency) = self.inner.cache.lock().get(&type_id) {
+                debug!("Found in cache");
+                return Ok(dependency);
+            }
+            debug!("Not found in cache");
+
+            let Some(InstantiatorInnerData {
+                mut instantiator,
+                finalizer,
+                config,
+            }) = self.inner.root_registry.get_instantiator_data(&type_id)
+            else {
+                if let Some(parent) = &self.inner.parent {
+                    debug!("No instantiator found, trying parent container");
+                    return match parent.get::<Dep>().await {
+                        Ok(dependency) => {
+                            self.inner.cache.lock().insert_rc(dependency.clone());
+                            Ok(dependency)
+                        }
+                        Err(_err) => {
+                            debug!("No instantiator found, trying sync container");
+                            return self.sync.get();
+                        }
+                    };
+                }
+
+                debug!("No instantiator found, trying sync container");
+                return self.sync.get();
+            };
+
+            match instantiator.call(self.clone()).await {
+                Ok(dependency) => match dependency.downcast::<Dep>() {
                     Ok(dependency) => {
-                        self.inner.cache.lock().insert_rc(dependency.clone());
+                        let dependency = RcThreadSafety::new(*dependency);
+                        let mut guard = self.inner.cache.lock();
+                        if config.cache_provides {
+                            guard.insert_rc(dependency.clone());
+                            debug!("Cached");
+                        }
+                        if finalizer.is_some() {
+                            guard.push_resolved(Resolved {
+                                type_id,
+                                dependency: dependency.clone(),
+                            });
+                            debug!("Pushed to resolved set");
+                        }
                         Ok(dependency)
                     }
-                    Err(_err) => {
-                        debug!("No instantiator found, trying sync container");
-                        return self.sync.get();
+                    Err(incorrect_type) => {
+                        let err = ResolveErrorKind::IncorrectType {
+                            expected: type_id,
+                            actual: (*incorrect_type).type_id(),
+                        };
+                        error!("{}", err);
+                        Err(err)
                     }
-                };
-            }
-
-            debug!("No instantiator found, trying sync container");
-            return self.sync.get();
-        };
-
-        match instantiator.call(self.clone()).await {
-            Ok(dependency) => match dependency.downcast::<Dep>() {
-                Ok(dependency) => {
-                    let dependency = RcThreadSafety::new(*dependency);
-                    let mut guard = self.inner.cache.lock();
-                    if config.cache_provides {
-                        guard.insert_rc(dependency.clone());
-                        debug!("Cached");
-                    }
-                    if finalizer.is_some() {
-                        guard.push_resolved(Resolved {
-                            type_id,
-                            dependency: dependency.clone(),
-                        });
-                        debug!("Pushed to resolved set");
-                    }
-                    Ok(dependency)
-                }
-                Err(incorrect_type) => {
-                    let err = ResolveErrorKind::IncorrectType {
-                        expected: type_id,
-                        actual: (*incorrect_type).type_id(),
-                    };
+                },
+                Err(InstantiatorErrorKind::Deps(err)) => {
                     error!("{}", err);
-                    Err(err)
+                    Err(ResolveErrorKind::Instantiator(InstantiatorErrorKind::Deps(Box::new(err))))
                 }
-            },
-            Err(InstantiatorErrorKind::Deps(err)) => {
-                error!("{}", err);
-                Err(ResolveErrorKind::Instantiator(InstantiatorErrorKind::Deps(Box::new(err))))
+                Err(InstantiatorErrorKind::Factory(err)) => {
+                    error!("{}", err);
+                    Err(ResolveErrorKind::Instantiator(InstantiatorErrorKind::Factory(err)))
+                }
             }
-            Err(InstantiatorErrorKind::Factory(err)) => {
-                error!("{}", err);
-                Err(ResolveErrorKind::Instantiator(InstantiatorErrorKind::Factory(err)))
-            }
-        }
+        })
     }
 
     /// Gets a transient dependency from the container
@@ -298,68 +303,70 @@ impl Container {
     /// This method resolves a new instance of the dependency each time it is called,
     /// so it should be used for dependencies that are not cached or shared, and without finalizer.
     #[allow(clippy::missing_errors_doc, clippy::multiple_bound_locations)]
-    #[async_recursion]
-    pub async fn get_transient<Dep: 'static>(&self) -> Result<Dep, ResolveErrorKind> {
+    pub fn get_transient<'a, Dep: 'static>(&'a self) -> impl Future<Output = Result<Dep, ResolveErrorKind>> + 'a {
         let span = debug_span!("resolve", dependency = type_name::<Dep>());
         let _guard = span.enter();
 
         let type_id = TypeId::of::<Dep>();
 
-        let Some(mut instantiator) = self.inner.root_registry.get_instantiator(&type_id) else {
-            if let Some(parent) = &self.inner.parent {
-                debug!("No instantiator found, trying parent container");
-                return match parent.get_transient().await {
-                    Ok(dependency) => Ok(dependency),
-                    Err(_err) => {
-                        debug!("No instantiator found, trying sync container");
-                        self.sync.get_transient()
-                    }
-                };
-            }
-
-            debug!("No instantiator found, trying sync container");
-            return self.sync.get_transient();
-        };
-
-        match instantiator.call(self.clone()).await {
-            Ok(dependency) => match dependency.downcast::<Dep>() {
-                Ok(dependency) => Ok(*dependency),
-                Err(incorrect_type) => {
-                    let err = ResolveErrorKind::IncorrectType {
-                        expected: type_id,
-                        actual: (*incorrect_type).type_id(),
+        Box::pin(async move {
+            let Some(mut instantiator) = self.inner.root_registry.get_instantiator(&type_id) else {
+                if let Some(parent) = &self.inner.parent {
+                    debug!("No instantiator found, trying parent container");
+                    return match parent.get_transient().await {
+                        Ok(dependency) => Ok(dependency),
+                        Err(_err) => {
+                            debug!("No instantiator found, trying sync container");
+                            self.sync.get_transient()
+                        }
                     };
-                    error!("{}", err);
-                    Err(err)
                 }
-            },
-            Err(InstantiatorErrorKind::Deps(err)) => {
-                error!("{}", err);
-                Err(ResolveErrorKind::Instantiator(InstantiatorErrorKind::Deps(Box::new(err))))
+
+                debug!("No instantiator found, trying sync container");
+                return self.sync.get_transient();
+            };
+
+            match instantiator.call(self.clone()).await {
+                Ok(dependency) => match dependency.downcast::<Dep>() {
+                    Ok(dependency) => Ok(*dependency),
+                    Err(incorrect_type) => {
+                        let err = ResolveErrorKind::IncorrectType {
+                            expected: type_id,
+                            actual: (*incorrect_type).type_id(),
+                        };
+                        error!("{}", err);
+                        Err(err)
+                    }
+                },
+                Err(InstantiatorErrorKind::Deps(err)) => {
+                    error!("{}", err);
+                    Err(ResolveErrorKind::Instantiator(InstantiatorErrorKind::Deps(Box::new(err))))
+                }
+                Err(InstantiatorErrorKind::Factory(err)) => {
+                    error!("{}", err);
+                    Err(ResolveErrorKind::Instantiator(InstantiatorErrorKind::Factory(err)))
+                }
             }
-            Err(InstantiatorErrorKind::Factory(err)) => {
-                error!("{}", err);
-                Err(ResolveErrorKind::Instantiator(InstantiatorErrorKind::Factory(err)))
-            }
-        }
+        })
     }
 
     /// Closes the container, calling finalizers for resolved dependencies in LIFO order.
     ///
     /// # Warning
     /// This method can be called multiple times, but it will only call finalizers for dependencies that were resolved since the last call
-    #[async_recursion]
-    pub async fn close(&self) {
+    pub fn close<'a>(&'a self) -> impl Future<Output = ()> + 'a {
         let close_parent = self.inner.close_parent;
 
-        self.inner.close_with_parent_flag(false).await;
-        self.sync.inner.close_with_parent_flag(false);
+        Box::pin(async move {
+            self.inner.close_with_parent_flag(false).await;
+            self.sync.inner.close_with_parent_flag(false);
 
-        if close_parent {
-            if let Some(parent) = &self.inner.parent {
-                parent.close().await;
+            if close_parent {
+                if let Some(parent) = &self.inner.parent {
+                    parent.close().await;
+                }
             }
-        }
+        })
     }
 }
 
@@ -822,33 +829,35 @@ struct ContainerInner {
 
 impl ContainerInner {
     #[allow(clippy::missing_panics_doc)]
-    #[async_recursion]
-    async fn close_with_parent_flag(&self, close_parent: bool) {
+    fn close_with_parent_flag<'a>(&'a self, close_parent: bool) -> impl Future<Output = ()> + 'a {
         let mut resolved_set = self.cache.lock().take_resolved_set();
-        while let Some(Resolved { type_id, dependency }) = resolved_set.0.pop_back() {
-            let InstantiatorInnerData { finalizer, .. } = self
-                .root_registry
-                .get_instantiator_data(&type_id)
-                .expect("Instantiator should be present for resolved type");
 
-            if let Some(mut finalizer) = finalizer {
-                let _ = finalizer.call(dependency).await;
-                debug!(?type_id, "Finalizer called");
+        Box::pin(async move {
+            while let Some(Resolved { type_id, dependency }) = resolved_set.0.pop_back() {
+                let InstantiatorInnerData { finalizer, .. } = self
+                    .root_registry
+                    .get_instantiator_data(&type_id)
+                    .expect("Instantiator should be present for resolved type");
+
+                if let Some(mut finalizer) = finalizer {
+                    let _ = finalizer.call(dependency).await;
+                    debug!(?type_id, "Finalizer called");
+                }
             }
-        }
 
-        // We need to clear cache and fill it with the context as in start of the container usage
-        #[allow(clippy::assigning_clones)]
-        {
-            self.cache.lock().map = self.context.lock().map.clone();
-        }
-
-        if close_parent {
-            if let Some(parent) = &self.parent {
-                parent.close().await;
-                debug!("Parent container closed");
+            // We need to clear cache and fill it with the context as in start of the container usage
+            #[allow(clippy::assigning_clones)]
+            {
+                self.cache.lock().map = self.context.lock().map.clone();
             }
-        }
+
+            if close_parent {
+                if let Some(parent) = &self.parent {
+                    parent.close().await;
+                    debug!("Parent container closed");
+                }
+            }
+        })
     }
 }
 
