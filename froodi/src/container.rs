@@ -1098,9 +1098,25 @@ mod tests {
     }
 
     #[test]
-    fn test_bounds() {
+    #[traced_test]
+    fn test_thread_safe() {
+        struct Request1 {
+            #[cfg(not(feature = "thread_safe"))]
+            _phantom: core::marker::PhantomData<*const ()>,
+        }
+
         fn impl_bounds<T: Send + Sync + 'static>() {}
 
         impl_bounds::<(Container, ContainerInner)>();
+
+        let registry = RegistryBuilder::new().provide(|| Ok(RequestTransient1), App);
+        let app_container = Container::new(registry);
+        std::thread::spawn(move || {
+            let request1 = app_container.get_transient::<Request1>();
+            let request2 = app_container.get::<Request1>();
+
+            assert!(request1.is_ok());
+            assert!(request2.is_ok());
+        });
     }
 }

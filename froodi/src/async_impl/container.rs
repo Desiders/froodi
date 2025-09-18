@@ -1516,10 +1516,26 @@ mod tests {
         assert_eq!(drop_call_position.load(Ordering::SeqCst), 1);
     }
 
-    #[test]
-    fn test_bounds() {
+    #[tokio::test]
+    #[traced_test]
+    async fn test_thread_safe() {
+        struct Request1 {
+            #[cfg(not(feature = "thread_safe"))]
+            _phantom: core::marker::PhantomData<*const ()>,
+        }
+
         fn impl_bounds<T: Send + Sync + 'static>() {}
 
         impl_bounds::<(Container, ContainerInner)>();
+
+        let registry = RegistryBuilder::new().provide(|| Ok(RequestTransient1), App);
+        let app_container = Container::new(registry);
+        tokio::spawn(async move {
+            let request1 = app_container.get_transient::<RequestTransient1>().await;
+            let request2 = app_container.get::<Request1>().await;
+
+            assert!(request1.is_ok());
+            assert!(request2.is_ok());
+        });
     }
 }
