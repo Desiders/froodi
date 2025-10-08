@@ -14,6 +14,10 @@ Froodi is a lightweight, ergonomic Inversion of Control (IoC) container for Rust
 - **Safe**: 100% safe Rust (no unsafe used)
 - **Thread safe**: Thread safety enabled by default (`thread_safe` feature) and can be disabled to use `Rc` instead of `Arc` and off `Send`/`Sync` requirements
 
+## Community
+### Telegram
+- 🇺🇸 🇷🇺 [@froodi_di](https://t.me/froodi_di)
+
 # Quickstart
 ```rust
 use froodi::{
