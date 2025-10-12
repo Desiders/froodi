@@ -1,4 +1,4 @@
-use alloc::{collections::BTreeMap, vec, vec::Vec};
+use alloc::{collections::BTreeMap, vec::Vec};
 use core::any::TypeId;
 
 use super::{
@@ -9,21 +9,23 @@ use crate::{
     dependency_resolver::DependencyResolver,
     finalizer::{boxed_finalizer_factory, BoxedCloneFinalizer, Finalizer},
     instantiator::{boxed_container_instantiator, boxed_instantiator, Instantiator},
-    scope::{Scope, ScopeInnerData},
+    scope::{Scope, ScopeData},
     utils::thread_safety::{SendSafety, SyncSafety},
     Container, DefaultScope, Scopes as ScopesTrait,
 };
 
-pub(crate) struct InstantiatorData<S> {
-    instantiator: BoxedCloneInstantiator<ResolveErrorKind, InstantiateErrorKind>,
-    config: Config,
-    scope: S,
+#[derive(Clone)]
+pub(crate) struct InstantiatorData {
+    pub(crate) instantiator: BoxedCloneInstantiator<ResolveErrorKind, InstantiateErrorKind>,
+    pub(crate) finalizer: Option<BoxedCloneFinalizer>,
+    pub(crate) config: Config,
+    pub(crate) scope_data: ScopeData,
 }
 
-pub struct RegistryBuilder<Scope> {
-    instantiators: BTreeMap<TypeId, InstantiatorData<Scope>>,
+pub struct RegistryBuilder<S> {
+    instantiators: BTreeMap<TypeId, InstantiatorData>,
     finalizers: BTreeMap<TypeId, BoxedCloneFinalizer>,
-    scopes: Vec<Scope>,
+    scopes: Vec<S>,
 }
 
 impl Default for RegistryBuilder<DefaultScope> {
@@ -44,12 +46,12 @@ impl RegistryBuilder<DefaultScope> {
     }
 }
 
-impl<Scope> RegistryBuilder<Scope> {
+impl<S> RegistryBuilder<S> {
     #[inline]
     #[must_use]
     pub fn new_with_scopes<Scopes, const N: usize>() -> Self
     where
-        Scopes: ScopesTrait<N, Scope = Scope>,
+        Scopes: ScopesTrait<N, Scope = S>,
     {
         Self {
             instantiators: BTreeMap::new(),
@@ -66,6 +68,7 @@ impl<S> RegistryBuilder<S> {
     where
         Inst: Instantiator<Deps, Error = InstantiateErrorKind> + SendSafety + SyncSafety,
         Deps: DependencyResolver<Error = ResolveErrorKind>,
+        S: Scope,
     {
         self.add_instantiator::<Inst::Provides>(boxed_instantiator(instantiator), scope);
         self
@@ -77,6 +80,7 @@ impl<S> RegistryBuilder<S> {
     where
         Inst: Instantiator<Deps, Error = InstantiateErrorKind> + SendSafety + SyncSafety,
         Deps: DependencyResolver<Error = ResolveErrorKind>,
+        S: Scope,
     {
         self.add_instantiator_with_config::<Inst::Provides>(boxed_instantiator(instantiator), config, scope);
         self
@@ -102,13 +106,16 @@ impl<S> RegistryBuilder<S> {
     }
 }
 
-impl<S> RegistryBuilder<S> {
+impl<S> RegistryBuilder<S>
+where
+    S: Scope,
+{
     #[inline]
     pub(crate) fn add_instantiator<Dep: 'static>(
         &mut self,
         instantiator: BoxedCloneInstantiator<ResolveErrorKind, InstantiateErrorKind>,
         scope: S,
-    ) -> Option<InstantiatorData<S>> {
+    ) -> Option<InstantiatorData> {
         self.add_instantiator_with_config::<Dep>(instantiator, Config::default(), scope)
     }
 
@@ -118,114 +125,91 @@ impl<S> RegistryBuilder<S> {
         instantiator: BoxedCloneInstantiator<ResolveErrorKind, InstantiateErrorKind>,
         config: Config,
         scope: S,
-    ) -> Option<InstantiatorData<S>> {
+    ) -> Option<InstantiatorData> {
         self.instantiators.insert(
             TypeId::of::<Dep>(),
             InstantiatorData {
                 instantiator,
+                finalizer: None,
                 config,
-                scope,
+                scope_data: scope.into(),
             },
         )
     }
+}
+
+pub(crate) struct RegistryWithScopes {
+    pub(crate) registry: Registry,
+    pub(crate) scope_data: ScopeData,
+    pub(crate) child_scopes_data: Vec<ScopeData>,
 }
 
 impl<S> RegistryBuilder<S>
 where
     S: Scope,
 {
-    pub(crate) fn build(mut self) -> Vec<ScopedRegistry> {
-        use alloc::collections::btree_map::Entry::{Occupied, Vacant};
+    pub(crate) fn build(mut self) -> RegistryWithScopes {
+        let mut scope_iter = self.scopes.into_iter();
+        let scope_data = scope_iter.next().expect("registries len (is 0) should be > 0").into();
+        let child_scopes_data = scope_iter.map(Into::into).collect();
 
-        let mut scopes_instantiators: BTreeMap<S, Vec<(TypeId, InstantiatorInnerData)>> =
-            self.scopes.into_iter().map(|scope| (scope, Vec::new())).collect();
-        for (
-            type_id,
-            InstantiatorData {
-                instantiator,
-                config,
-                scope,
+        RegistryWithScopes {
+            registry: Registry {
+                instantiators: self
+                    .instantiators
+                    .into_iter()
+                    .map(
+                        |(
+                            type_id,
+                            InstantiatorData {
+                                instantiator,
+                                finalizer,
+                                config,
+                                scope_data,
+                            },
+                        )| {
+                            (
+                                type_id,
+                                InstantiatorData {
+                                    instantiator,
+                                    finalizer: finalizer.or(self.finalizers.remove(&type_id)),
+                                    config,
+                                    scope_data,
+                                },
+                            )
+                        },
+                    )
+                    .chain(Some((
+                        TypeId::of::<Container>(),
+                        InstantiatorData {
+                            instantiator: boxed_container_instantiator(),
+                            finalizer: None,
+                            config: Config { cache_provides: true },
+                            scope_data,
+                        },
+                    )))
+                    .collect(),
             },
-        ) in self.instantiators
-        {
-            let finalizer = self.finalizers.remove(&type_id);
-
-            match scopes_instantiators.entry(scope) {
-                Vacant(entry) => {
-                    entry.insert(vec![(
-                        type_id,
-                        InstantiatorInnerData {
-                            instantiator,
-                            finalizer,
-                            config,
-                        },
-                    )]);
-                }
-                Occupied(entry) => {
-                    entry.into_mut().push((
-                        type_id,
-                        InstantiatorInnerData {
-                            instantiator,
-                            finalizer,
-                            config,
-                        },
-                    ));
-                }
-            }
+            scope_data,
+            child_scopes_data,
         }
-
-        let container_type_id = TypeId::of::<Container>();
-        let container_instantiator_data = InstantiatorInnerData {
-            instantiator: boxed_container_instantiator(),
-            finalizer: None,
-            config: Config { cache_provides: true },
-        };
-
-        let mut registries = Vec::with_capacity(scopes_instantiators.len());
-        for (scope, instantiators) in scopes_instantiators {
-            let mut instantiators = BTreeMap::from_iter(instantiators);
-            instantiators.insert(container_type_id, container_instantiator_data.clone());
-
-            registries.push(ScopedRegistry {
-                scope: ScopeInnerData {
-                    priority: scope.priority(),
-                    is_skipped_by_default: scope.is_skipped_by_default(),
-                },
-                instantiators,
-            });
-        }
-
-        registries
     }
 }
 
-#[derive(Clone)]
-pub(crate) struct InstantiatorInnerData {
-    pub(crate) instantiator: BoxedCloneInstantiator<ResolveErrorKind, InstantiateErrorKind>,
-    pub(crate) finalizer: Option<BoxedCloneFinalizer>,
-    pub(crate) config: Config,
+pub(crate) struct Registry {
+    pub(crate) instantiators: BTreeMap<TypeId, InstantiatorData>,
 }
 
-pub(crate) struct ScopedRegistry {
-    pub(crate) scope: ScopeInnerData,
-    pub(crate) instantiators: BTreeMap<TypeId, InstantiatorInnerData>,
-}
-
-impl ScopedRegistry {
+impl Registry {
     #[inline]
-    pub(crate) fn get_instantiator(&self, type_id: &TypeId) -> Option<BoxedCloneInstantiator<ResolveErrorKind, InstantiateErrorKind>> {
-        self.instantiators.get(type_id).map(|data| data.instantiator.clone())
-    }
-
-    #[inline]
-    pub(crate) fn get_instantiator_data(&self, type_id: &TypeId) -> Option<InstantiatorInnerData> {
-        self.instantiators.get(type_id).cloned()
+    pub(crate) fn get_instantiator_data(&self, type_id: &TypeId) -> Option<&InstantiatorData> {
+        self.instantiators.get(type_id)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::RegistryBuilder;
+    use super::{Registry, RegistryBuilder, RegistryWithScopes};
     use crate::{
         scope::DefaultScope::{self, *},
         utils::thread_safety::RcThreadSafety,
@@ -235,51 +219,53 @@ mod tests {
 
     #[test]
     fn test_build_empty() {
-        let registries = RegistryBuilder::<DefaultScope>::new().build();
-        assert!(!registries.is_empty());
+        let RegistryWithScopes {
+            registry: Registry { instantiators },
+            child_scopes_data,
+            ..
+        } = RegistryBuilder::<DefaultScope>::new().build();
+        assert_eq!(instantiators.len(), 1);
+        assert!(!child_scopes_data.is_empty());
     }
 
     #[test]
     fn test_build_equal_provides() {
-        let registries = RegistryBuilder::new()
+        let RegistryWithScopes {
+            registry,
+            child_scopes_data,
+            ..
+        } = RegistryBuilder::new()
             .provide(|| Ok(()), Runtime)
             .provide(|| Ok(()), Runtime)
             .provide(|| Ok(()), App)
             .provide(|| Ok(()), App)
             .build();
-        assert_eq!(registries.len(), DefaultScope::all().len());
-
-        for registry in registries {
-            if registry.scope.priority == 1 {
-                assert_eq!(registry.instantiators.len(), 2);
-            } else {
-                assert_eq!(registry.instantiators.len(), 1);
-            }
-        }
+        assert_eq!(child_scopes_data.len() + 1, DefaultScope::all().len());
+        assert_eq!(registry.instantiators.len(), 2);
     }
 
     #[test]
     fn test_build_several_scopes() {
-        let registries = RegistryBuilder::new()
+        let RegistryWithScopes {
+            registry,
+            child_scopes_data,
+            ..
+        } = RegistryBuilder::new()
             .provide(|| Ok(1i8), Runtime)
             .provide(|| Ok(1i16), Runtime)
             .provide(|| Ok(1i32), App)
             .provide(|| Ok(1i64), App)
             .build();
-        assert_eq!(registries.len(), DefaultScope::all().len());
-
-        for registry in registries {
-            if registry.scope.priority == 0 || registry.scope.priority == 1 {
-                assert_eq!(registry.instantiators.len(), 3);
-            } else {
-                assert_eq!(registry.instantiators.len(), 1);
-            }
-        }
+        assert_eq!(child_scopes_data.len() + 1, DefaultScope::all().len());
+        assert_eq!(registry.instantiators.len(), 5);
     }
 
     #[test]
     fn test_add_finalizer() {
-        let registries = RegistryBuilder::new()
+        let RegistryWithScopes {
+            registry: Registry { instantiators },
+            ..
+        } = RegistryBuilder::new()
             .provide(|| Ok(1i8), Runtime)
             .provide(|| Ok(1i16), Runtime)
             .provide(|| Ok(1i32), App)
@@ -293,22 +279,17 @@ mod tests {
         let i32_type_id = TypeId::of::<i32>();
         let i64_type_id = TypeId::of::<i64>();
 
-        for registry in registries {
-            if let Some(data) = registry.instantiators.get(&i8_type_id) {
-                assert!(data.finalizer.is_some());
-                continue;
-            }
-            if let Some(data) = registry.instantiators.get(&i16_type_id) {
-                assert!(data.finalizer.is_none());
-                continue;
-            }
-            if let Some(data) = registry.instantiators.get(&i32_type_id) {
-                assert!(data.finalizer.is_some());
-                continue;
-            }
-            if let Some(data) = registry.instantiators.get(&i64_type_id) {
-                assert!(data.finalizer.is_none());
-            }
+        if let Some(data) = instantiators.get(&i8_type_id) {
+            assert!(data.finalizer.is_some());
+        }
+        if let Some(data) = instantiators.get(&i16_type_id) {
+            assert!(data.finalizer.is_none());
+        }
+        if let Some(data) = instantiators.get(&i32_type_id) {
+            assert!(data.finalizer.is_some());
+        }
+        if let Some(data) = instantiators.get(&i64_type_id) {
+            assert!(data.finalizer.is_none());
         }
     }
 }
