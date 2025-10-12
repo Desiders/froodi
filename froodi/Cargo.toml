@@ -40,13 +40,17 @@ dptree = ["dep:dptree"]
 
 [dev-dependencies]
 tracing-test = { version = "0.2", default-features = false }
-criterion = { version = "0.7" }
+criterion = { version = "0.7", features = ["async_tokio"] }
 axum = { version = "0.8" }
 axum-test = { version = "17.3", features = ["ws"] }
 tokio = { version = "1.47", features = ["macros"] }
 
 [[bench]]
 name = "container"
+harness = false
+
+[[bench]]
+name = "async_container"
 harness = false
 
 [package.metadata.docs.rs]
