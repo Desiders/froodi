@@ -1,16 +1,15 @@
+use alloc::{boxed::Box, vec::Vec};
 use core::any::{type_name, TypeId};
-
-use alloc::boxed::Box;
 use parking_lot::Mutex;
-use tracing::{debug, debug_span, error, warn};
+use tracing::{debug, error, info_span};
 
 use super::{cache::Cache, registry::RegistryBuilder};
 use crate::{
     cache::Resolved,
     context::Context,
     errors::{InstantiatorErrorKind, ResolveErrorKind, ScopeErrorKind, ScopeWithErrorKind},
-    registry::{InstantiatorInnerData, ScopedRegistry},
-    scope::Scope,
+    registry::{InstantiatorData, Registry, RegistryWithScopes},
+    scope::{Scope, ScopeData},
     service::Service as _,
     utils::thread_safety::{RcThreadSafety, SendSafety, SyncSafety},
 };
@@ -37,35 +36,35 @@ impl Container {
     #[inline]
     #[must_use]
     pub fn new<S: Scope>(registry_builder: RegistryBuilder<S>) -> Self {
-        let mut registries = registry_builder.build().into_iter();
-        let (root_registry, child_registries) = if let Some(root_registry) = registries.next() {
-            (RcThreadSafety::new(root_registry), registries.map(RcThreadSafety::new).collect())
-        } else {
-            panic!("registries len (is 0) should be > 1");
-        };
+        let RegistryWithScopes {
+            registry,
+            scope_data,
+            child_scopes_data,
+        } = registry_builder.build();
 
+        let registry = RcThreadSafety::new(registry);
         let mut container = BoxedContainerInner {
             cache: Cache::new(),
             context: Context::new(),
-            root_registry,
-            child_registries,
+            registry: registry.clone(),
+            scope_data,
+            child_scopes_data: child_scopes_data.clone(),
             parent: None,
             close_parent: false,
         };
 
-        let mut iter = container.child_registries.iter();
-        let mut registry = (*iter.next().expect("registries len (is 1) should be > 1")).clone();
-        let mut child_registries = iter.cloned().collect();
+        let mut iter = child_scopes_data.into_iter();
+        let mut scope_data = iter.next().expect("registries len (is 1) should be > 1");
+        let mut child_scopes_data: Vec<_> = iter.collect();
 
-        let mut search_next = container.root_registry.scope.is_skipped_by_default;
+        let mut search_next = container.scope_data.is_skipped_by_default;
         while search_next {
-            container = container.init_child(registry, child_registries, true);
-
-            search_next = container.root_registry.scope.is_skipped_by_default;
+            search_next = scope_data.is_skipped_by_default;
+            container = container.init_child(registry.clone(), scope_data, child_scopes_data.clone(), true);
             if search_next {
-                let mut iter = container.child_registries.iter();
-                registry = (*iter.next().expect("last scope can't be skipped by default")).clone();
-                child_registries = iter.cloned().collect();
+                let mut iter = child_scopes_data.into_iter();
+                scope_data = iter.next().expect("last scope can't be skipped by default");
+                child_scopes_data = iter.collect();
             } else {
                 break;
             }
@@ -83,42 +82,40 @@ impl Container {
     #[must_use]
     #[allow(clippy::needless_pass_by_value)]
     pub fn new_with_start_scope<S: Scope>(registry_builder: RegistryBuilder<S>, scope: S) -> Self {
-        let mut registries = registry_builder.build().into_iter();
-        let (root_registry, child_registries) = if let Some(root_registry) = registries.next() {
-            (RcThreadSafety::new(root_registry), registries.map(RcThreadSafety::new).collect())
-        } else {
-            panic!("registries len (is 0) should be > 1");
-        };
+        let RegistryWithScopes {
+            registry,
+            scope_data,
+            child_scopes_data,
+        } = registry_builder.build();
 
-        let container_priority = root_registry.scope.priority;
-        let priority = scope.priority();
-
+        let registry = RcThreadSafety::new(registry);
         let mut container = BoxedContainerInner {
             cache: Cache::new(),
             context: Context::new(),
-            root_registry,
-            child_registries,
+            registry: registry.clone(),
+            scope_data,
+            child_scopes_data: child_scopes_data.clone(),
             parent: None,
             close_parent: false,
         };
 
-        if container_priority == priority {
+        let priority = scope.priority();
+        if scope_data.priority == priority {
             return container.into();
         }
 
-        let mut iter = container.child_registries.iter();
-        let mut registry = (*iter.next().expect("last scope can't be with another priority")).clone();
-        let mut child_registries = iter.cloned().collect();
+        let mut iter = child_scopes_data.into_iter();
+        let mut scope_data = iter.next().expect("last scope can't be with another priority");
+        let mut child_scopes_data: Vec<_> = iter.collect();
 
-        let mut search_next = container.root_registry.scope.priority != priority;
+        let mut search_next = container.scope_data.priority != priority;
         while search_next {
-            container = container.init_child(registry, child_registries, true);
-
-            search_next = container.root_registry.scope.priority != priority;
+            search_next = scope_data.priority != priority;
+            container = container.init_child(registry.clone(), scope_data, child_scopes_data.clone(), true);
             if search_next {
-                let mut iter = container.child_registries.iter();
-                registry = (*iter.next().expect("last scope can't be with another priority")).clone();
-                child_registries = iter.cloned().collect();
+                let mut iter = child_scopes_data.into_iter();
+                scope_data = iter.next().expect("last scope can't be with another priority");
+                child_scopes_data = iter.collect();
             } else {
                 break;
             }
@@ -157,7 +154,7 @@ impl Container {
     /// and with optional finalizer.
     #[allow(clippy::missing_errors_doc)]
     pub fn get<Dep: SendSafety + SyncSafety + 'static>(&self) -> Result<RcThreadSafety<Dep>, ResolveErrorKind> {
-        let span = debug_span!("resolve", dependency = type_name::<Dep>());
+        let span = info_span!("get", dependency = type_name::<Dep>(), scope = self.inner.scope_data.name);
         let _guard = span.enter();
 
         let type_id = TypeId::of::<Dep>();
@@ -168,29 +165,43 @@ impl Container {
         }
         debug!("Not found in cache");
 
-        let Some(InstantiatorInnerData {
-            mut instantiator,
+        let Some(InstantiatorData {
+            instantiator,
             finalizer,
             config,
-        }) = self.inner.root_registry.get_instantiator_data(&type_id)
+            scope_data,
+        }) = self.inner.registry.get_instantiator_data(&type_id)
         else {
-            if let Some(parent) = &self.inner.parent {
-                debug!("No instantiator found, trying parent container");
-                return match parent.get::<Dep>() {
-                    Ok(dependency) => {
-                        self.inner.cache.lock().insert_rc(dependency.clone());
-                        Ok(dependency)
-                    }
-                    Err(err) => Err(err),
-                };
-            }
-
             let err = ResolveErrorKind::NoInstantiator;
-            warn!("{}", err);
+            error!("{}", err);
             return Err(err);
         };
 
-        match instantiator.call(self.clone()) {
+        if self.inner.scope_data.priority > scope_data.priority {
+            let mut parent = self.inner.parent.as_ref().unwrap();
+            loop {
+                if parent.inner.scope_data.priority == scope_data.priority {
+                    return match parent.get::<Dep>() {
+                        Ok(dependency) => {
+                            self.inner.cache.lock().insert_rc(dependency.clone());
+                            Ok(dependency)
+                        }
+                        Err(err) => Err(err),
+                    };
+                }
+                parent = parent.inner.parent.as_ref().unwrap();
+            }
+        }
+        if scope_data.priority > self.inner.scope_data.priority {
+            let err = ResolveErrorKind::NoAccessible {
+                expected_scope_data: *scope_data,
+                actual_scope_data: self.inner.scope_data,
+            };
+            error!("{}", err);
+            return Err(err);
+        }
+
+        match instantiator.clone().call(self.clone()) {
             Ok(dependency) => match dependency.downcast::<Dep>() {
                 Ok(dependency) => {
                     let dependency = RcThreadSafety::new(*dependency);
@@ -238,23 +249,39 @@ impl Container {
     /// Context isn't used here. To get dependencies from the context, use [`Self::get`]
     #[allow(clippy::missing_errors_doc)]
     pub fn get_transient<Dep: 'static>(&self) -> Result<Dep, ResolveErrorKind> {
-        let span = debug_span!("resolve", dependency = type_name::<Dep>());
+        let span = info_span!("get_transient", dependency = type_name::<Dep>(), scope = self.inner.scope_data.name);
         let _guard = span.enter();
 
         let type_id = TypeId::of::<Dep>();
 
-        let Some(mut instantiator) = self.inner.root_registry.get_instantiator(&type_id) else {
-            if let Some(parent) = &self.inner.parent {
-                debug!("No instantiator found, trying parent container");
-                return parent.get_transient();
-            }
-
+        let Some(InstantiatorData {
+            instantiator, scope_data, ..
+        }) = self.inner.registry.get_instantiator_data(&type_id)
+        else {
             let err = ResolveErrorKind::NoInstantiator;
-            warn!("{}", err);
+            error!("{}", err);
             return Err(err);
         };
 
-        match instantiator.call(self.clone()) {
+        if self.inner.scope_data.priority > scope_data.priority {
+            let mut parent = self.inner.parent.as_ref().unwrap();
+            loop {
+                if parent.inner.scope_data.priority == scope_data.priority {
+                    return parent.get_transient();
+                }
+                parent = parent.inner.parent.as_ref().unwrap();
+            }
+        }
+        if scope_data.priority > self.inner.scope_data.priority {
+            let err = ResolveErrorKind::NoAccessible {
+                expected_scope_data: *scope_data,
+                actual_scope_data: self.inner.scope_data,
+            };
+            error!("{}", err);
+            return Err(err);
+        }
+
+        match instantiator.clone().call(self.clone()) {
             Ok(dependency) => match dependency.downcast::<Dep>() {
                 Ok(dependency) => Ok(*dependency),
                 Err(incorrect_type) => {
@@ -292,8 +319,9 @@ impl Container {
     fn init_child_with_context(
         self,
         context: Context,
-        root_registry: RcThreadSafety<ScopedRegistry>,
-        child_registries: Box<[RcThreadSafety<ScopedRegistry>]>,
+        registry: RcThreadSafety<Registry>,
+        scope_data: ScopeData,
+        child_scopes_data: Vec<ScopeData>,
         close_parent: bool,
     ) -> Container {
         let mut cache = self.inner.cache.lock().child();
@@ -303,8 +331,9 @@ impl Container {
             inner: RcThreadSafety::new(ContainerInner {
                 cache: Mutex::new(cache),
                 context: Mutex::new(context),
-                root_registry,
-                child_registries,
+                registry,
+                scope_data,
+                child_scopes_data,
                 parent: Some(self),
                 close_parent,
             }),
@@ -315,8 +344,9 @@ impl Container {
     #[must_use]
     fn init_child(
         self,
-        root_registry: RcThreadSafety<ScopedRegistry>,
-        child_registries: Box<[RcThreadSafety<ScopedRegistry>]>,
+        registry: RcThreadSafety<Registry>,
+        scope_data: ScopeData,
+        child_scopes_data: Vec<ScopeData>,
         close_parent: bool,
     ) -> Container {
         let mut cache = self.inner.cache.lock().child();
@@ -327,8 +357,9 @@ impl Container {
             inner: RcThreadSafety::new(ContainerInner {
                 cache: Mutex::new(cache),
                 context: Mutex::new(context),
-                root_registry,
-                child_registries,
+                registry,
+                scope_data,
+                child_scopes_data,
                 parent: Some(self),
                 close_parent,
             }),
@@ -372,17 +403,19 @@ impl ChildContainerBuiler {
     pub fn build(self) -> Result<Container, ScopeErrorKind> {
         use ScopeErrorKind::{NoChildRegistries, NoNonSkippedRegistries};
 
-        let mut iter = self.container.inner.child_registries.iter();
-        let registry = (*iter.next().ok_or(NoChildRegistries)?).clone();
-        let child_registries = iter.cloned().collect();
+        let mut iter = self.container.inner.child_scopes_data.iter();
+        let scope_data = *iter.next().ok_or(NoChildRegistries)?;
+        let child_scopes_data = iter.map(|val| *val).collect();
+        let registry = self.container.inner.registry.clone();
 
-        let mut child = self.container.init_child(registry, child_registries, false);
-        while child.inner.root_registry.scope.is_skipped_by_default {
-            let mut iter = child.inner.child_registries.iter();
-            let registry = (*iter.next().ok_or(NoNonSkippedRegistries)?).clone();
-            let child_registries = iter.cloned().collect();
+        let mut child = self.container.init_child(registry, scope_data, child_scopes_data, false);
+        while child.inner.scope_data.is_skipped_by_default {
+            let mut iter = child.inner.child_scopes_data.iter();
+            let scope_data = *iter.next().ok_or(NoNonSkippedRegistries)?;
+            let child_scopes_data = iter.map(|val| *val).collect();
+            let registry = child.inner.registry.clone();
 
-            child = child.init_child(registry, child_registries, true);
+            child = child.init_child(registry, scope_data, child_scopes_data, true);
         }
 
         Ok(child)
@@ -419,23 +452,23 @@ where
     pub fn build(self) -> Result<Container, ScopeWithErrorKind> {
         use ScopeWithErrorKind::{NoChildRegistries, NoChildRegistriesWithScope};
 
+        let mut iter = self.container.inner.child_scopes_data.iter();
+        let scope_data = *iter.next().ok_or(NoChildRegistries)?;
+        let child_scopes_data = iter.map(|val| *val).collect();
+        let registry = self.container.inner.registry.clone();
         let priority = self.scope.priority();
 
-        let mut iter = self.container.inner.child_registries.iter();
-        let registry = (*iter.next().ok_or(NoChildRegistries)?).clone();
-        let child_registries = iter.cloned().collect();
-
-        let mut child = self.container.init_child(registry, child_registries, false);
-        while child.inner.root_registry.scope.priority != priority {
-            let mut iter = child.inner.child_registries.iter();
-            let registry = (*iter.next().ok_or(NoChildRegistriesWithScope {
+        let mut child = self.container.init_child(registry, scope_data, child_scopes_data, false);
+        while child.inner.scope_data.priority != priority {
+            let mut iter = child.inner.child_scopes_data.iter();
+            let scope_data = *iter.next().ok_or(NoChildRegistriesWithScope {
                 name: self.scope.name(),
                 priority,
-            })?)
-            .clone();
-            let child_registries = iter.cloned().collect();
+            })?;
+            let child_scopes_data = iter.map(|val| *val).collect();
+            let registry = child.inner.registry.clone();
 
-            child = child.init_child(registry, child_registries, true);
+            child = child.init_child(registry, scope_data, child_scopes_data, true);
         }
 
         Ok(child)
@@ -469,19 +502,23 @@ impl ChildContainerWithContext {
     pub fn build(self) -> Result<Container, ScopeErrorKind> {
         use ScopeErrorKind::{NoChildRegistries, NoNonSkippedRegistries};
 
-        let mut iter = self.container.inner.child_registries.iter();
-        let registry = (*iter.next().ok_or(NoChildRegistries)?).clone();
-        let child_registries = iter.cloned().collect();
+        let mut iter = self.container.inner.child_scopes_data.iter();
+        let scope_data = *iter.next().ok_or(NoChildRegistries)?;
+        let child_scopes_data = iter.map(|val| *val).collect();
+        let context = self.context.clone();
+        let registry = self.container.inner.registry.clone();
 
         let mut child = self
             .container
-            .init_child_with_context(self.context.clone(), registry, child_registries, false);
-        while child.inner.root_registry.scope.is_skipped_by_default {
-            let mut iter = child.inner.child_registries.iter();
-            let registry = (*iter.next().ok_or(NoNonSkippedRegistries)?).clone();
-            let child_registries = iter.cloned().collect();
+            .init_child_with_context(context, registry, scope_data, child_scopes_data, false);
+        while child.inner.scope_data.is_skipped_by_default {
+            let mut iter = child.inner.child_scopes_data.iter();
+            let scope_data = *iter.next().ok_or(NoNonSkippedRegistries)?;
+            let child_scopes_data = iter.map(|val| *val).collect();
+            let context = self.context.clone();
+            let registry = child.inner.registry.clone();
 
-            child = child.init_child_with_context(self.context.clone(), registry, child_registries, true);
+            child = child.init_child_with_context(context, registry, scope_data, child_scopes_data, true);
         }
 
         Ok(child)
@@ -509,25 +546,27 @@ where
     pub fn build(self) -> Result<Container, ScopeWithErrorKind> {
         use ScopeWithErrorKind::{NoChildRegistries, NoChildRegistriesWithScope};
 
+        let mut iter = self.container.inner.child_scopes_data.iter();
+        let scope_data = *iter.next().ok_or(NoChildRegistries)?;
+        let child_scopes_data = iter.map(|val| *val).collect();
+        let context = self.context.clone();
+        let registry = self.container.inner.registry.clone();
         let priority = self.scope.priority();
-
-        let mut iter = self.container.inner.child_registries.iter();
-        let registry = (*iter.next().ok_or(NoChildRegistries)?).clone();
-        let child_registries = iter.cloned().collect();
 
         let mut child = self
             .container
-            .init_child_with_context(self.context.clone(), registry, child_registries, false);
-        while child.inner.root_registry.scope.priority != priority {
-            let mut iter = child.inner.child_registries.iter();
-            let registry = (*iter.next().ok_or(NoChildRegistriesWithScope {
+            .init_child_with_context(context, registry, scope_data, child_scopes_data, false);
+        while child.inner.scope_data.priority != priority {
+            let mut iter = child.inner.child_scopes_data.iter();
+            let scope_data = *iter.next().ok_or(NoChildRegistriesWithScope {
                 name: self.scope.name(),
                 priority,
-            })?)
-            .clone();
-            let child_registries = iter.cloned().collect();
+            })?;
+            let child_scopes_data = iter.map(|val| *val).collect();
+            let context = self.context.clone();
+            let registry = child.inner.registry.clone();
 
-            child = child.init_child_with_context(self.context.clone(), registry, child_registries, true);
+            child = child.init_child_with_context(context, registry, scope_data, child_scopes_data, true);
         }
 
         Ok(child)
@@ -538,8 +577,9 @@ where
 pub(crate) struct BoxedContainerInner {
     pub(crate) cache: Cache,
     pub(crate) context: Context,
-    pub(crate) root_registry: RcThreadSafety<ScopedRegistry>,
-    pub(crate) child_registries: Box<[RcThreadSafety<ScopedRegistry>]>,
+    pub(crate) registry: RcThreadSafety<Registry>,
+    pub(crate) scope_data: ScopeData,
+    pub(crate) child_scopes_data: Vec<ScopeData>,
     pub(crate) parent: Option<Box<BoxedContainerInner>>,
     pub(crate) close_parent: bool,
 }
@@ -549,8 +589,9 @@ impl BoxedContainerInner {
     #[must_use]
     pub(crate) fn init_child(
         self,
-        root_registry: RcThreadSafety<ScopedRegistry>,
-        child_registries: Box<[RcThreadSafety<ScopedRegistry>]>,
+        registry: RcThreadSafety<Registry>,
+        scope_data: ScopeData,
+        child_scopes_data: Vec<ScopeData>,
         close_parent: bool,
     ) -> Self {
         let mut cache = self.cache.child();
@@ -560,8 +601,9 @@ impl BoxedContainerInner {
         Self {
             cache,
             context,
-            root_registry,
-            child_registries,
+            registry,
+            scope_data,
+            child_scopes_data,
             parent: Some(Box::new(self)),
             close_parent,
         }
@@ -573,8 +615,9 @@ impl From<BoxedContainerInner> for Container {
         BoxedContainerInner {
             cache,
             context,
-            root_registry,
-            child_registries,
+            registry,
+            scope_data,
+            child_scopes_data,
             parent,
             close_parent,
         }: BoxedContainerInner,
@@ -583,8 +626,9 @@ impl From<BoxedContainerInner> for Container {
             inner: RcThreadSafety::new(ContainerInner {
                 cache: Mutex::new(cache),
                 context: Mutex::new(context),
-                root_registry,
-                child_registries,
+                registry,
+                scope_data,
+                child_scopes_data,
                 parent: parent.map(|parent| (*parent).into()),
                 close_parent,
             }),
@@ -595,8 +639,9 @@ impl From<BoxedContainerInner> for Container {
 pub(crate) struct ContainerInner {
     pub(crate) cache: Mutex<Cache>,
     pub(crate) context: Mutex<Context>,
-    pub(crate) root_registry: RcThreadSafety<ScopedRegistry>,
-    pub(crate) child_registries: Box<[RcThreadSafety<ScopedRegistry>]>,
+    pub(crate) registry: RcThreadSafety<Registry>,
+    pub(crate) scope_data: ScopeData,
+    pub(crate) child_scopes_data: Vec<ScopeData>,
     pub(crate) parent: Option<Container>,
     pub(crate) close_parent: bool,
 }
@@ -610,13 +655,13 @@ impl ContainerInner {
     pub(crate) fn close_with_parent_flag(&self, close_parent: bool) {
         let mut resolved_set = self.cache.lock().take_resolved_set();
         while let Some(Resolved { type_id, dependency }) = resolved_set.0.pop_back() {
-            let InstantiatorInnerData { finalizer, .. } = self
-                .root_registry
+            let InstantiatorData { finalizer, .. } = self
+                .registry
                 .get_instantiator_data(&type_id)
                 .expect("Instantiator should be present for resolved type");
 
-            if let Some(mut finalizer) = finalizer {
-                let _ = finalizer.call(dependency);
+            if let Some(finalizer) = finalizer {
+                let _ = finalizer.clone().call(dependency);
                 debug!(?type_id, "Finalizer called");
             }
         }
@@ -759,38 +804,38 @@ mod tests {
 
         // Runtime scope is skipped by default, but it is still present in the parent
         assert_eq!(
-            app_container_inner.parent.as_ref().unwrap().inner.root_registry.scope.priority,
+            app_container_inner.parent.as_ref().unwrap().inner.scope_data.priority,
             Runtime.priority()
         );
-        assert_eq!(app_container_inner.child_registries.len(), 4);
-        assert_eq!(app_container_inner.root_registry.scope.priority, App.priority());
+        assert_eq!(app_container_inner.child_scopes_data.len(), 4);
+        assert_eq!(app_container_inner.scope_data.priority, App.priority());
 
         // Session scope is skipped by default, but it is still present in the child registries
         assert_eq!(
-            request_container_inner.parent.as_ref().unwrap().inner.root_registry.scope.priority,
+            request_container_inner.parent.as_ref().unwrap().inner.scope_data.priority,
             Session.priority()
         );
-        assert_eq!(request_container_inner.child_registries.len(), 2);
-        assert_eq!(request_container_inner.root_registry.scope.priority, Request.priority());
+        assert_eq!(request_container_inner.child_scopes_data.len(), 2);
+        assert_eq!(request_container_inner.scope_data.priority, Request.priority());
         // Session scope is skipped by default, so it is not the first child registry
-        assert!(RcThreadSafety::ptr_eq(
-            &request_container_inner.root_registry,
-            &app_container_inner.child_registries[1]
-        ));
-        assert!(RcThreadSafety::ptr_eq(
-            &action_container_inner.root_registry,
-            &request_container_inner.child_registries[0]
-        ));
+        assert_eq!(
+            request_container_inner.scope_data.priority,
+            app_container_inner.child_scopes_data[1].priority
+        );
+        assert_eq!(
+            action_container_inner.scope_data.priority,
+            request_container_inner.child_scopes_data[0].priority
+        );
 
-        assert_eq!(action_container_inner.child_registries.len(), 1);
-        assert_eq!(action_container_inner.root_registry.scope.priority, Action.priority());
+        assert_eq!(action_container_inner.child_scopes_data.len(), 1);
+        assert_eq!(action_container_inner.scope_data.priority, Action.priority());
 
-        assert_eq!(step_container_inner.child_registries.len(), 0);
-        assert_eq!(step_container_inner.root_registry.scope.priority, Step.priority());
-        assert!(RcThreadSafety::ptr_eq(
-            &step_container_inner.root_registry,
-            &action_container_inner.child_registries[0]
-        ));
+        assert_eq!(step_container_inner.child_scopes_data.len(), 0);
+        assert_eq!(step_container_inner.scope_data.priority, Step.priority());
+        assert_eq!(
+            step_container_inner.scope_data.priority,
+            action_container_inner.child_scopes_data[0].priority
+        );
     }
 
     #[test]
@@ -819,43 +864,43 @@ mod tests {
         let step_container_inner = step_container.inner;
 
         assert!(runtime_container_inner.parent.is_none());
-        assert_eq!(runtime_container_inner.child_registries.len(), 5);
-        assert_eq!(runtime_container_inner.root_registry.scope.priority, Runtime.priority());
-        assert!(RcThreadSafety::ptr_eq(
-            &app_container_inner.root_registry,
-            &runtime_container_inner.child_registries[0]
-        ));
+        assert_eq!(runtime_container_inner.child_scopes_data.len(), 5);
+        assert_eq!(runtime_container_inner.scope_data.priority, Runtime.priority());
+        assert_eq!(
+            app_container_inner.scope_data.priority,
+            runtime_container_inner.child_scopes_data[0].priority
+        );
 
-        assert_eq!(app_container_inner.child_registries.len(), 4);
-        assert_eq!(app_container_inner.root_registry.scope.priority, App.priority());
-        assert!(RcThreadSafety::ptr_eq(
-            &session_container_inner.root_registry,
-            &app_container_inner.child_registries[0]
-        ));
+        assert_eq!(app_container_inner.child_scopes_data.len(), 4);
+        assert_eq!(app_container_inner.scope_data.priority, App.priority());
+        assert_eq!(
+            session_container_inner.scope_data.priority,
+            app_container_inner.child_scopes_data[0].priority
+        );
 
-        assert_eq!(session_container_inner.child_registries.len(), 3);
-        assert_eq!(session_container_inner.root_registry.scope.priority, Session.priority());
-        assert!(RcThreadSafety::ptr_eq(
-            &request_container_inner.root_registry,
-            &session_container_inner.child_registries[0]
-        ));
+        assert_eq!(session_container_inner.child_scopes_data.len(), 3);
+        assert_eq!(session_container_inner.scope_data.priority, Session.priority());
+        assert_eq!(
+            request_container_inner.scope_data.priority,
+            session_container_inner.child_scopes_data[0].priority
+        );
 
-        assert_eq!(request_container_inner.child_registries.len(), 2);
-        assert_eq!(request_container_inner.root_registry.scope.priority, Request.priority());
-        assert!(RcThreadSafety::ptr_eq(
-            &action_container_inner.root_registry,
-            &request_container_inner.child_registries[0]
-        ));
+        assert_eq!(request_container_inner.child_scopes_data.len(), 2);
+        assert_eq!(request_container_inner.scope_data.priority, Request.priority());
+        assert_eq!(
+            action_container_inner.scope_data.priority,
+            request_container_inner.child_scopes_data[0].priority
+        );
 
-        assert_eq!(action_container_inner.child_registries.len(), 1);
-        assert_eq!(action_container_inner.root_registry.scope.priority, Action.priority());
-        assert!(RcThreadSafety::ptr_eq(
-            &step_container_inner.root_registry,
-            &action_container_inner.child_registries[0]
-        ));
+        assert_eq!(action_container_inner.child_scopes_data.len(), 1);
+        assert_eq!(action_container_inner.scope_data.priority, Action.priority());
+        assert_eq!(
+            step_container_inner.scope_data.priority,
+            action_container_inner.child_scopes_data[0].priority
+        );
 
-        assert_eq!(step_container_inner.child_registries.len(), 0);
-        assert_eq!(step_container_inner.root_registry.scope.priority, Step.priority());
+        assert_eq!(step_container_inner.child_scopes_data.len(), 0);
+        assert_eq!(step_container_inner.scope_data.priority, Step.priority());
     }
 
     #[test]
