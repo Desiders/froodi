@@ -187,7 +187,7 @@ impl Container {
     /// This method resolves a dependency from the container,
     /// so it should be used for dependencies that are cached or shared,
     /// and with optional finalizer.
-    #[allow(clippy::missing_errors_doc, clippy::multiple_bound_locations)]
+    #[allow(clippy::missing_errors_doc, clippy::multiple_bound_locations, clippy::missing_panics_doc)]
     pub fn get<Dep: SendSafety + SyncSafety + 'static>(
         &self,
     ) -> impl Future<Output = Result<RcThreadSafety<Dep>, ResolveErrorKind>> + SendSafety + '_ {
@@ -292,7 +292,7 @@ impl Container {
     /// # Notes
     /// This method resolves a new instance of the dependency each time it is called,
     /// so it should be used for dependencies that are not cached or shared, and without finalizer.
-    #[allow(clippy::missing_errors_doc, clippy::multiple_bound_locations)]
+    #[allow(clippy::missing_errors_doc, clippy::multiple_bound_locations, clippy::missing_panics_doc)]
     pub fn get_transient<Dep: 'static>(&self) -> impl Future<Output = Result<Dep, ResolveErrorKind>> + SendSafety + '_ {
         let type_id = TypeId::of::<Dep>();
 
@@ -515,9 +515,9 @@ impl ChildContainerBuiler {
     pub fn build(self) -> Result<Container, ScopeErrorKind> {
         use ScopeErrorKind::{NoChildRegistries, NoNonSkippedRegistries};
 
-        let mut iter = self.container.inner.child_scopes_data.iter();
-        let scope_data = *iter.next().ok_or(NoChildRegistries)?;
-        let child_scopes_data = iter.map(|val| *val).collect();
+        let mut iter = self.container.inner.child_scopes_data.clone().into_iter();
+        let scope_data = iter.next().ok_or(NoChildRegistries)?;
+        let child_scopes_data = iter.collect();
         let registry = self.container.inner.registry.clone();
         let sync_registry = self.container.sync.inner.registry.clone();
         let sync_container = self.container.sync.clone();
@@ -526,9 +526,9 @@ impl ChildContainerBuiler {
             .container
             .init_child(sync_container, registry, sync_registry, scope_data, child_scopes_data, false);
         while child.inner.scope_data.is_skipped_by_default {
-            let mut iter = child.inner.child_scopes_data.iter();
-            let scope_data = *iter.next().ok_or(NoNonSkippedRegistries)?;
-            let child_scopes_data = iter.map(|val| *val).collect();
+            let mut iter = child.inner.child_scopes_data.clone().into_iter();
+            let scope_data = iter.next().ok_or(NoNonSkippedRegistries)?;
+            let child_scopes_data = iter.collect();
             let registry = child.inner.registry.clone();
             let sync_registry = child.sync.inner.registry.clone();
             let sync_container = child.sync.clone();
@@ -570,9 +570,9 @@ where
     pub fn build(self) -> Result<Container, ScopeWithErrorKind> {
         use ScopeWithErrorKind::{NoChildRegistries, NoChildRegistriesWithScope};
 
-        let mut iter = self.container.inner.child_scopes_data.iter();
-        let scope_data = *iter.next().ok_or(NoChildRegistries)?;
-        let child_scopes_data = iter.map(|val| *val).collect();
+        let mut iter = self.container.inner.child_scopes_data.clone().into_iter();
+        let scope_data = iter.next().ok_or(NoChildRegistries)?;
+        let child_scopes_data = iter.collect();
         let registry = self.container.inner.registry.clone();
         let sync_registry = self.container.sync.inner.registry.clone();
         let sync_container = self.container.sync.clone();
@@ -582,12 +582,12 @@ where
             .container
             .init_child(sync_container, registry, sync_registry, scope_data, child_scopes_data, false);
         while child.inner.scope_data.priority != priority {
-            let mut iter = child.inner.child_scopes_data.iter();
-            let scope_data = *iter.next().ok_or(NoChildRegistriesWithScope {
+            let mut iter = child.inner.child_scopes_data.clone().into_iter();
+            let scope_data = iter.next().ok_or(NoChildRegistriesWithScope {
                 name: self.scope.name(),
                 priority,
             })?;
-            let child_scopes_data = iter.map(|val| *val).collect();
+            let child_scopes_data = iter.collect();
             let registry = child.inner.registry.clone();
             let sync_registry = child.sync.inner.registry.clone();
             let sync_container = child.sync.clone();
@@ -626,9 +626,9 @@ impl ChildContainerWithContext {
     pub fn build(self) -> Result<Container, ScopeErrorKind> {
         use ScopeErrorKind::{NoChildRegistries, NoNonSkippedRegistries};
 
-        let mut iter = self.container.inner.child_scopes_data.iter();
-        let scope_data = *iter.next().ok_or(NoChildRegistries)?;
-        let child_scopes_data = iter.map(|val| *val).collect();
+        let mut iter = self.container.inner.child_scopes_data.clone().into_iter();
+        let scope_data = iter.next().ok_or(NoChildRegistries)?;
+        let child_scopes_data = iter.collect();
         let context = self.context.clone();
         let registry = self.container.inner.registry.clone();
         let sync_registry = self.container.sync.inner.registry.clone();
@@ -644,9 +644,9 @@ impl ChildContainerWithContext {
             false,
         );
         while child.inner.scope_data.is_skipped_by_default {
-            let mut iter = child.inner.child_scopes_data.iter();
-            let scope_data = *iter.next().ok_or(NoNonSkippedRegistries)?;
-            let child_scopes_data = iter.map(|val| *val).collect();
+            let mut iter = child.inner.child_scopes_data.clone().into_iter();
+            let scope_data = iter.next().ok_or(NoNonSkippedRegistries)?;
+            let child_scopes_data = iter.collect();
             let context = self.context.clone();
             let registry = child.inner.registry.clone();
             let sync_registry = child.sync.inner.registry.clone();
@@ -688,9 +688,9 @@ where
     pub fn build(self) -> Result<Container, ScopeWithErrorKind> {
         use ScopeWithErrorKind::{NoChildRegistries, NoChildRegistriesWithScope};
 
-        let mut iter = self.container.inner.child_scopes_data.iter();
-        let scope_data = *iter.next().ok_or(NoChildRegistries)?;
-        let child_scopes_data = iter.map(|val| *val).collect();
+        let mut iter = self.container.inner.child_scopes_data.clone().into_iter();
+        let scope_data = iter.next().ok_or(NoChildRegistries)?;
+        let child_scopes_data = iter.collect();
         let context = self.context.clone();
         let registry = self.container.inner.registry.clone();
         let sync_registry = self.container.sync.inner.registry.clone();
@@ -707,12 +707,12 @@ where
             false,
         );
         while child.inner.scope_data.priority != priority {
-            let mut iter = child.inner.child_scopes_data.iter();
-            let scope_data = *iter.next().ok_or(NoChildRegistriesWithScope {
+            let mut iter = child.inner.child_scopes_data.clone().into_iter();
+            let scope_data = iter.next().ok_or(NoChildRegistriesWithScope {
                 name: self.scope.name(),
                 priority,
             })?;
-            let child_scopes_data = iter.map(|val| *val).collect();
+            let child_scopes_data = iter.collect();
             let context = self.context.clone();
             let registry = child.inner.registry.clone();
             let sync_registry = child.sync.inner.registry.clone();
