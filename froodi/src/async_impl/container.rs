@@ -845,7 +845,7 @@ mod tests {
     extern crate std;
 
     use super::{Container, ContainerInner, RegistryBuilder};
-    use crate::{scope::DefaultScope::*, utils::thread_safety::RcThreadSafety, Inject, InjectTransient, Scope};
+    use crate::{scope::DefaultScope::*, utils::thread_safety::RcThreadSafety, Inject, InjectTransient, ResolveErrorKind, Scope};
 
     use alloc::{
         format,
@@ -954,8 +954,20 @@ mod tests {
         let request_container = app_container.clone().enter().with_scope(Request).build().unwrap();
 
         assert!(app_container.get_transient::<RequestTransient1>().await.is_ok());
-        assert!(app_container.get_transient::<RequestTransient2>().await.is_err());
-        assert!(app_container.get_transient::<RequestTransient3>().await.is_err());
+        assert!(matches!(
+            app_container.get_transient::<RequestTransient2>().await,
+            Err(ResolveErrorKind::NoAccessible {
+                expected_scope_data: _,
+                actual_scope_data: _,
+            }),
+        ));
+        assert!(matches!(
+            app_container.get_transient::<RequestTransient3>().await,
+            Err(ResolveErrorKind::NoAccessible {
+                expected_scope_data: _,
+                actual_scope_data: _,
+            }),
+        ));
 
         assert!(request_container.get_transient::<RequestTransient1>().await.is_ok());
         assert!(request_container.get_transient::<RequestTransient2>().await.is_ok());

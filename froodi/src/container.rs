@@ -699,7 +699,7 @@ mod tests {
         inject::{Inject, InjectTransient},
         scope::DefaultScope::*,
         utils::thread_safety::RcThreadSafety,
-        Scope,
+        ResolveErrorKind, Scope,
     };
 
     use alloc::{
@@ -773,8 +773,20 @@ mod tests {
         let request_container = app_container.clone().enter().with_scope(Request).build().unwrap();
 
         assert!(app_container.get_transient::<RequestTransient1>().is_ok());
-        assert!(app_container.get_transient::<RequestTransient2>().is_err());
-        assert!(app_container.get_transient::<RequestTransient3>().is_err());
+        assert!(matches!(
+            app_container.get_transient::<RequestTransient2>(),
+            Err(ResolveErrorKind::NoAccessible {
+                expected_scope_data: _,
+                actual_scope_data: _,
+            }),
+        ));
+        assert!(matches!(
+            app_container.get_transient::<RequestTransient3>(),
+            Err(ResolveErrorKind::NoAccessible {
+                expected_scope_data: _,
+                actual_scope_data: _,
+            }),
+        ));
 
         assert!(request_container.get_transient::<RequestTransient1>().is_ok());
         assert!(request_container.get_transient::<RequestTransient2>().is_ok());
