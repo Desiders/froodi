@@ -1,4 +1,4 @@
-pub trait Scope: Ord {
+pub trait Scope: Ord + Into<ScopeData> {
     #[must_use]
     fn name(&self) -> &'static str;
 
@@ -26,6 +26,16 @@ pub enum DefaultScope {
     Request,
     Action,
     Step,
+}
+
+impl From<DefaultScope> for ScopeData {
+    fn from(scope: DefaultScope) -> Self {
+        Self {
+            priority: scope.priority(),
+            name: scope.name(),
+            is_skipped_by_default: scope.is_skipped_by_default(),
+        }
+    }
 }
 
 impl Scope for DefaultScope {
@@ -63,7 +73,9 @@ impl Scopes<6> for DefaultScope {
     }
 }
 
-pub(crate) struct ScopeInnerData {
-    pub(crate) priority: u8,
-    pub(crate) is_skipped_by_default: bool,
+#[derive(Clone, Copy, Debug)]
+pub struct ScopeData {
+    pub priority: u8,
+    pub name: &'static str,
+    pub is_skipped_by_default: bool,
 }
