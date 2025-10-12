@@ -42,7 +42,7 @@ dptree = ["dep:dptree"]
 tracing-test = { version = "0.2", default-features = false }
 criterion = { version = "0.7", features = ["async_tokio"] }
 axum = { version = "0.8" }
-axum-test = { version = "17.3", features = ["ws"] }
+axum-test = { version = "18.1", features = ["ws"] }
 tokio = { version = "1.47", features = ["macros"] }
 
 [[bench]]
