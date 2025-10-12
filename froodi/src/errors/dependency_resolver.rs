@@ -1,9 +1,8 @@
 use alloc::boxed::Box;
 use core::any::TypeId;
 
-use crate::ScopeData;
-
 use super::{instantiate::InstantiateErrorKind, instantiator::InstantiatorErrorKind};
+use crate::scope::ScopeData;
 
 #[derive(thiserror::Error, Debug)]
 pub enum ResolveErrorKind {
