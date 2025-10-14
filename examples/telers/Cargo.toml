@@ -1,0 +1,10 @@
+[package]
+name = "telers"
+version = "1.0.0"
+edition = "2024"
+
+[dependencies]
+froodi = { path = "../../froodi", features = ["telers"] }
+
+tokio = { version = "1.36", features = ["rt", "macros"] }
+telers = { version = "1.0.0-alpha.27" }
