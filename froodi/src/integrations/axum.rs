@@ -1,11 +1,3 @@
-#[cfg(feature = "async")]
-use crate::async_impl::Container as AsyncContainer;
-use crate::{
-    utils::future::BoxFuture,
-    Container,
-    DefaultScope::{Request as RequestScope, Session as SessionScope},
-    Inject, InjectTransient, ResolveErrorKind, Scope,
-};
 use alloc::{
     boxed::Box,
     string::{String, ToString},
@@ -24,6 +16,15 @@ use core::{
 use tower_layer::Layer;
 use tower_service::Service;
 use tracing::error;
+
+#[cfg(feature = "async")]
+use crate::async_impl::Container as AsyncContainer;
+use crate::{
+    utils::future::BoxFuture,
+    Container,
+    DefaultScope::{Request as RequestScope, Session as SessionScope},
+    Inject, InjectTransient, ResolveErrorKind, Scope,
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum InjectErrorKind {
@@ -261,20 +262,21 @@ where
             },
             None => Err(Self::Rejection::ContainerNotFound),
         };
-
         async move { res }
     }
 
     #[cfg(feature = "async")]
     fn from_request_parts(parts: &mut Parts, _state: &S) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
+        let sync_container = parts.extensions.get::<Container>();
+        let async_container = parts.extensions.get::<AsyncContainer>();
         async move {
             if PREFER_SYNC_OVER_ASYNC {
-                return match parts.extensions.get::<Container>() {
+                return match sync_container {
                     Some(container) => match container.get() {
                         Ok(dep) => Ok(Self(dep)),
                         Err(err) => Err(Self::Rejection::Resolve(err)),
                     },
-                    None => match parts.extensions.get::<AsyncContainer>() {
+                    None => match async_container {
                         Some(container) => match container.get().await {
                             Ok(dep) => Ok(Self(dep)),
                             Err(err) => Err(Self::Rejection::Resolve(err)),
@@ -284,12 +286,12 @@ where
                 };
             }
 
-            match parts.extensions.get::<AsyncContainer>() {
+            match async_container {
                 Some(container) => match container.get().await {
                     Ok(dep) => Ok(Self(dep)),
                     Err(err) => Err(Self::Rejection::Resolve(err)),
                 },
-                None => match parts.extensions.get::<Container>() {
+                None => match sync_container {
                     Some(container) => match container.get() {
                         Ok(dep) => Ok(Self(dep)),
                         Err(err) => Err(Self::Rejection::Resolve(err)),
@@ -317,7 +319,6 @@ where
             },
             None => Err(Self::Rejection::ContainerNotFound),
         };
-
         async move { res }
     }
 
