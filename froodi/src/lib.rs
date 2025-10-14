@@ -38,3 +38,6 @@ pub use integrations::axum;
 
 #[cfg(feature = "dptree")]
 pub use integrations::dptree;
+
+#[cfg(feature = "telers")]
+pub use integrations::telers;
