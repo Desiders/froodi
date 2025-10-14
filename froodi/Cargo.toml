@@ -25,7 +25,7 @@ h2 = { version = "0.4", optional = true }
 axum = { version = ">= 0.6, <= 0.8", default-features = false, optional = true }
 dptree = { version = "0.5", optional = true }
 
-telers = { git = "https://github.com/Desiders/telers.git", rev = "214eca0", default-features = false, optional = true }
+telers = { version = "1.0.0-alpha.27", default-features = false, optional = true }
 
 [features]
 default = ["std", "thread_safe"]
