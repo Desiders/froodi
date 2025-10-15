@@ -2,8 +2,8 @@ use alloc::string::ToString as _;
 use core::future::Future;
 use telers::{
     errors::{EventErrorKind, ExtractionError},
-    event::telegram::HandlerResponse,
-    middlewares::{inner::Middleware, Next},
+    event::{telegram::HandlerResponse, EventReturn},
+    middlewares::{outer::MiddlewareResponse, InnerMiddleware, Next, OuterMiddleware},
     Extractor, Request, Router,
 };
 
@@ -27,70 +27,90 @@ impl From<InjectErrorKind> for ExtractionError {
 
 macro_rules! impl_setup {
     (
-        $StructName:ident,
+        $OuterStructName:ident,
+        $InnerStructName:ident,
         $ContainerType:ty
     ) => {
         #[derive(Clone)]
-        pub struct $StructName<WithScope> {
+        pub struct $OuterStructName<WithScope> {
             container: $ContainerType,
             scope: WithScope,
+        }
+
+        #[derive(Clone)]
+        pub struct $InnerStructName;
+
+        impl<Client, WithScope> OuterMiddleware<Client> for $OuterStructName<WithScope>
+        where
+            Client: Send,
+            WithScope: Scope + Clone + Send + Sync + 'static,
+        {
+            fn call(
+                &mut self,
+                mut request: Request<Client>,
+            ) -> impl Future<Output = Result<MiddlewareResponse<Client>, EventErrorKind>> + Send {
+                let mut context = Context::new();
+                context.insert(request.update.clone());
+
+                let container = self
+                    .container
+                    .clone()
+                    .enter()
+                    .with_scope(self.scope.clone())
+                    .with_context(context)
+                    .build()
+                    .unwrap();
+                request.extensions.insert(container);
+
+                async move { Ok((request, EventReturn::Finish)) }
+            }
         }
     };
 }
 
-impl_setup!(ContainerMiddleware, Container);
+impl_setup!(ContainerOuterMiddleware, ContainerInnerMiddleware, Container);
 
-impl<Client, WithScope> Middleware<Client> for ContainerMiddleware<WithScope>
+impl<Client> InnerMiddleware<Client> for ContainerInnerMiddleware
 where
-    Client: Send + Sync + 'static,
-    WithScope: Scope + Clone + Send + Sync + 'static,
+    Client: Send,
 {
-    async fn call(&mut self, mut request: Request<Client>, next: Next<Client>) -> Result<HandlerResponse<Client>, EventErrorKind> {
-        let mut context = Context::new();
-        context.insert(request.update.clone());
-
-        let container = self
-            .container
-            .clone()
-            .enter()
-            .with_scope(self.scope.clone())
-            .with_context(context)
-            .build()
-            .unwrap();
-        request.extensions.insert(container.clone());
-
-        let resp = next(request).await;
-        container.close();
-        resp
+    fn call(
+        &mut self,
+        request: Request<Client>,
+        next: Next<Client>,
+    ) -> impl Future<Output = Result<HandlerResponse<Client>, EventErrorKind>> + Send {
+        let container_option = request.extensions.get::<Container>().cloned();
+        async move {
+            let resp = next(request).await;
+            if let Some(container) = container_option {
+                container.close();
+            }
+            resp
+        }
     }
 }
 
 #[cfg(feature = "async")]
-impl_setup!(AsyncContainerMiddleware, AsyncContainer);
+impl_setup!(AsyncContainerOuterMiddleware, AsyncContainerInnerMiddleware, AsyncContainer);
 
 #[cfg(feature = "async")]
-impl<Client, WithScope> Middleware<Client> for AsyncContainerMiddleware<WithScope>
+impl<Client> InnerMiddleware<Client> for AsyncContainerInnerMiddleware
 where
-    Client: Send + Sync + 'static,
-    WithScope: Scope + Clone + Send + Sync + 'static,
+    Client: Send,
 {
-    async fn call(&mut self, mut request: Request<Client>, next: Next<Client>) -> Result<HandlerResponse<Client>, EventErrorKind> {
-        let mut context = Context::new();
-        context.insert(request.update.clone());
-
-        let container = self
-            .container
-            .clone()
-            .enter()
-            .with_scope(self.scope.clone())
-            .with_context(context)
-            .build()
-            .unwrap();
-        request.extensions.insert(container.clone());
-
-        let resp = next(request).await;
-        container.close().await;
-        resp
+    fn call(
+        &mut self,
+        request: Request<Client>,
+        next: Next<Client>,
+    ) -> impl Future<Output = Result<HandlerResponse<Client>, EventErrorKind>> + Send {
+        let container_option = request.extensions.get::<AsyncContainer>().cloned();
+        async move {
+            let resp = next(request).await;
+            if let Some(container) = container_option {
+                container.close().await;
+            }
+            resp
+        }
     }
 }
 
@@ -213,11 +233,12 @@ where
     Client: Send + Sync + 'static,
 {
     router.telegram_observers_mut().iter_mut().for_each(|observer| {
-        observer.inner_middlewares.register(ContainerMiddleware {
-            container: container.clone(),
-            scope: scope.clone(),
-        });
+        observer.inner_middlewares.register(ContainerInnerMiddleware);
     });
+    router
+        .update
+        .outer_middlewares
+        .register(ContainerOuterMiddleware { container, scope });
     router
 }
 
@@ -237,11 +258,12 @@ where
     Client: Send + Sync + 'static,
 {
     router.telegram_observers_mut().iter_mut().for_each(|observer| {
-        observer.inner_middlewares.register(AsyncContainerMiddleware {
-            container: container.clone(),
-            scope: scope.clone(),
-        });
+        observer.inner_middlewares.register(AsyncContainerInnerMiddleware);
     });
+    router
+        .update
+        .outer_middlewares
+        .register(AsyncContainerOuterMiddleware { container, scope });
     router
 }
 
