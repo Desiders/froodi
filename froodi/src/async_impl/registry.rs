@@ -14,12 +14,12 @@ use crate::{
     errors::{InstantiateErrorKind, ResolveErrorKind},
     finalizer::{boxed_finalizer_factory, BoxedCloneFinalizer as BoxedCloneSyncFinalizer, Finalizer},
     instantiator::{
-        boxed_container_instantiator as boxed_sync_container_instantiator, boxed_instantiator, BoxedCloneInstantiator, Config, Instantiator,
+        boxed_container_instantiator as boxed_sync_container_instantiator, boxed_instantiator, BoxedCloneInstantiator, Instantiator,
     },
     registry::{InstantiatorData as SyncInstantiatorData, Registry as SyncRegistry},
     scope::{Scope, ScopeData},
     utils::thread_safety::{SendSafety, SyncSafety},
-    DefaultScope, Scopes as ScopesTrait,
+    Config, DefaultScope, Scopes as ScopesTrait,
 };
 
 #[derive(Clone)]

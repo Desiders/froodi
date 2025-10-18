@@ -3,7 +3,8 @@ use core::any::TypeId;
 
 use super::{
     errors::{InstantiateErrorKind, ResolveErrorKind},
-    instantiator::{BoxedCloneInstantiator, Config},
+    instantiator::BoxedCloneInstantiator,
+    Config,
 };
 use crate::{
     dependency_resolver::DependencyResolver,
