@@ -1,7 +1,8 @@
-use frunk::{hlist, hlist::Selector, HList};
+use core::any::TypeId;
 
 use crate::{
-    finalizer::BoxedCloneFinalizer, instantiator::BoxedCloneInstantiator, scope::ScopeData, Config, InstantiateErrorKind, ResolveErrorKind,
+    finalizer::BoxedCloneFinalizer, instantiator::BoxedCloneInstantiator, scope::ScopeData, utils::hlist::HListFind, Config,
+    InstantiateErrorKind, ResolveErrorKind,
 };
 
 #[derive(Clone)]
@@ -10,6 +11,7 @@ pub(crate) struct InstantiatorData {
     pub(crate) finalizer: Option<BoxedCloneFinalizer>,
     pub(crate) config: Config,
     pub(crate) scope: ScopeData,
+    pub(crate) type_id: TypeId,
 }
 
 #[derive(Clone)]
@@ -18,106 +20,102 @@ pub struct Registry<H> {
 }
 
 impl<H> Registry<H> {
-    pub fn get_entry<T, Index>(&self) -> &InstantiatorData
+    pub fn get<Dep>(&self) -> Option<&InstantiatorData>
     where
-        H: Selector<InstantiatorData, Index>,
+        Dep: 'static,
+        H: HListFind<InstantiatorData, TypeId>,
     {
-        self.entries.get()
+        self.entries.get(TypeId::of::<Dep>())
     }
 }
 
 #[macro_export]
 macro_rules! registry {
     (
-        $(
-            scope($scope:ident) [ $( $entries:tt )* ]
-        ),* $(,)?
+        scope($scope:expr) [ $( $entries:tt )* ]
+        $(, scope($rest_scope:expr) [ $( $rest_entries:tt )* ] )* $(,)?
     ) => {{
-        $(
-            {
-                tracing::debug!("Parsed scope: {}", stringify!($scope));
-                $crate::registry_internal! { @entries $scope [ $($entries)* ] }
-            };
-        )*
+        let entries = frunk::hlist![
+            $crate::registry_internal! { @entries scope($scope) [ $($entries)* ] },
+            $(
+                $crate::registry_internal! { @entries scope($rest_scope) [ $($rest_entries)* ] }
+            ),*
+        ];
 
-        ()
+        $crate::registry_macros::Registry {
+            entries,
+        }
     }};
 }
 
 #[macro_export]
 #[doc(hidden)]
 macro_rules! registry_internal {
-    // === Base case ===
-    // Example: registry_internal! { @entries App [] }
-    (@entries $scope:ident []) => {};
-
-    // === Single identifier entries ===
-    // Example: registry_internal! { @entries App [ inst_a ] }
-    (@entries $scope:ident [ $inst:ident $(, $($rest:tt)*)? ]) => {
-        $crate::registry_internal! { @entry $scope, $inst }
-        $crate::registry_internal! { @entries $scope [ $($($rest)*)? ] }
+    // === Empty entries ===
+    (@entries scope($scope:expr) []) => {{
+        frunk::hlist::HNil
+    }};
+    (@entries scope($scope:expr) [ provide( $($entry:tt)+ ) $(, $($rest:tt)*)? ]) => {
+        frunk::hlist![
+            $crate::registry_internal! { @entry scope($scope), $($entry)+ },
+            $(
+                $crate::registry_internal! { @entries scope($scope) [ $($rest)* ] }
+            )?
+        ]
     };
 
-    // === Parenthesized entries ===
-    // Example: registry_internal! { @entries App [ (inst_b), (inst_c, config = cfg) ] }
-    (@entries $scope:ident [ ( $($entry:tt)+ ) $(, $($rest:tt)*)? ]) => {
-        $crate::registry_internal! { @entry $scope, $($entry)+ }
-        $crate::registry_internal! { @entries $scope [ $($($rest)*)? ] }
-    };
+    // === Entry ===
+    (@entry scope($scope:expr), $inst:expr) => {{
+        $crate::registry_internal! { @entry_with_options scope($scope), $inst, config = None, finalizer = None::<fn(_)> }
+    }};
+    // === Entry with config ===
+    (@entry scope($scope:expr), $inst:expr, config = $cfg:expr) => {{
+        $crate::registry_internal! { @entry_with_options scope($scope), $inst, config = Some($cfg), finalizer = None::<fn(_)> }
+    }};
+    // === Entry with finalizer ===
+    (@entry scope($scope:expr), $inst:expr, finalizer = $fin:expr) => {{
+        $crate::registry_internal! { @entry_with_options scope($scope), $inst, config = None, finalizer = Some($fin) }
+    }};
+    // === Entry with config (first) and finalizer ===
+    (@entry scope($scope:expr), $inst:expr, config = $cfg:expr, finalizer = $fin:expr) => {{
+        $crate::registry_internal! { @entry_with_options scope($scope), $inst, config = Some($cfg), finalizer = Some($fin) }
+    }};
+    // === Entry with finalizer (first) and config ===
+    (@entry scope($scope:expr), $inst:expr, finalizer = $fin:expr, config = $cfg:expr) => {{
+        $crate::registry_internal! { @entry_with_options scope($scope), $inst, config = Some($cfg), finalizer = Some($fin) }
+    }};
 
-    // === Entry with no options ===
-    // Example: registry_internal! { @entry App, inst_a }
-    (@entry $scope:ident, $inst:ident) => {
-        $crate::registry_internal! { @entry_with_options $scope, $inst, config = None, finalizer = None }
-    };
-
-    // === Entry with config only ===
-    // Example: registry_internal! { @entry App, (inst_c, config = cfg_c) }
-    (@entry $scope:ident, $inst:ident, config = $cfg:expr) => {
-        $crate::registry_internal! { @entry_with_options $scope, $inst, config = Some($cfg), finalizer = None }
-    };
-
-    // === Entry with finalizer only ===
-    // Example: registry_internal! { @entry App, (inst_d, finalizer = fin_d) }
-    (@entry $scope:ident, $inst:ident, finalizer = $fin:expr) => {
-        $crate::registry_internal! { @entry_with_options $scope, $inst, config = None, finalizer = Some($fin) }
-    };
-
-    // === Entry with config + finalizer (config first) ===
-    // Example: registry_internal! { @entry App, (inst_e, config = cfg_e, finalizer = fin_e) }
-    (@entry $scope:ident, $inst:ident, config = $cfg:expr, finalizer = $fin:expr) => {
-        $crate::registry_internal! { @entry_with_options $scope, $inst, config = Some($cfg), finalizer = Some($fin) }
-    };
-
-    // === Entry with finalizer + config (finalizer first) ===
-    // Example: registry_internal! { @entry App, (inst_f, finalizer = fin_f, config = cfg_f) }
-    (@entry $scope:ident, $inst:ident, finalizer = $fin:expr, config = $cfg:expr) => {
-        $crate::registry_internal! { @entry_with_options $scope, $inst, config = Some($cfg), finalizer = Some($fin) }
-    };
-
-    // === Unified final expansion ===
-    // Example: registry_internal! { @entry_with_options App, inst_a, config = Some(cfg_a), finalizer = None }
-    (@entry_with_options $scope:ident, $inst:ident, config = $cfg:expr, finalizer = $fin:expr) => {{
-        let data = $crate::registry_macros::InstantiatorData {
-            instantiator: $crate::instantiator::boxed_instantiator($inst),
-            finalizer: match $fin {
-                Some(finalizer) => Some($crate::finalizer::boxed_finalizer_factory(finalizer)),
-                None => None,
-            },
-            config: match $cfg {
-                Some(config) => config,
-                None => $crate::Config::default(),
-            },
-            scope: $crate::DefaultScope::$scope,
-        };
-
-        tracing::debug!(
-            "entry: {}, scope: {}, config: {}, finalizer: {}",
-            stringify!($inst),
-            stringify!($scope),
-            stringify!($cfg),
-            stringify!($fin)
-        );
+    // === Entry with config and finalizer ===
+    (@entry_with_options scope($scope:expr), $inst:expr, config = $cfg:expr, finalizer = $fin:expr) => {{
+        #[inline]
+        fn impl_<Inst, Deps, Fin>(inst: Inst, fin: Option<Fin>) -> $crate::registry_macros::InstantiatorData
+        where
+            Inst: $crate::instantiator::Instantiator<Deps, Error = InstantiateErrorKind>
+                + $crate::utils::thread_safety::SendSafety
+                + $crate::utils::thread_safety::SyncSafety,
+            Inst::Provides:
+                  $crate::utils::thread_safety::SendSafety
+                + $crate::utils::thread_safety::SyncSafety,
+            Deps: $crate::dependency_resolver::DependencyResolver<Error = $crate::ResolveErrorKind>,
+            Fin: $crate::finalizer::Finalizer<Inst::Provides>
+                + $crate::utils::thread_safety::SendSafety
+                + $crate::utils::thread_safety::SyncSafety,
+        {
+            $crate::registry_macros::InstantiatorData {
+                type_id: core::any::TypeId::of::<Inst::Provides>(),
+                instantiator: $crate::instantiator::boxed_instantiator(inst),
+                finalizer: match fin {
+                    Some(finalizer) => Some($crate::finalizer::boxed_finalizer_factory(finalizer)),
+                    None => None,
+                },
+                config: match $cfg {
+                    Some(config) => config,
+                    None => $crate::Config::default(),
+                },
+                scope: $scope.into(),
+            }
+        }
+        impl_($inst, $fin)
     }};
 }
 
@@ -131,77 +129,95 @@ mod tests {
     };
     use tracing_test::traced_test;
 
-    use crate::{Config, DefaultScope, InstantiateErrorKind};
-
-    fn scope_a() -> DefaultScope {
-        DefaultScope::App
-    }
+    use crate::{utils::thread_safety::RcThreadSafety, Config, DefaultScope, Inject, InstantiateErrorKind};
 
     fn inst_a() -> Result<(), InstantiateErrorKind> {
         Ok(())
     }
-    fn inst_b() -> Result<(), InstantiateErrorKind> {
-        Ok(())
+    fn inst_b() -> Result<((), ()), InstantiateErrorKind> {
+        Ok(((), ()))
     }
-    fn inst_c() -> Result<(), InstantiateErrorKind> {
-        Ok(())
+    fn inst_c() -> Result<((), (), ()), InstantiateErrorKind> {
+        Ok(((), (), ()))
     }
-    fn inst_d() -> Result<(), InstantiateErrorKind> {
-        Ok(())
+    fn inst_d() -> Result<((), (), (), ()), InstantiateErrorKind> {
+        Ok(((), (), (), ()))
     }
-    fn inst_e() -> Result<(), InstantiateErrorKind> {
-        Ok(())
+    fn inst_e() -> Result<((), (), (), (), ()), InstantiateErrorKind> {
+        Ok(((), (), (), (), ()))
     }
-    fn inst_f() -> Result<(), InstantiateErrorKind> {
-        Ok(())
+    fn inst_f() -> Result<((), (), (), (), (), ()), InstantiateErrorKind> {
+        Ok(((), (), (), (), (), ()))
+    }
+
+    fn fin_a(_val: RcThreadSafety<()>) {}
+    fn fin_b(_val: RcThreadSafety<((), ())>) {}
+    fn fin_c(_val: RcThreadSafety<((), (), ())>) {}
+    fn fin_d(_val: RcThreadSafety<((), (), (), ())>) {}
+    fn fin_e(_val: RcThreadSafety<((), (), (), (), ())>) {}
+    fn fin_f(_val: RcThreadSafety<((), (), (), (), (), ())>) {}
+
+    #[test]
+    #[traced_test]
+    fn test_registry_mixed_entries() {
+        registry! {
+            scope(DefaultScope::App) [
+                provide(|| Ok(())), // вместо функции замыкание
+                provide(|Inject(_): Inject<()>| Ok(((), ()))),  // вместо функции замыкание + инъекция значения из фабрики что возвращает `()`, т.е. верхней
+                provide(inst_c, config = Config::default()),
+                provide(inst_d, finalizer = fin_d),
+                provide(inst_e, config = Config::default(), finalizer = fin_e),
+                provide(inst_f, finalizer = fin_f, config = Config::default()),
+            ]
+        };
     }
 
     #[test]
     #[traced_test]
     fn test_entry_simple_ident() {
-        registry_internal! { @entries scope [ inst_a ] };
+        registry_internal! { @entries scope(DefaultScope::App) [ provide(inst_a) ] };
     }
 
     #[test]
     #[traced_test]
     fn test_entry_tuple_single() {
-        registry_internal! { @entries scope [ (inst_a) ] };
+        registry_internal! { @entries scope(DefaultScope::App) [ provide(inst_a) ] };
     }
 
     #[test]
     #[traced_test]
     fn test_entry_with_config() {
-        registry_internal! { @entries scope [ (inst_a, config = Config::default()) ] };
+        registry_internal! { @entries scope(DefaultScope::App) [ provide(inst_a, config = Config::default()) ] };
     }
 
     #[test]
     #[traced_test]
     fn test_entry_with_finalizer() {
-        registry_internal! { @entries scope [ (inst_a, finalizer = |_: RcThreadSafety<()>| {}) ] };
+        registry_internal! { @entries scope(DefaultScope::App) [ provide(inst_a, finalizer = fin_a) ] };
     }
 
     #[test]
     #[traced_test]
     fn test_entry_with_config_and_finalizer() {
-        registry_internal! { @entries scope [ (inst_a, config = Config::default(), finalizer = |_: RcThreadSafety<()>| {}) ] };
+        registry_internal! { @entries scope(DefaultScope::App) [ provide(inst_a, config = Config::default(), finalizer = fin_a) ] };
     }
 
     #[test]
     #[traced_test]
     fn test_entry_with_finalizer_and_config_swapped() {
-        registry_internal! { @entries scope [ (inst_a, finalizer = |_: RcThreadSafety<()>| {}, config = Config::default()) ] };
+        registry_internal! { @entries scope(DefaultScope::App) [ provide(inst_a, finalizer = fin_a, config = Config::default()) ] };
     }
 
     #[test]
     #[traced_test]
     fn test_multiple_entries() {
         registry_internal! {
-            @entries scope [
-                inst_a,
-                (inst_b),
-                (inst_c, config = Config::default()),
-                (inst_d, finalizer = |_: RcThreadSafety<()>| {}),
-                (inst_e, config = Config::default(), finalizer = |_: RcThreadSafety<()>| {}),
+            @entries scope(DefaultScope::App) [
+                provide(inst_a),
+                provide(inst_b),
+                provide(inst_c, config = Config::default(), finalizer = fin_c),
+                provide(inst_d, finalizer = fin_d),
+                provide(inst_e, config = Config::default(), finalizer = fin_e),
             ]
         };
     }
@@ -210,8 +226,8 @@ mod tests {
     #[traced_test]
     fn test_trailing_comma_and_spaces() {
         registry_internal! {
-            @entries scope [
-                (inst_x, config = Config::default(), finalizer = |_: RcThreadSafety<()>| {}),
+            @entries scope(DefaultScope::App) [
+                provide(inst_a, config = Config::default(), finalizer = fin_a),
             ]
         };
     }
@@ -220,12 +236,12 @@ mod tests {
     #[traced_test]
     fn test_registry_single_scope_basic() {
         registry! {
-            scope(App) [
-                inst_a,
-                (inst_b),
-                (inst_c, config = cfg_c),
-                (inst_d, finalizer = fin_d),
-                (inst_e, config = cfg_e, finalizer = fin_e),
+            scope(DefaultScope::App) [
+                provide(inst_a),
+                provide(inst_b),
+                provide(inst_c, config = Config::default()),
+                provide(inst_d, finalizer = fin_d),
+                provide(inst_e, config = Config::default(), finalizer = fin_e),
             ],
         };
     }
@@ -234,13 +250,13 @@ mod tests {
     #[traced_test]
     fn test_registry_multiple_scopes() {
         registry! {
-            scope(App) [
-                inst_a,
-                (inst_b),
+            scope(DefaultScope::App) [
+                provide(inst_a),
+                provide(inst_b),
             ],
-            scope(Request) [
-                (inst_r1, config = cfg_r1),
-                (inst_r2, finalizer = fin_r2),
+            scope(DefaultScope::Request) [
+                provide(inst_c, config = Config::default()),
+                provide(inst_d, finalizer = fin_d),
             ],
         };
     }
@@ -249,7 +265,7 @@ mod tests {
     #[traced_test]
     fn test_registry_empty_scope() {
         registry! {
-            scope(Empty) []
+            scope(None) []
         };
     }
 
@@ -257,26 +273,29 @@ mod tests {
     #[traced_test]
     fn test_registry_trailing_commas_and_spacing() {
         registry! {
-            scope(App)[
-                inst_a,
-                (inst_b , config = cfg_b , finalizer = fin_b)
+            scope(DefaultScope::App)[
+                provide(inst_a),
+                provide(inst_b , config = Config::default() , finalizer = fin_b)
             ]
-            , scope(Request)[ (inst_x) , ]
+            , scope(DefaultScope::Request)[ provide(inst_c) , ]
         };
     }
 
     #[test]
     #[traced_test]
-    fn test_registry_mixed_entries() {
-        registry! {
-            scope(Mixed) [
-                inst_a,
-                (inst_b),
-                (inst_c, config = cfg_c),
-                (inst_d, finalizer = fin_d),
-                (inst_e, config = cfg_e, finalizer = fin_e),
-                (inst_f, finalizer = fin_f, config = cfg_f),
-            ]
+    fn test_registry_get() {
+        let registry = registry! {
+            scope(DefaultScope::App) [],
+            scope(DefaultScope::Session) [provide(inst_a), provide(inst_b), provide(inst_c)],
+            scope(DefaultScope::Request) [provide(inst_d), provide(inst_e), provide(inst_f)],
         };
+
+        assert!(registry.get::<()>().is_some());
+        assert!(registry.get::<((), ())>().is_some());
+        assert!(registry.get::<((), (), ())>().is_some());
+        assert!(registry.get::<((), (), (), ())>().is_some());
+        assert!(registry.get::<((), (), (), (), ())>().is_some());
+        assert!(registry.get::<((), (), (), (), (), ())>().is_some());
+        assert!(registry.get::<((), (), (), (), (), (), ())>().is_none());
     }
 }
