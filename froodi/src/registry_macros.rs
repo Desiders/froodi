@@ -1,13 +1,19 @@
+use alloc::{collections::btree_set::BTreeSet, vec::Vec};
 use core::any::TypeId;
 
 use crate::{
-    finalizer::BoxedCloneFinalizer, instantiator::BoxedCloneInstantiator, scope::ScopeData, utils::hlist::HListFind, Config,
-    InstantiateErrorKind, ResolveErrorKind,
+    errors::DFSErrorKind,
+    finalizer::BoxedCloneFinalizer,
+    instantiator::{BoxedCloneInstantiator, Dependency},
+    scope::ScopeData,
+    utils::hlist,
+    Config, InstantiateErrorKind, ResolveErrorKind,
 };
 
 #[derive(Clone)]
 pub(crate) struct InstantiatorData {
     pub(crate) instantiator: BoxedCloneInstantiator<ResolveErrorKind, InstantiateErrorKind>,
+    pub(crate) dependencies: BTreeSet<Dependency>,
     pub(crate) finalizer: Option<BoxedCloneFinalizer>,
     pub(crate) config: Config,
     pub(crate) scope: ScopeData,
@@ -23,9 +29,56 @@ impl<H> Registry<H> {
     pub fn get<Dep>(&self) -> Option<&InstantiatorData>
     where
         Dep: 'static,
-        H: HListFind<InstantiatorData, TypeId>,
+        H: hlist::Find<InstantiatorData, TypeId>,
     {
         self.entries.get(TypeId::of::<Dep>())
+    }
+
+    fn dfs_detect<'a>(&'a self) -> Result<(), DFSErrorKind>
+    where
+        H: hlist::Find<InstantiatorData, TypeId> + hlist::Iter<'a, InstantiatorData>,
+    {
+        let mut visited = BTreeSet::new();
+        let mut stack = Vec::new();
+
+        for inst in self.entries.iter() {
+            if self.dfs_visit(inst, &mut visited, &mut stack) {
+                return Err(DFSErrorKind::CyclicDependency {
+                    graph: (stack.remove(0), stack.into_boxed_slice()),
+                });
+            }
+        }
+        Ok(())
+    }
+
+    fn dfs_visit<'a>(
+        &self,
+        InstantiatorData { dependencies, type_id, .. }: &'a InstantiatorData,
+        visited: &'a mut BTreeSet<TypeId>,
+        stack: &'a mut Vec<TypeId>,
+    ) -> bool
+    where
+        H: hlist::Find<InstantiatorData, TypeId>,
+    {
+        if visited.contains(type_id) {
+            return false;
+        }
+        if stack.contains(type_id) {
+            return true;
+        }
+        stack.push(*type_id);
+
+        for Dependency { type_id } in dependencies {
+            if let Some(data) = self.entries.get(*type_id) {
+                if self.dfs_visit(data, visited, stack) {
+                    return true;
+                }
+            }
+        }
+
+        stack.pop();
+        visited.insert(*type_id);
+        false
     }
 }
 
@@ -41,10 +94,7 @@ macro_rules! registry {
                 $crate::registry_internal! { @entries scope($rest_scope) [ $($rest_entries)* ] }
             ),*
         ];
-
-        $crate::registry_macros::Registry {
-            entries,
-        }
+        $crate::registry_macros::Registry { entries }
     }};
 }
 
@@ -103,6 +153,7 @@ macro_rules! registry_internal {
         {
             $crate::registry_macros::InstantiatorData {
                 type_id: core::any::TypeId::of::<Inst::Provides>(),
+                dependencies: Inst::dependencies(),
                 instantiator: $crate::instantiator::boxed_instantiator(inst),
                 finalizer: match fin {
                     Some(finalizer) => Some($crate::finalizer::boxed_finalizer_factory(finalizer)),
@@ -129,7 +180,7 @@ mod tests {
     };
     use tracing_test::traced_test;
 
-    use crate::{utils::thread_safety::RcThreadSafety, Config, DefaultScope, Inject, InstantiateErrorKind};
+    use crate::{utils::thread_safety::RcThreadSafety, Config, DefaultScope, Inject, InjectTransient, InstantiateErrorKind};
 
     fn inst_a() -> Result<(), InstantiateErrorKind> {
         Ok(())
@@ -297,5 +348,56 @@ mod tests {
         assert!(registry.get::<((), (), (), (), ())>().is_some());
         assert!(registry.get::<((), (), (), (), (), ())>().is_some());
         assert!(registry.get::<((), (), (), (), (), (), ())>().is_none());
+    }
+
+    #[test]
+    #[traced_test]
+    fn test_registry_dfs_detect_ok() {
+        struct A;
+        struct B(A);
+        struct C(B, A);
+
+        let registry = registry! {
+            scope(DefaultScope::App) [
+                provide(|| Ok(A)),
+            ],
+            scope(DefaultScope::Session) [
+                provide(|InjectTransient(a): InjectTransient<A>| Ok(B(a))),
+            ],
+            scope(DefaultScope::Request) [
+                provide(|InjectTransient(b): InjectTransient<B>, InjectTransient(a): InjectTransient<A>| Ok(C(b, a))),
+            ],
+        };
+        registry.dfs_detect().unwrap();
+    }
+
+    #[test]
+    #[traced_test]
+    fn test_registry_dfs_detect_single_cylick() {
+        struct A;
+
+        let registry = registry! {
+            scope(DefaultScope::App) [
+                provide(|InjectTransient(_): InjectTransient<A>| Ok(A)),
+            ],
+        };
+        registry.dfs_detect().unwrap_err();
+    }
+
+    #[test]
+    #[traced_test]
+    fn test_registry_dfs_detect_many_cylick() {
+        struct A;
+        struct B;
+
+        let registry = registry! {
+            scope(DefaultScope::App) [
+                provide(|InjectTransient(_): InjectTransient<B>| Ok(A)),
+            ],
+            scope(DefaultScope::Session) [
+                provide(|InjectTransient(_): InjectTransient<A>| Ok(B)),
+            ],
+        };
+        registry.dfs_detect().unwrap_err();
     }
 }
