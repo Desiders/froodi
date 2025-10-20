@@ -1,3 +1,4 @@
+use core::any::TypeId;
 #[cfg(feature = "async")]
 use core::future::Future;
 
@@ -13,6 +14,13 @@ pub trait DependencyResolver: Sized {
 
     #[cfg(feature = "async")]
     fn resolve_async(container: &AsyncContainer) -> impl Future<Output = Result<Self, Self::Error>> + SendSafety;
+
+    fn type_id() -> TypeId
+    where
+        Self: 'static,
+    {
+        TypeId::of::<Self>()
+    }
 }
 
 macro_rules! impl_dependency_resolver {

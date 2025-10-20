@@ -1,3 +1,5 @@
+use core::any::TypeId;
+
 #[cfg(feature = "async")]
 use crate::async_impl::Container as AsyncContainer;
 use crate::{
@@ -19,6 +21,10 @@ impl<Dep: SendSafety + SyncSafety + 'static> DependencyResolver for Inject<Dep> 
     async fn resolve_async(container: &AsyncContainer) -> Result<Self, Self::Error> {
         container.get().await.map(Self)
     }
+
+    fn type_id() -> TypeId {
+        TypeId::of::<Dep>()
+    }
 }
 
 pub struct InjectTransient<Dep, const PREFER_SYNC_OVER_ASYNC: bool = true>(pub Dep);
@@ -33,5 +39,9 @@ impl<Dep: 'static> DependencyResolver for InjectTransient<Dep> {
     #[cfg(feature = "async")]
     async fn resolve_async(container: &AsyncContainer) -> Result<Self, Self::Error> {
         container.get_transient().await.map(Self)
+    }
+
+    fn type_id() -> TypeId {
+        TypeId::of::<Dep>()
     }
 }

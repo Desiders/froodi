@@ -1,5 +1,5 @@
-use alloc::boxed::Box;
-use core::any::Any;
+use alloc::{boxed::Box, collections::btree_set::BTreeSet};
+use core::any::{Any, TypeId};
 use tracing::debug;
 
 use super::{
@@ -11,6 +11,10 @@ use crate::{
     utils::thread_safety::{SendSafety, SyncSafety},
     Container, ResolveErrorKind,
 };
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Dependency {
+    pub type_id: TypeId,
+}
 
 pub trait Instantiator<Deps>: Clone + 'static
 where
@@ -20,6 +24,8 @@ where
     type Error: Into<InstantiateErrorKind>;
 
     fn instantiate(&mut self, dependencies: Deps) -> Result<Self::Provides, Self::Error>;
+
+    fn dependencies() -> BTreeSet<Dependency>;
 }
 
 /// Config for an instantiator
@@ -82,13 +88,25 @@ macro_rules! impl_instantiator {
             F: FnMut($($ty,)*) -> Result<Response, Err> + Clone + 'static,
             Response: 'static,
             Err: Into<InstantiateErrorKind>,
-            $( $ty: DependencyResolver + SendSafety, )*
+            $( $ty: DependencyResolver + SendSafety + 'static, )*
         {
             type Provides = Response;
             type Error = Err;
 
+            #[inline]
             fn instantiate(&mut self, ($($ty,)*): ($($ty,)*)) -> Result<Self::Provides, Self::Error> {
                 self($($ty,)*)
+            }
+
+            #[inline]
+            fn dependencies() -> BTreeSet<Dependency> {
+                BTreeSet::from_iter([
+                    $(
+                        Dependency {
+                            type_id: $ty::type_id(),
+                        }
+                    ),*
+                ])
             }
         }
     };
