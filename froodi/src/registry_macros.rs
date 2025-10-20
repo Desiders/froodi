@@ -96,6 +96,20 @@ macro_rules! registry {
         ];
         $crate::registry_macros::Registry { entries }
     }};
+
+    (
+        scope($scope:expr) [ $( $entries:tt )* ]
+        $(, scope($rest_scope:expr) [ $( $rest_entries:tt )* ] )*,
+        extend = [ $( $registries:expr ),+ $(,)? ] $(,)?
+    ) => {{
+        let registry = registry! {
+            scope($scope) [ $( $entries )* ]
+            $(, scope($rest_scope) [ $( $rest_entries )* ] )*
+        };
+        $crate::registry_macros::Registry {
+            entries: registry.entries $( + $registries.entries)*,
+        }
+    }};
 }
 
 #[macro_export]
@@ -373,7 +387,7 @@ mod tests {
 
     #[test]
     #[traced_test]
-    fn test_registry_dfs_detect_single_cylick() {
+    fn test_registry_dfs_detect_single() {
         struct A;
 
         let registry = registry! {
@@ -386,7 +400,7 @@ mod tests {
 
     #[test]
     #[traced_test]
-    fn test_registry_dfs_detect_many_cylick() {
+    fn test_registry_dfs_detect_many() {
         struct A;
         struct B;
 
@@ -399,5 +413,36 @@ mod tests {
             ],
         };
         registry.dfs_detect().unwrap_err();
+    }
+
+    #[test]
+    #[traced_test]
+    fn registry_extend_entries() {
+        let registry = registry! {
+            scope(DefaultScope::Session) [provide(inst_a)],
+            extend = [
+                registry! {
+                    scope(DefaultScope::App) [provide(inst_b)],
+                    extend = [
+                        registry! {
+                            scope(DefaultScope::Session) [provide(inst_c)],
+                        },
+                        registry! {
+                            scope(DefaultScope::Request) [provide(inst_d)],
+                        },
+                    ],
+                },
+                registry! {
+                    scope(DefaultScope::Session) [provide(inst_e)],
+                    extend = [
+                        registry! {
+                            scope(DefaultScope::Session) [provide(inst_f)],
+                        },
+                    ],
+                },
+            ],
+        };
+
+        assert_eq!(registry.entries.len(), 6);
     }
 }
