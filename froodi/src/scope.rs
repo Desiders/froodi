@@ -1,3 +1,5 @@
+use alloc::vec::Vec;
+
 pub trait Scope: Ord + Into<ScopeData> {
     #[must_use]
     fn name(&self) -> &'static str;
@@ -73,9 +75,45 @@ impl Scopes<6> for DefaultScope {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ScopeData {
     pub priority: u8,
     pub name: &'static str,
     pub is_skipped_by_default: bool,
+}
+
+pub(crate) struct ScopeDataWithChildScopesData<'a> {
+    scope_data: Option<&'a ScopeData>,
+    child_scopes_data: Vec<&'a ScopeData>,
+}
+
+impl<'a> ScopeDataWithChildScopesData<'a> {
+    pub fn new(mut scopes: Vec<&'a ScopeData>) -> Self {
+        scopes.sort_by_key(|scope| scope.priority);
+        let mut iter = scopes.into_iter();
+        match iter.next() {
+            Some(scope_data) => Self {
+                scope_data: Some(scope_data),
+                child_scopes_data: iter.collect(),
+            },
+            None => Self {
+                scope_data: None,
+                child_scopes_data: Vec::new(),
+            },
+        }
+    }
+
+    pub fn child(&self) -> Self {
+        let mut iter = self.child_scopes_data.iter();
+        match iter.next() {
+            Some(scope_data) => Self {
+                scope_data: Some(*scope_data),
+                child_scopes_data: iter.map(|val| *val).collect(),
+            },
+            None => Self {
+                scope_data: None,
+                child_scopes_data: Vec::new(),
+            },
+        }
+    }
 }

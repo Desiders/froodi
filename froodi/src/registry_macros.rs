@@ -5,7 +5,7 @@ use crate::{
     errors::DFSErrorKind,
     finalizer::BoxedCloneFinalizer,
     instantiator::{BoxedCloneInstantiator, Dependency},
-    scope::ScopeData,
+    scope::{ScopeData, ScopeDataWithChildScopesData},
     utils::hlist,
     Config, InstantiateErrorKind, ResolveErrorKind,
 };
@@ -23,15 +23,22 @@ pub(crate) struct InstantiatorData {
 #[derive(Clone)]
 pub struct Registry<H> {
     pub entries: H,
+    pub scopes_data: BTreeSet<ScopeData>,
 }
 
 impl<H> Registry<H> {
+    #[inline]
     pub fn get<Dep>(&self) -> Option<&InstantiatorData>
     where
         Dep: 'static,
         H: hlist::Find<InstantiatorData, TypeId>,
     {
         self.entries.get(TypeId::of::<Dep>())
+    }
+
+    #[inline]
+    pub fn get_scope_with_child_scopes(&self) -> ScopeDataWithChildScopesData {
+        ScopeDataWithChildScopesData::new(self.scopes_data.iter().collect())
     }
 
     fn dfs_detect<'a>(&'a self) -> Result<(), DFSErrorKind>
@@ -94,7 +101,11 @@ macro_rules! registry {
                 $crate::registry_internal! { @entries scope($rest_scope) [ $($rest_entries)* ] }
             ),*
         ];
-        $crate::registry_macros::Registry { entries }
+        let scopes_data = alloc::collections::btree_set::BTreeSet::from_iter([
+            $scope.into(),
+            $( $rest_scope.into() ),*
+        ]);
+        $crate::registry_macros::Registry { entries, scopes_data }
     }};
 
     (
@@ -102,12 +113,15 @@ macro_rules! registry {
         $(, scope($rest_scope:expr) [ $( $rest_entries:tt )* ] )*,
         extend = [ $( $registries:expr ),+ $(,)? ] $(,)?
     ) => {{
-        let registry = registry! {
+        let $crate::registry_macros::Registry { entries, mut scopes_data } = registry! {
             scope($scope) [ $( $entries )* ]
             $(, scope($rest_scope) [ $( $rest_entries )* ] )*
         };
+        $( scopes_data.extend($registries.scopes_data); )*
+
         $crate::registry_macros::Registry {
-            entries: registry.entries $( + $registries.entries)*,
+            entries: entries $( + $registries.entries)*,
+            scopes_data,
         }
     }};
 }
@@ -330,7 +344,7 @@ mod tests {
     #[traced_test]
     fn test_registry_empty_scope() {
         registry! {
-            scope(None) []
+            scope(DefaultScope::App) []
         };
     }
 
