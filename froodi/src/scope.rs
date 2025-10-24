@@ -82,13 +82,13 @@ pub struct ScopeData {
     pub is_skipped_by_default: bool,
 }
 
-pub(crate) struct ScopeDataWithChildScopesData<'a> {
-    scope_data: Option<&'a ScopeData>,
-    child_scopes_data: Vec<&'a ScopeData>,
+pub(crate) struct ScopeDataWithChildScopesData {
+    pub scope_data: Option<ScopeData>,
+    pub child_scopes_data: Vec<ScopeData>,
 }
 
-impl<'a> ScopeDataWithChildScopesData<'a> {
-    pub fn new(mut scopes: Vec<&'a ScopeData>) -> Self {
+impl ScopeDataWithChildScopesData {
+    pub fn new(mut scopes: Vec<ScopeData>) -> Self {
         scopes.sort_by_key(|scope| scope.priority);
         let mut iter = scopes.into_iter();
         match iter.next() {
@@ -103,12 +103,12 @@ impl<'a> ScopeDataWithChildScopesData<'a> {
         }
     }
 
-    pub fn child(&self) -> Self {
-        let mut iter = self.child_scopes_data.iter();
+    pub fn child(self) -> Self {
+        let mut iter = self.child_scopes_data.into_iter();
         match iter.next() {
             Some(scope_data) => Self {
-                scope_data: Some(*scope_data),
-                child_scopes_data: iter.map(|val| *val).collect(),
+                scope_data: Some(scope_data),
+                child_scopes_data: iter.collect(),
             },
             None => Self {
                 scope_data: None,
