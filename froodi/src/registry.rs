@@ -6,11 +6,13 @@ use core::any::TypeId;
 
 use crate::{
     dependency::Dependency,
+    dependency_resolver::DependencyResolver,
     errors::DFSErrorKind,
-    finalizer::BoxedCloneFinalizer,
-    instantiator::BoxedCloneInstantiator,
+    finalizer::{boxed_finalizer_factory, BoxedCloneFinalizer},
+    instantiator::{boxed_container_instantiator, boxed_instantiator, BoxedCloneInstantiator, Instantiator},
     scope::{ScopeData, ScopeDataWithChildScopesData},
-    Config, InstantiateErrorKind, ResolveErrorKind,
+    utils::thread_safety::{SendSafety, SyncSafety},
+    Config, Container, Finalizer, InstantiateErrorKind, ResolveErrorKind, Scope,
 };
 
 #[derive(Clone)]
@@ -31,7 +33,7 @@ pub struct Registry {
 impl Registry {
     #[inline]
     pub(crate) fn get(&self, type_id: &TypeId) -> Option<&InstantiatorData> {
-        self.entries.get(&type_id)
+        self.entries.get(type_id)
     }
 
     #[inline]
@@ -87,26 +89,11 @@ macro_rules! registry {
     (
         $( scope($scope:expr) [ $( $entries:tt )* ] ),* $(,)?
     ) => {{
-        #[allow(unused_mut)]
-        let mut entries = ::alloc::collections::BTreeMap::new();
-        #[allow(unused_mut)]
-        let mut scopes_data = ::alloc::collections::BTreeSet::new();
-        $(
-            let scope_data = $scope.into();
-            scopes_data.insert(scope_data);
-            entries.insert(
-                ::core::any::TypeId::of::<$crate::Container>(),
-                $crate::registry::InstantiatorData {
-                    instantiator: $crate::instantiator::boxed_container_instantiator(),
-                    dependencies: ::alloc::collections::BTreeSet::new(),
-                    finalizer: None,
-                    config: $crate::Config { cache_provides: true },
-                    scope_data,
-                },
-            );
-            entries.extend($crate::registry_internal! { @entries scope($scope) [ $( $entries )* ] });
-        )*
-        $crate::registry::Registry { entries, scopes_data }
+        $crate::registry::_build_registry([
+            $(
+                ($scope, $crate::registry_internal! { @entries scope($scope) [ $( $entries )* ] })
+            ),*
+        ])
     }};
 
     (
@@ -126,68 +113,93 @@ macro_rules! registry {
 #[doc(hidden)]
 macro_rules! registry_internal {
     (@entries scope($scope:expr) [ $( provide( $($entry:tt)+ ) ),* $(,)? ]) => {{
-        ::alloc::collections::BTreeMap::from_iter([ $( $crate::registry_internal! { @entry scope($scope), $($entry)+ } ),* ])
-    }};
-
-    (@entry scope($scope:expr), $inst:expr) => {{
-        $crate::registry_internal! { @entry_with_options scope($scope), $inst, config = None, finalizer = None::<fn(_)> }
-    }};
-    (@entry scope($scope:expr), $inst:expr, config = $cfg:expr) => {{
-        $crate::registry_internal! { @entry_with_options scope($scope), $inst, config = Some($cfg), finalizer = None::<fn(_)> }
-    }};
-    (@entry scope($scope:expr), $inst:expr, finalizer = $fin:expr) => {{
-        $crate::registry_internal! { @entry_with_options scope($scope), $inst, config = None, finalizer = Some($fin) }
-    }};
-    (@entry scope($scope:expr), $inst:expr, config = $cfg:expr, finalizer = $fin:expr) => {{
-        $crate::registry_internal! { @entry_with_options scope($scope), $inst, config = Some($cfg), finalizer = Some($fin) }
-    }};
-    (@entry scope($scope:expr), $inst:expr, finalizer = $fin:expr, config = $cfg:expr) => {{
-        $crate::registry_internal! { @entry_with_options scope($scope), $inst, config = Some($cfg), finalizer = Some($fin) }
-    }};
-
-    (@entry_with_options scope($scope:expr), $inst:expr, config = $cfg:expr, finalizer = $fin:expr) => {{
-        #[inline]
-        fn impl_<Inst, Deps, Fin>(inst: Inst, fin: Option<Fin>) -> (core::any::TypeId, $crate::registry::InstantiatorData)
-        where
-            Inst: $crate::instantiator::Instantiator<Deps, Error = $crate::InstantiateErrorKind>
-                + $crate::utils::thread_safety::SendSafety
-                + $crate::utils::thread_safety::SyncSafety,
-            Inst::Provides:
-                  $crate::utils::thread_safety::SendSafety
-                + $crate::utils::thread_safety::SyncSafety,
-            Deps: $crate::dependency_resolver::DependencyResolver<Error = $crate::ResolveErrorKind>,
-            Fin:  $crate::finalizer::Finalizer<Inst::Provides>
-                + $crate::utils::thread_safety::SendSafety
-                + $crate::utils::thread_safety::SyncSafety,
+        #[cfg(feature = "std")]
         {
-            (::core::any::TypeId::of::<Inst::Provides>(), $crate::registry::InstantiatorData {
-                dependencies: Inst::dependencies(),
-                instantiator: $crate::instantiator::boxed_instantiator(inst),
-                finalizer: match fin {
-                    Some(finalizer) => Some($crate::finalizer::boxed_finalizer_factory(finalizer)),
-                    None => None,
-                },
-                config: match $cfg {
-                    Some(config) => config,
-                    None => $crate::Config::default(),
-                },
-                scope_data: $scope.into(),
-            })
+            std::vec::Vec::from_iter([$( $crate::registry_internal! { @entry scope($scope), $($entry)+ } ),*])
         }
-        impl_($inst, $fin)
+        #[cfg(all(not(feature = "std")))]
+        {
+            alloc::vec::Vec::from_iter([$( $crate::registry_internal! { @entry scope($scope), $($entry)+ } ),*])
+        }
     }};
+    (@entry scope($scope:expr), $inst:expr $(,)?) => {{
+        $crate::registry::_make_entry($scope, $inst, None, None::<fn(_)>)
+    }};
+    (@entry scope($scope:expr), $inst:expr, config = $cfg:expr $(,)?) => {{
+        $crate::registry::_make_entry($scope, $inst, Some($cfg), None::<fn(_)>)
+    }};
+    (@entry scope($scope:expr), $inst:expr, finalizer = $fin:expr $(,)?) => {{
+        $crate::registry::_make_entry($scope, $inst, None, Some($fin))
+    }};
+    (@entry scope($scope:expr), $inst:expr, config = $cfg:expr, finalizer = $fin:expr $(,)?) => {{
+        $crate::registry::_make_entry($scope, $inst, Some($cfg), Some($fin))
+    }};
+    (@entry scope($scope:expr), $inst:expr, finalizer = $fin:expr, config = $cfg:expr $(,)?) => {{
+        $crate::registry::_make_entry($scope, $inst, Some($cfg), Some($fin))
+    }};
+}
+
+#[inline]
+#[doc(hidden)]
+pub fn _build_registry<const N: usize>(scopes: [(impl Scope, Vec<(TypeId, InstantiatorData)>); N]) -> Registry {
+    let mut entries = BTreeMap::new();
+    let mut scopes_data = BTreeSet::new();
+
+    for (scope, scope_entries) in scopes {
+        let scope_data = scope.into();
+        scopes_data.insert(scope_data);
+
+        entries.insert(
+            TypeId::of::<Container>(),
+            InstantiatorData {
+                instantiator: boxed_container_instantiator(),
+                dependencies: BTreeSet::new(),
+                finalizer: None,
+                config: Config { cache_provides: true },
+                scope_data,
+            },
+        );
+        for (type_id, data) in scope_entries {
+            entries.insert(type_id, data);
+        }
+    }
+
+    Registry { entries, scopes_data }
+}
+
+#[inline]
+#[doc(hidden)]
+pub fn _make_entry<Inst, Deps, Fin>(scope: impl Scope, inst: Inst, config: Option<Config>, fin: Option<Fin>) -> (TypeId, InstantiatorData)
+where
+    Inst: Instantiator<Deps, Error = InstantiateErrorKind> + SendSafety + SyncSafety,
+    Inst::Provides: SendSafety + SyncSafety,
+    Deps: DependencyResolver<Error = ResolveErrorKind>,
+    Fin: Finalizer<Inst::Provides> + SendSafety + SyncSafety,
+{
+    (
+        TypeId::of::<Inst::Provides>(),
+        InstantiatorData {
+            dependencies: Inst::dependencies(),
+            instantiator: boxed_instantiator(inst),
+            finalizer: match fin {
+                Some(finalizer) => Some(boxed_finalizer_factory(finalizer)),
+                None => None,
+            },
+            config: config.unwrap_or_default(),
+            scope_data: scope.into(),
+        },
+    )
 }
 
 #[cfg(test)]
 mod tests {
     extern crate std;
 
-    use core::any::TypeId;
-
     use alloc::{
         format,
         string::{String, ToString as _},
     };
+    use core::any::TypeId;
     use tracing_test::traced_test;
 
     use crate::{utils::thread_safety::RcThreadSafety, Config, DefaultScope, Inject, InjectTransient, InstantiateErrorKind};
@@ -336,7 +348,7 @@ mod tests {
         registry! {
             scope(DefaultScope::App)[
                 provide(inst_a),
-                provide(inst_b , config = Config::default() , finalizer = fin_b)
+                provide(inst_b , config = Config::default() , finalizer = fin_b ,)
             ]
             , scope(DefaultScope::Request)[ provide(inst_c) , ]
         };
@@ -439,6 +451,6 @@ mod tests {
             ),
         };
 
-        assert_eq!(registry.entries.len(), 6);
+        assert_eq!(registry.entries.len(), 7);
     }
 }
