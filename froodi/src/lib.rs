@@ -10,6 +10,7 @@ pub(crate) mod cache;
 pub(crate) mod config;
 pub(crate) mod container;
 pub(crate) mod context;
+pub(crate) mod dependency;
 pub(crate) mod dependency_resolver;
 pub(crate) mod errors;
 pub(crate) mod finalizer;
@@ -17,7 +18,6 @@ pub(crate) mod inject;
 pub(crate) mod instantiator;
 pub(crate) mod integrations;
 pub(crate) mod registry;
-pub(crate) mod registry_macros;
 pub(crate) mod scope;
 pub(crate) mod service;
 
@@ -33,7 +33,7 @@ pub use errors::{InstantiateErrorKind, InstantiatorResult, ResolveErrorKind, Sco
 pub use finalizer::Finalizer;
 pub use inject::{Inject, InjectTransient};
 pub use instantiator::instance;
-pub use registry::RegistryBuilder;
+pub use registry::Registry;
 pub use scope::{DefaultScope, Scope, Scopes};
 
 #[cfg(feature = "axum")]
