@@ -36,14 +36,14 @@ macro_rules! impl_dependency_resolver {
 
             #[inline]
             #[allow(unused_variables)]
-            fn resolve(container:  &Container) -> Result<Self, Self::Error> {
+            fn resolve(container: &Container) -> Result<Self, Self::Error> {
                 Ok(($($ty::resolve(container).map_err(Into::into)?,)*))
             }
 
             #[inline]
             #[allow(unused_variables)]
             #[cfg(feature = "async")]
-            async fn resolve_async(container:  &AsyncContainer) -> Result<Self, Self::Error> {
+            async fn resolve_async(container: &AsyncContainer) -> Result<Self, Self::Error> {
                 Ok(($($ty::resolve_async(container).await.map_err(Into::into)?,)*))
             }
         }
@@ -60,10 +60,10 @@ mod tests {
     use crate::{
         errors::InstantiateErrorKind,
         inject::{Inject, InjectTransient},
-        instance,
+        instance, registry,
         scope::DefaultScope::*,
         utils::thread_safety::RcThreadSafety,
-        Container, RegistryBuilder,
+        Container,
     };
 
     use alloc::{
@@ -95,9 +95,9 @@ mod tests {
     fn test_scoped_resolve() {
         let instantiator_request_call_count = RcThreadSafety::new(AtomicU8::new(0));
 
-        let registry_builder = RegistryBuilder::new()
-            .provide(
-                {
+        let container = Container::new(registry! {
+            scope(App) [
+                provide({
                     let instantiator_request_call_count = instantiator_request_call_count.clone();
                     move || {
                         instantiator_request_call_count.fetch_add(1, Ordering::SeqCst);
@@ -105,12 +105,10 @@ mod tests {
                         debug!("Call instantiator request");
                         Ok::<_, InstantiateErrorKind>(Request)
                     }
-                },
-                App,
-            )
-            .provide(instance(Instance), App);
-
-        let container = Container::new(registry_builder);
+                }),
+                provide(instance(Instance)),
+            ]
+        });
 
         let request_1 = Inject::<Request>::resolve(&container).unwrap();
         let request_2 = Inject::<Request>::resolve(&container).unwrap();
@@ -125,20 +123,19 @@ mod tests {
     fn test_transient_resolve() {
         let instantiator_request_call_count = RcThreadSafety::new(AtomicU8::new(0));
 
-        let registry_builder = RegistryBuilder::new().provide(
-            {
-                let instantiator_request_call_count = instantiator_request_call_count.clone();
-                move || {
-                    instantiator_request_call_count.fetch_add(1, Ordering::SeqCst);
+        let container = Container::new(registry! {
+            scope(App) [
+                provide({
+                    let instantiator_request_call_count = instantiator_request_call_count.clone();
+                    move || {
+                        instantiator_request_call_count.fetch_add(1, Ordering::SeqCst);
 
-                    debug!("Call instantiator request");
-                    Ok::<_, InstantiateErrorKind>(Request)
-                }
-            },
-            App,
-        );
-
-        let container = Container::new(registry_builder);
+                        debug!("Call instantiator request");
+                        Ok::<_, InstantiateErrorKind>(Request)
+                    }
+                }),
+            ]
+        });
 
         let _ = InjectTransient::<Request>::resolve(&container).unwrap();
         InjectTransient::<Request>::resolve(&container).unwrap();
