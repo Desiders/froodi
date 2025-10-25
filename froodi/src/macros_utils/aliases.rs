@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 #[cfg(feature = "std")]
 mod std {
     extern crate std;

@@ -42,14 +42,14 @@ impl Container {
             cache: Cache::new(),
             context: Context::new(),
             registry: registry.clone(),
-            scope_data: scope_with_child_scopes.scope_data.clone().expect("scopes len (is 0) should be > 0"),
+            scope_data: scope_with_child_scopes.scope_data.expect("scopes len (is 0) should be > 0"),
             child_scopes_data: scope_with_child_scopes.child_scopes_data.clone(),
             parent: None,
             close_parent: false,
         };
 
         let mut child = scope_with_child_scopes.child();
-        let mut scope_data = child.scope_data.clone().expect("scopes len (is 1) should be > 1");
+        let mut scope_data = child.scope_data.expect("scopes len (is 1) should be > 1");
 
         let mut search_next = container.scope_data.is_skipped_by_default;
         while search_next {
@@ -81,7 +81,7 @@ impl Container {
             cache: Cache::new(),
             context: Context::new(),
             registry: registry.clone(),
-            scope_data: scope_with_child_scopes.scope_data.clone().expect("scopes len (is 0) should be > 0"),
+            scope_data: scope_with_child_scopes.scope_data.expect("scopes len (is 0) should be > 0"),
             child_scopes_data: scope_with_child_scopes.child_scopes_data.clone(),
             parent: None,
             close_parent: false,
@@ -93,7 +93,7 @@ impl Container {
         }
 
         let mut child = scope_with_child_scopes.child();
-        let mut scope_data = child.scope_data.clone().expect("last scope can't be with another priority");
+        let mut scope_data = child.scope_data.expect("last scope can't be with another priority");
 
         let mut search_next = container.scope_data.priority != priority;
         while search_next {

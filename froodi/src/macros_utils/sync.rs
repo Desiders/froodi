@@ -39,10 +39,7 @@ where
         InstantiatorData {
             dependencies: Inst::dependencies(),
             instantiator: boxed_instantiator(inst),
-            finalizer: match fin {
-                Some(finalizer) => Some(boxed_finalizer_factory(finalizer)),
-                None => None,
-            },
+            finalizer: fin.map(boxed_finalizer_factory),
             config: config.unwrap_or_default(),
             scope_data: scope.into(),
         },

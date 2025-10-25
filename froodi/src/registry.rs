@@ -56,6 +56,7 @@ impl Registry {
         Self { entries, scopes_data }
     }
 
+    #[allow(clippy::should_implement_trait)]
     pub fn default() -> Self {
         Self::new::<DefaultScope, DefaultScope, 6>(BTreeMap::new())
     }
@@ -72,7 +73,7 @@ impl Registry {
         ScopeDataWithChildScopesData::new_with_sort(self.scopes_data.clone().into_iter().collect())
     }
 
-    pub(crate) fn dfs_detect<'a>(&'a self) -> Result<(), DFSErrorKind> {
+    pub(crate) fn dfs_detect(&self) -> Result<(), DFSErrorKind> {
         let mut visited = BTreeSet::new();
         let mut stack = Vec::new();
 
