@@ -15,7 +15,7 @@ use crate::{
     errors::DFSErrorKind,
     scope::{ScopeData, ScopeDataWithChildScopesData},
     utils::thread_safety::{SendSafety, SyncSafety},
-    Config, InstantiateErrorKind, Registry as SyncRegistry, ResolveErrorKind, Scope,
+    Config, DefaultScope, InstantiateErrorKind, Registry as SyncRegistry, ResolveErrorKind, Scope, Scopes,
 };
 
 #[derive(Clone)]
@@ -27,10 +27,43 @@ pub(crate) struct InstantiatorData {
     pub(crate) scope_data: ScopeData,
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct Registry {
     pub(crate) entries: BTreeMap<TypeId, InstantiatorData>,
-    pub(crate) scopes_data: BTreeSet<ScopeData>,
+    pub(crate) scopes_data: Vec<ScopeData>,
+}
+
+impl Registry {
+    pub(crate) fn new<T, S, const N: usize>(mut entries: BTreeMap<TypeId, InstantiatorData>) -> Self
+    where
+        S: Scope,
+        T: Scopes<N, Scope = S>,
+    {
+        const DEPENDENCIES: BTreeSet<Dependency> = BTreeSet::new();
+
+        let mut scopes_data = Vec::with_capacity(N);
+        for scope in T::all() {
+            let scope_data = scope.into();
+
+            entries.insert(
+                TypeId::of::<Container>(),
+                InstantiatorData {
+                    instantiator: boxed_container_instantiator(),
+                    dependencies: DEPENDENCIES,
+                    finalizer: None,
+                    config: Config { cache_provides: true },
+                    scope_data,
+                },
+            );
+            scopes_data.push(scope_data);
+        }
+
+        Self { entries, scopes_data }
+    }
+
+    pub(crate) fn default() -> Self {
+        Self::new::<DefaultScope, DefaultScope, 6>(BTreeMap::new())
+    }
 }
 
 #[derive(Clone)]
@@ -95,8 +128,15 @@ impl Registry {
 
 #[macro_export]
 macro_rules! async_registry {
+    () => {{
+        $crate::async_impl::registry::RegistryWithSync {
+            registry: $crate::async_impl::Registry::default(),
+            sync: $crate::Registry::default(),
+        }
+    }};
+
     (
-        $( scope($scope:expr) [ $( $entries:tt )* ] ),* $(,)?
+        $( scope($scope:expr) [ $( $entries:tt )* ] ),+ $(,)?
     ) => {{
         $crate::async_impl::registry::RegistryWithSync {
             registry: $crate::async_impl::registry::_build_registry([
@@ -104,7 +144,7 @@ macro_rules! async_registry {
                     ($scope, $crate::async_registry_internal! { @entries scope($scope) [ $( $entries )* ] })
                 ),*
             ]),
-            sync: Default::default(),
+            sync: $crate::Registry::default(),
         }
     }};
 
@@ -176,30 +216,17 @@ macro_rules! async_registry_internal {
 
 #[inline]
 #[doc(hidden)]
-pub fn _build_registry<const N: usize>(scopes: [(impl Scope, Vec<(TypeId, InstantiatorData)>); N]) -> Registry {
+pub fn _build_registry<S, const SCOPES_N: usize, const N: usize>(scopes_entries: [(S, Vec<(TypeId, InstantiatorData)>); N]) -> Registry
+where
+    S: Scope + Scopes<SCOPES_N, Scope = S>,
+{
     let mut entries = BTreeMap::new();
-    let mut scopes_data = BTreeSet::new();
-
-    for (scope, scope_entries) in scopes {
-        let scope_data = scope.into();
-        scopes_data.insert(scope_data);
-
-        entries.insert(
-            TypeId::of::<Container>(),
-            InstantiatorData {
-                instantiator: boxed_container_instantiator(),
-                dependencies: BTreeSet::new(),
-                finalizer: None,
-                config: Config { cache_provides: true },
-                scope_data,
-            },
-        );
+    for (_, scope_entries) in scopes_entries {
         for (type_id, data) in scope_entries {
             entries.insert(type_id, data);
         }
     }
-
-    Registry { entries, scopes_data }
+    Registry::new::<S, S, SCOPES_N>(entries)
 }
 
 #[inline]

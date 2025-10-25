@@ -17,7 +17,7 @@ use crate::{
     context::Context,
     errors::{InstantiatorErrorKind, ResolveErrorKind, ScopeErrorKind, ScopeWithErrorKind},
     registry::Registry as SyncRegistry,
-    scope::{Scope, ScopeData},
+    scope::{Scope, ScopeData, ScopeDataWithChildScopesData},
     utils::thread_safety::{RcThreadSafety, SendSafety, SyncSafety},
 };
 
@@ -501,7 +501,7 @@ impl ChildContainerBuiler {
     pub fn build(self) -> Result<Container, ScopeErrorKind> {
         use ScopeErrorKind::{NoChildRegistries, NoNonSkippedRegistries};
 
-        let scope_with_child_scopes = self.container.inner.registry.get_scope_with_child_scopes();
+        let scope_with_child_scopes = self.container.inner.get_scope_with_child_scopes().child();
         let registry = self.container.inner.registry.clone();
         let sync_registry = self.container.sync.inner.registry.clone();
         let sync_container = self.container.sync.clone();
@@ -515,7 +515,7 @@ impl ChildContainerBuiler {
             false,
         );
         while child.inner.scope_data.is_skipped_by_default {
-            let scope_with_child_scopes = child.inner.registry.get_scope_with_child_scopes();
+            let scope_with_child_scopes = child.inner.get_scope_with_child_scopes().child();
             let registry = child.inner.registry.clone();
             let sync_registry = child.sync.inner.registry.clone();
             let sync_container = child.sync.clone();
@@ -564,7 +564,7 @@ where
     pub fn build(self) -> Result<Container, ScopeWithErrorKind> {
         use ScopeWithErrorKind::{NoChildRegistries, NoChildRegistriesWithScope};
 
-        let scope_with_child_scopes = self.container.inner.registry.get_scope_with_child_scopes();
+        let scope_with_child_scopes = self.container.inner.get_scope_with_child_scopes().child();
         let registry = self.container.inner.registry.clone();
         let sync_registry = self.container.sync.inner.registry.clone();
         let sync_container = self.container.sync.clone();
@@ -579,7 +579,7 @@ where
             false,
         );
         while child.inner.scope_data.priority != priority {
-            let scope_with_child_scopes = child.inner.registry.get_scope_with_child_scopes();
+            let scope_with_child_scopes = child.inner.get_scope_with_child_scopes().child();
             let registry = child.inner.registry.clone();
             let sync_registry = child.sync.inner.registry.clone();
             let sync_container = child.sync.clone();
@@ -628,7 +628,7 @@ impl ChildContainerWithContext {
     pub fn build(self) -> Result<Container, ScopeErrorKind> {
         use ScopeErrorKind::{NoChildRegistries, NoNonSkippedRegistries};
 
-        let scope_with_child_scopes = self.container.inner.registry.get_scope_with_child_scopes();
+        let scope_with_child_scopes = self.container.inner.get_scope_with_child_scopes().child();
         let context = self.context.clone();
         let registry = self.container.inner.registry.clone();
         let sync_registry = self.container.sync.inner.registry.clone();
@@ -644,7 +644,7 @@ impl ChildContainerWithContext {
             false,
         );
         while child.inner.scope_data.is_skipped_by_default {
-            let scope_with_child_scopes = child.inner.registry.get_scope_with_child_scopes();
+            let scope_with_child_scopes = child.inner.get_scope_with_child_scopes().child();
             let context = self.context.clone();
             let registry = child.inner.registry.clone();
             let sync_registry = child.sync.inner.registry.clone();
@@ -686,7 +686,7 @@ where
     pub fn build(self) -> Result<Container, ScopeWithErrorKind> {
         use ScopeWithErrorKind::{NoChildRegistries, NoChildRegistriesWithScope};
 
-        let scope_with_child_scopes = self.container.inner.registry.get_scope_with_child_scopes();
+        let scope_with_child_scopes = self.container.inner.get_scope_with_child_scopes().child();
         let context = self.context.clone();
         let registry = self.container.inner.registry.clone();
         let sync_registry = self.container.sync.inner.registry.clone();
@@ -703,7 +703,7 @@ where
             false,
         );
         while child.inner.scope_data.priority != priority {
-            let scope_with_child_scopes = child.inner.registry.get_scope_with_child_scopes();
+            let scope_with_child_scopes = child.inner.get_scope_with_child_scopes().child();
             let context = self.context.clone();
             let registry = child.inner.registry.clone();
             let sync_registry = child.sync.inner.registry.clone();
@@ -807,6 +807,11 @@ struct ContainerInner {
 }
 
 impl ContainerInner {
+    #[inline]
+    pub(crate) fn get_scope_with_child_scopes(&self) -> ScopeDataWithChildScopesData {
+        ScopeDataWithChildScopesData::new(self.scope_data, self.child_scopes_data.clone())
+    }
+
     #[allow(clippy::missing_panics_doc)]
     fn close(&self) -> impl Future<Output = ()> + SendSafety + '_ {
         let mut resolved_set = self.cache.lock().take_resolved_set();
@@ -840,8 +845,8 @@ mod tests {
 
     use super::{Container, ContainerInner};
     use crate::{
-        async_impl::registry::RegistryWithSync, async_registry, registry, scope::DefaultScope::*, utils::thread_safety::RcThreadSafety,
-        Inject, InjectTransient, ResolveErrorKind, Scope,
+        async_registry, registry, scope::DefaultScope::*, utils::thread_safety::RcThreadSafety, Inject, InjectTransient, ResolveErrorKind,
+        Scope,
     };
 
     use alloc::{
@@ -959,9 +964,8 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_transient_get() {
-        let app_container = Container::new(RegistryWithSync {
-            registry: Default::default(),
-            sync: registry! {
+        let app_container = Container::new(async_registry! {
+            sync = registry! {
                 scope(App) [
                     provide(|| Ok(RequestTransient1)),
                 ],
@@ -1447,9 +1451,8 @@ mod tests {
             }
         }
 
-        let app_container = Container::new(RegistryWithSync {
-            registry: Default::default(),
-            sync: registry! {
+        let app_container = Container::new(async_registry! {
+            sync = registry! {
                 scope(App) [
                     provide(
                         || Ok(Type1),
