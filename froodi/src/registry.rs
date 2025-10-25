@@ -139,7 +139,6 @@ macro_rules! registry {
         let mut registry = registry! { $( scope($scope) [ $( $entries )* ] ),* };
         $(
             registry.entries.extend($registries.entries);
-            registry.scopes_data.extend($registries.scopes_data);
         )*
         registry
     }};

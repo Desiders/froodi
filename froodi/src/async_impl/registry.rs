@@ -167,7 +167,6 @@ macro_rules! async_registry {
         };
         $(
             registry_with_sync.registry.entries.extend($registries.registry.entries);
-            registry_with_sync.registry.scopes_data.extend($registries.registry.scopes_data);
         )*
         registry_with_sync
     }};
