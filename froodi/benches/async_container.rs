@@ -5,7 +5,7 @@ use froodi::{async_impl::Container, async_registry, utils::thread_safety::RcThre
 use tokio::runtime::Builder;
 
 fn criterion_benchmark(c: &mut Criterion) {
-    c.bench_function("container_new", |b| {
+    c.bench_function("async_container_new", |b| {
         b.iter(|| {
             Container::new(async_registry! {
                 scope(Runtime) [
@@ -29,7 +29,7 @@ fn criterion_benchmark(c: &mut Criterion) {
             })
         });
     })
-    .bench_function("container_child_start_scope", |b| {
+    .bench_function("async_container_child_start_scope", |b| {
         let runtime_container = Container::new_with_start_scope(
             async_registry! {
                 scope(Runtime) [
@@ -61,7 +61,7 @@ fn criterion_benchmark(c: &mut Criterion) {
             let _ = action_container.enter().with_scope(Step).build().unwrap();
         });
     })
-    .bench_function("container_child_next", |b| {
+    .bench_function("async_container_child_next", |b| {
         let app_container = Container::new(async_registry! {
             scope(Runtime) [
                 provide(async || Ok(())),
@@ -88,7 +88,7 @@ fn criterion_benchmark(c: &mut Criterion) {
             let _ = action_container.enter_build().unwrap();
         });
     })
-    .bench_function("container_get", |b| {
+    .bench_function("async_container_get", |b| {
         struct A(RcThreadSafety<B>, RcThreadSafety<C>);
         struct B(i32);
         struct C(RcThreadSafety<CA>);
@@ -126,7 +126,7 @@ fn criterion_benchmark(c: &mut Criterion) {
             async move { scope_container.get::<A>().await.unwrap() }
         });
     })
-    .bench_function("container_get_transient", |b| {
+    .bench_function("async_container_get_transient", |b| {
         struct A(B, C);
         struct B(i32);
         struct C(CA);
