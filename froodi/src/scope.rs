@@ -88,7 +88,17 @@ pub(crate) struct ScopeDataWithChildScopesData {
 }
 
 impl ScopeDataWithChildScopesData {
-    pub fn new(mut scopes: Vec<ScopeData>) -> Self {
+    #[inline]
+    #[must_use]
+    pub(crate) const fn new(scope_data: ScopeData, child_scopes_data: Vec<ScopeData>) -> Self {
+        Self {
+            scope_data: Some(scope_data),
+            child_scopes_data,
+        }
+    }
+
+    #[must_use]
+    pub(crate) fn new_with_sort(mut scopes: Vec<ScopeData>) -> Self {
         scopes.sort_by_key(|scope| scope.priority);
         let mut iter = scopes.into_iter();
         match iter.next() {
@@ -103,7 +113,9 @@ impl ScopeDataWithChildScopesData {
         }
     }
 
-    pub fn child(self) -> Self {
+    #[inline]
+    #[must_use]
+    pub(crate) fn child(self) -> Self {
         let mut iter = self.child_scopes_data.into_iter();
         match iter.next() {
             Some(scope_data) => Self {

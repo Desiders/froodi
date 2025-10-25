@@ -47,7 +47,7 @@ impl Registry {
 
     #[inline]
     pub(crate) fn get_scope_with_child_scopes(&self) -> ScopeDataWithChildScopesData {
-        ScopeDataWithChildScopesData::new(self.scopes_data.clone().into_iter().collect())
+        ScopeDataWithChildScopesData::new_with_sort(self.scopes_data.clone().into_iter().collect())
     }
 
     pub(crate) fn dfs_detect<'a>(&'a self) -> Result<(), DFSErrorKind> {

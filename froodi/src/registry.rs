@@ -12,7 +12,7 @@ use crate::{
     instantiator::{boxed_container_instantiator, boxed_instantiator, BoxedCloneInstantiator, Instantiator},
     scope::{ScopeData, ScopeDataWithChildScopesData},
     utils::thread_safety::{SendSafety, SyncSafety},
-    Config, Container, Finalizer, InstantiateErrorKind, ResolveErrorKind, Scope,
+    Config, Container, Finalizer, InstantiateErrorKind, ResolveErrorKind, Scope, Scopes,
 };
 
 #[derive(Clone)]
@@ -38,7 +38,7 @@ impl Registry {
 
     #[inline]
     pub(crate) fn get_scope_with_child_scopes(&self) -> ScopeDataWithChildScopesData {
-        ScopeDataWithChildScopesData::new(self.scopes_data.clone().into_iter().collect())
+        ScopeDataWithChildScopesData::new_with_sort(self.scopes_data.clone().into_iter().collect())
     }
 
     pub(crate) fn dfs_detect<'a>(&'a self) -> Result<(), DFSErrorKind> {
@@ -141,14 +141,12 @@ macro_rules! registry_internal {
 
 #[inline]
 #[doc(hidden)]
-pub fn _build_registry<const N: usize>(scopes: [(impl Scope, Vec<(TypeId, InstantiatorData)>); N]) -> Registry {
+pub fn _build_registry<S, const SCOPES_N: usize, const N: usize>(scopes_entries: [(S, Vec<(TypeId, InstantiatorData)>); N]) -> Registry
+where
+    S: Scope + Scopes<SCOPES_N, Scope = S>,
+{
     let mut entries = BTreeMap::new();
-    let mut scopes_data = BTreeSet::new();
-
-    for (scope, scope_entries) in scopes {
-        let scope_data = scope.into();
-        scopes_data.insert(scope_data);
-
+    for (scope, scope_entries) in scopes_entries {
         entries.insert(
             TypeId::of::<Container>(),
             InstantiatorData {
@@ -156,7 +154,7 @@ pub fn _build_registry<const N: usize>(scopes: [(impl Scope, Vec<(TypeId, Instan
                 dependencies: BTreeSet::new(),
                 finalizer: None,
                 config: Config { cache_provides: true },
-                scope_data,
+                scope_data: scope.into(),
             },
         );
         for (type_id, data) in scope_entries {
@@ -164,7 +162,10 @@ pub fn _build_registry<const N: usize>(scopes: [(impl Scope, Vec<(TypeId, Instan
         }
     }
 
-    Registry { entries, scopes_data }
+    Registry {
+        entries,
+        scopes_data: S::all().into_iter().map(Into::into).collect(),
+    }
 }
 
 #[inline]

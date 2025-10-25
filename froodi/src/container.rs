@@ -9,7 +9,7 @@ use crate::{
     context::Context,
     errors::{InstantiatorErrorKind, ResolveErrorKind, ScopeErrorKind, ScopeWithErrorKind},
     registry::{InstantiatorData, Registry},
-    scope::{Scope, ScopeData},
+    scope::{Scope, ScopeData, ScopeDataWithChildScopesData},
     service::Service as _,
     utils::thread_safety::{RcThreadSafety, SendSafety, SyncSafety},
 };
@@ -390,7 +390,7 @@ impl ChildContainerBuiler {
     pub fn build(self) -> Result<Container, ScopeErrorKind> {
         use ScopeErrorKind::{NoChildRegistries, NoNonSkippedRegistries};
 
-        let scope_with_child_scopes = self.container.inner.registry.get_scope_with_child_scopes();
+        let scope_with_child_scopes = self.container.inner.get_scope_with_child_scopes().child();
         let registry = self.container.inner.registry.clone();
 
         let mut child = self.container.init_child(
@@ -400,7 +400,7 @@ impl ChildContainerBuiler {
             false,
         );
         while child.inner.scope_data.is_skipped_by_default {
-            let scope_with_child_scopes = child.inner.registry.get_scope_with_child_scopes();
+            let scope_with_child_scopes = child.inner.get_scope_with_child_scopes().child();
             let registry = child.inner.registry.clone();
 
             child = child.init_child(
@@ -445,7 +445,7 @@ where
     pub fn build(self) -> Result<Container, ScopeWithErrorKind> {
         use ScopeWithErrorKind::{NoChildRegistries, NoChildRegistriesWithScope};
 
-        let scope_with_child_scopes = self.container.inner.registry.get_scope_with_child_scopes();
+        let scope_with_child_scopes = self.container.inner.get_scope_with_child_scopes().child();
         let registry = self.container.inner.registry.clone();
         let priority = self.scope.priority();
 
@@ -456,7 +456,7 @@ where
             false,
         );
         while child.inner.scope_data.priority != priority {
-            let scope_with_child_scopes = child.inner.registry.get_scope_with_child_scopes();
+            let scope_with_child_scopes = child.inner.get_scope_with_child_scopes().child();
             let registry = child.inner.registry.clone();
 
             child = child.init_child(
@@ -501,7 +501,7 @@ impl ChildContainerWithContext {
     pub fn build(self) -> Result<Container, ScopeErrorKind> {
         use ScopeErrorKind::{NoChildRegistries, NoNonSkippedRegistries};
 
-        let scope_with_child_scopes = self.container.inner.registry.get_scope_with_child_scopes();
+        let scope_with_child_scopes = self.container.inner.get_scope_with_child_scopes().child();
         let context = self.context.clone();
         let registry = self.container.inner.registry.clone();
 
@@ -513,7 +513,7 @@ impl ChildContainerWithContext {
             false,
         );
         while child.inner.scope_data.is_skipped_by_default {
-            let scope_with_child_scopes = child.inner.registry.get_scope_with_child_scopes();
+            let scope_with_child_scopes = child.inner.get_scope_with_child_scopes().child();
             let context = self.context.clone();
             let registry = child.inner.registry.clone();
 
@@ -551,7 +551,7 @@ where
     pub fn build(self) -> Result<Container, ScopeWithErrorKind> {
         use ScopeWithErrorKind::{NoChildRegistries, NoChildRegistriesWithScope};
 
-        let scope_with_child_scopes = self.container.inner.registry.get_scope_with_child_scopes();
+        let scope_with_child_scopes = self.container.inner.get_scope_with_child_scopes().child();
         let context = self.context.clone();
         let registry = self.container.inner.registry.clone();
         let priority = self.scope.priority();
@@ -564,7 +564,7 @@ where
             false,
         );
         while child.inner.scope_data.priority != priority {
-            let scope_with_child_scopes = child.inner.registry.get_scope_with_child_scopes();
+            let scope_with_child_scopes = child.inner.get_scope_with_child_scopes().child();
             let context = self.context.clone();
             let registry = child.inner.registry.clone();
 
@@ -658,6 +658,11 @@ pub(crate) struct ContainerInner {
 }
 
 impl ContainerInner {
+    #[inline]
+    pub(crate) fn get_scope_with_child_scopes(&self) -> ScopeDataWithChildScopesData {
+        ScopeDataWithChildScopesData::new(self.scope_data, self.child_scopes_data.clone())
+    }
+
     #[allow(clippy::missing_panics_doc)]
     fn close(&self) {
         self.close_with_parent_flag(self.close_parent);
