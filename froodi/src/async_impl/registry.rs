@@ -6,20 +6,18 @@ use core::any::TypeId;
 
 use crate::{
     async_impl::{
-        finalizer::{boxed_finalizer_factory, BoxedCloneFinalizer},
-        instantiator::{boxed_container_instantiator, boxed_instantiator, BoxedCloneInstantiator, Instantiator},
-        Container, Finalizer,
+        finalizer::BoxedCloneFinalizer,
+        instantiator::{boxed_container_instantiator, BoxedCloneInstantiator},
+        Container,
     },
     dependency::Dependency,
-    dependency_resolver::DependencyResolver,
     errors::DFSErrorKind,
     scope::{ScopeData, ScopeDataWithChildScopesData},
-    utils::thread_safety::{SendSafety, SyncSafety},
     Config, DefaultScope, InstantiateErrorKind, Registry as SyncRegistry, ResolveErrorKind, Scope, Scopes,
 };
 
 #[derive(Clone)]
-pub(crate) struct InstantiatorData {
+pub struct InstantiatorData {
     pub(crate) instantiator: BoxedCloneInstantiator<ResolveErrorKind, InstantiateErrorKind>,
     pub(crate) dependencies: BTreeSet<Dependency>,
     pub(crate) finalizer: Option<BoxedCloneFinalizer>,
@@ -61,15 +59,15 @@ impl Registry {
         Self { entries, scopes_data }
     }
 
-    pub(crate) fn default() -> Self {
+    pub fn default() -> Self {
         Self::new::<DefaultScope, DefaultScope, 6>(BTreeMap::new())
     }
 }
 
 #[derive(Clone)]
 pub struct RegistryWithSync {
-    pub(crate) registry: Registry,
-    pub(crate) sync: SyncRegistry,
+    pub registry: Registry,
+    pub sync: SyncRegistry,
 }
 
 impl Registry {
@@ -138,8 +136,8 @@ macro_rules! async_registry {
     (
         $( scope($scope:expr) [ $( $entries:tt )* ] ),+ $(,)?
     ) => {{
-        $crate::async_impl::registry::RegistryWithSync {
-            registry: $crate::async_impl::registry::_build_registry([
+        $crate::async_impl::RegistryWithSync {
+            registry: $crate::macros_utils::async_impl::build_registry([
                 $(
                     ($scope, $crate::async_registry_internal! { @entries scope($scope) [ $( $entries )* ] })
                 ),*
@@ -178,22 +176,10 @@ macro_rules! async_registry {
 #[doc(hidden)]
 macro_rules! async_registry_internal {
     (@entries scope($scope:expr) [ $( provide( $($entry:tt)+ ) ),* $(,)? ]) => {{
-        #[cfg(feature = "std")]
-        {
-            std::vec::Vec::from_iter([$( $crate::async_registry_internal! { @entry scope($scope), $($entry)+ } ),*])
-        }
-        #[cfg(all(not(feature = "std")))]
-        {
-            alloc::vec::Vec::from_iter([$( $crate::async_registry_internal! { @entry scope($scope), $($entry)+ } ),*])
-        }
+        $crate::macros_utils::aliases::Vec::from_iter([$( $crate::async_registry_internal! { @entry scope($scope), $($entry)+ } ),*])
     }};
     (@entry scope($scope:expr), $inst:expr $(,)?) => {{
-        #[cfg(feature = "thread_safe")]
-        type Fin<T> = fn(T) -> ::core::pin::Pin<::alloc::boxed::Box<dyn ::core::future::Future<Output = ()> + Send>>;
-        #[cfg(not(feature = "thread_safe"))]
-        type Fin<T> = fn(T) -> ::core::pin::Pin<::alloc::boxed::Box<dyn ::core::future::Future<Output = ()>>>;
-
-        $crate::async_impl::registry::_make_entry($scope, $inst, None, None::<Fin<_>>)
+        $crate::macros_utils::async_impl::make_entry($scope, $inst, None, None::<$crate::macros_utils::async_impl::FinDummy<_>>)
     }};
     (@entry scope($scope:expr), $inst:expr, config = $cfg:expr $(,)?) => {{
         #[cfg(feature = "thread_safe")]
@@ -201,56 +187,17 @@ macro_rules! async_registry_internal {
         #[cfg(not(feature = "thread_safe"))]
         type Fin<T> = fn(T) -> ::core::pin::Pin<::alloc::boxed::Box<dyn ::core::future::Future<Output = ()>>>;
 
-        $crate::async_impl::registry::_make_entry($scope, $inst, Some($cfg), None::<Fin<_>>)
+        $crate::macros_utils::async_impl::make_entry($scope, $inst, Some($cfg), None::<Fin<_>>)
     }};
     (@entry scope($scope:expr), $inst:expr, finalizer = $fin:expr $(,)?) => {{
-        $crate::async_impl::registry::_make_entry($scope, $inst, None, Some($fin))
+        $crate::macros_utils::async_impl::make_entry($scope, $inst, None, Some($fin))
     }};
     (@entry scope($scope:expr), $inst:expr, config = $cfg:expr, finalizer = $fin:expr $(,)?) => {{
-        $crate::async_impl::registry::_make_entry($scope, $inst, Some($cfg), Some($fin))
+        $crate::macros_utils::async_impl::make_entry($scope, $inst, Some($cfg), Some($fin))
     }};
     (@entry scope($scope:expr), $inst:expr, finalizer = $fin:expr, config = $cfg:expr $(,)?) => {{
-        $crate::async_impl::registry::_make_entry($scope, $inst, Some($cfg), Some($fin))
+        $crate::macros_utils::async_impl::make_entry($scope, $inst, Some($cfg), Some($fin))
     }};
-}
-
-#[inline]
-#[doc(hidden)]
-pub fn _build_registry<S, const SCOPES_N: usize, const N: usize>(scopes_entries: [(S, Vec<(TypeId, InstantiatorData)>); N]) -> Registry
-where
-    S: Scope + Scopes<SCOPES_N, Scope = S>,
-{
-    let mut entries = BTreeMap::new();
-    for (_, scope_entries) in scopes_entries {
-        for (type_id, data) in scope_entries {
-            entries.insert(type_id, data);
-        }
-    }
-    Registry::new::<S, S, SCOPES_N>(entries)
-}
-
-#[inline]
-#[doc(hidden)]
-pub fn _make_entry<Inst, Deps, Fin>(scope: impl Scope, inst: Inst, config: Option<Config>, fin: Option<Fin>) -> (TypeId, InstantiatorData)
-where
-    Inst: Instantiator<Deps, Error = InstantiateErrorKind> + SendSafety + SyncSafety,
-    Inst::Provides: SendSafety + SyncSafety,
-    Deps: DependencyResolver<Error = ResolveErrorKind>,
-    Fin: Finalizer<Inst::Provides> + SendSafety + SyncSafety,
-{
-    (
-        TypeId::of::<Inst::Provides>(),
-        InstantiatorData {
-            dependencies: Inst::dependencies(),
-            instantiator: boxed_instantiator(inst),
-            finalizer: match fin {
-                Some(finalizer) => Some(boxed_finalizer_factory(finalizer)),
-                None => None,
-            },
-            config: config.unwrap_or_default(),
-            scope_data: scope.into(),
-        },
-    )
 }
 
 #[cfg(test)]

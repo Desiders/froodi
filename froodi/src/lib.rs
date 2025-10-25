@@ -21,6 +21,7 @@ pub(crate) mod registry;
 pub(crate) mod scope;
 pub(crate) mod service;
 
+pub mod macros_utils;
 pub mod utils;
 
 #[cfg(feature = "async")]

@@ -6,4 +6,4 @@ pub(crate) mod service;
 
 pub use container::Container;
 pub use finalizer::Finalizer;
-pub use registry::Registry;
+pub use registry::{Registry, RegistryWithSync};
