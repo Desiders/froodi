@@ -55,12 +55,11 @@ impl Registry {
             );
             scopes_data.push(scope_data);
         }
-
         Self { entries, scopes_data }
     }
 
-    #[allow(clippy::should_implement_trait)]
-    pub fn default() -> Self {
+    #[inline]
+    pub fn new_with_default_entries() -> Self {
         Self::new::<DefaultScope, DefaultScope, 6>(BTreeMap::new())
     }
 }
@@ -69,6 +68,14 @@ impl Registry {
 pub struct RegistryWithSync {
     pub registry: Registry,
     pub sync: SyncRegistry,
+}
+
+impl RegistryWithSync {
+    #[inline]
+    pub fn merge(&mut self, other: Self) {
+        self.registry.entries.extend(other.registry.entries);
+        self.sync = other.sync;
+    }
 }
 
 impl Registry {
@@ -128,47 +135,65 @@ impl Registry {
 #[macro_export]
 macro_rules! async_registry {
     () => {{
-        $crate::async_impl::registry::RegistryWithSync {
-            registry: $crate::async_impl::Registry::default(),
-            sync: $crate::Registry::default(),
-        }
-    }};
-
-    (
-        $( scope($scope:expr) [ $( $entries:tt )* ] ),+ $(,)?
-    ) => {{
         $crate::async_impl::RegistryWithSync {
-            registry: $crate::macros_utils::async_impl::build_registry([
-                $(
-                    ($scope, $crate::async_registry_internal! { @entries scope($scope) [ $( $entries )* ] })
-                ),*
-            ]),
-            sync: $crate::Registry::default(),
+            registry: $crate::async_impl::Registry::new_with_default_entries(),
+            sync: $crate::Registry::new_with_default_entries(),
         }
     }};
 
-    (
-        $( scope($scope:expr) [ $( $entries:tt )* ], )*
-        sync = $sync_registry:expr $(,)?
-    ) => {{
-        let mut registry_with_sync = async_registry! { $( scope($scope) [ $( $entries )* ] ),* };
-        registry_with_sync.sync = $sync_registry;
-        registry_with_sync
-    }};
-
-    (
-        $( scope($scope:expr) [ $( $entries:tt )* ], )*
-        extend($( $registries:expr ),+ $(,)?)
-        $(, sync = $sync_registry:expr )? $(,)?
-    ) => {{
-        let mut registry_with_sync = async_registry! {
-            $( scope($scope) [ $( $entries )* ], )*
-            $( sync = $sync_registry )?
+    (scope($scope:expr) [ $($entries:tt)* ] $(, $($rest:tt)+)?) => {{
+        #[allow(unused_mut)]
+        let mut registry_with_sync = $crate::async_impl::RegistryWithSync {
+            registry: $crate::macros_utils::async_impl::build_registry([
+                ($scope, $crate::async_registry_internal! { @entries scope($scope) [ $( $entries )* ] })
+            ]),
+            sync: $crate::Registry::new_with_default_entries(),
         };
         $(
-            registry_with_sync.registry.entries.extend($registries.registry.entries);
+            registry_with_sync.merge($crate::async_registry! { $($rest)+ });
         )*
         registry_with_sync
+    }};
+
+    (scope($scope:expr) [ $($entries:tt)* ] $(,)?) => {{
+        $crate::async_impl::RegistryWithSync {
+            registry: $crate::macros_utils::async_impl::build_registry([
+                ($scope, $crate::async_registry_internal! { @entries scope($scope) [ $( $entries )* ] })
+            ]),
+            sync: $crate::Registry::new_with_default_entries(),
+        }
+    }};
+
+    (extend( $($registries_with_sync:expr),+ $(,)? ) $(, $($rest:tt)+)?) => {{
+        let mut registry_with_sync = $crate::async_impl::RegistryWithSync {
+            registry: $crate::async_impl::Registry::new_with_default_entries(),
+            sync: $crate::Registry::new_with_default_entries(),
+        };
+        $(
+            registry_with_sync.merge($registries_with_sync);
+        )+
+        $(
+            registry_with_sync.merge($crate::async_registry! { $($rest)+ });
+        )*
+        registry_with_sync
+    }};
+
+    (extend( $($registries_with_sync:expr),+ $(,)? ) $(,)?) => {{
+        let mut registry_with_sync = $crate::async_impl::RegistryWithSync {
+            registry: $crate::async_impl::Registry::new_with_default_entries(),
+            sync: $crate::Registry::new_with_default_entries(),
+        };
+        $(
+            registry_with_sync.merge($registries_with_sync);
+        )+
+        registry_with_sync
+    }};
+
+    (sync = $sync_registry:expr $(,)?) => {{
+        $crate::async_impl::RegistryWithSync {
+            registry: $crate::async_impl::Registry::new_with_default_entries(),
+            sync: $sync_registry,
+        }
     }};
 }
 

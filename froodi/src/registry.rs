@@ -52,13 +52,17 @@ impl Registry {
             );
             scopes_data.push(scope_data);
         }
-
         Self { entries, scopes_data }
     }
 
-    #[allow(clippy::should_implement_trait)]
-    pub fn default() -> Self {
+    #[inline]
+    pub fn new_with_default_entries() -> Self {
         Self::new::<DefaultScope, DefaultScope, 6>(BTreeMap::new())
+    }
+
+    #[inline]
+    pub fn merge(&mut self, other: Self) {
+        self.entries.extend(other.entries);
     }
 }
 
@@ -119,26 +123,32 @@ impl Registry {
 #[macro_export]
 macro_rules! registry {
     () => {{
-        $crate::Registry::default()
+        $crate::Registry::new_with_default_entries()
     }};
 
-    (
-        $( scope($scope:expr) [ $( $entries:tt )* ] ),+ $(,)?
-    ) => {{
+    (scope($scope:expr) [ $($entries:tt)* ] $(, $($rest:tt)+)?) => {{
+        #[allow(unused_mut)]
+        let mut registry = $crate::macros_utils::sync::build_registry([
+            ($scope, $crate::registry_internal! { @entries scope($scope) [ $( $entries )* ] })
+        ]);
+        $(
+            registry.merge($crate::registry! { $($rest)+ });
+        )*
+        registry
+    }};
+
+    (scope($scope:expr) [ $($entries:tt)* ] $(,)?) => {{
         $crate::macros_utils::sync::build_registry([
-            $(
-                ($scope, $crate::registry_internal! { @entries scope($scope) [ $( $entries )* ] })
-            ),*
+            ($scope, $crate::registry_internal! { @entries scope($scope) [ $( $entries )* ] })
         ])
     }};
 
-    (
-        $( scope($scope:expr) [ $( $entries:tt )* ], )*
-        extend($( $registries:expr ),+ $(,)?) $(,)?
-    ) => {{
-        let mut registry = registry! { $( scope($scope) [ $( $entries )* ] ),* };
+    ($( extend( $($registries:expr),* $(,)? ) ),* $(,)?) => {{
+        let mut registry = $crate::Registry::new_with_default_entries();
         $(
-            registry.entries.extend($registries.entries);
+            $(
+                registry.merge($registries);
+            )+
         )*
         registry
     }};
