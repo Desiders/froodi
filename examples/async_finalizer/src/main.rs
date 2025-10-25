@@ -1,8 +1,8 @@
 use froodi::{
     DefaultScope::{App, Request},
     Inject, InstantiatorResult,
-    async_impl::{Container, RegistryBuilder},
-    instance,
+    async_impl::Container,
+    async_registry, instance, registry,
 };
 use std::sync::Arc;
 
@@ -51,18 +51,19 @@ fn init_container(config: Config) -> Container {
         println!("Create user interactor finalized");
     }
 
-    let registry = RegistryBuilder::new()
-        // We still can use sync instance creator even with async container
-        .provide(instance(config), App)
-        .provide(|_config: Inject<Config>| Ok(PostgresUserRepo), Request)
-        // We can specify async instance creator using `provide_async` method instead of `provide`
-        .provide_async(create_user::<PostgresUserRepo>, Request)
-        // We still can use sync instance finalizer even with async container
-        .add_finalizer::<PostgresUserRepo>(|_dep| println!("Postgres repository finalized"))
-        // We can specify async instance finalizer using `add_async_finalizer` method instead of `add_finalizer`
-        .add_async_finalizer(finalize_create_user::<PostgresUserRepo>)
-        .add_finalizer::<Config>(|_dep| println!("Config finalized"));
-    Container::new(registry)
+    Container::new(async_registry! {
+        scope(Request) [
+            provide(create_user::<PostgresUserRepo>, finalizer = finalize_create_user::<PostgresUserRepo>),
+        ],
+        sync = registry! {
+            scope(App) [
+                provide(instance(config), finalizer = |_dep| println!("Config finalized"))
+            ],
+            scope(Request) [
+                provide(|_config: Inject<Config>| Ok(PostgresUserRepo), finalizer = |_dep| println!("Postgres repository finalized"))
+            ]
+        }
+    })
 }
 
 // Output:

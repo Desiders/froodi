@@ -1,8 +1,8 @@
 use froodi::{
     DefaultScope::{App, Request},
     Inject, InjectTransient, InstantiatorResult,
-    async_impl::{Container, RegistryBuilder},
-    instance,
+    async_impl::Container,
+    async_registry, instance, registry,
 };
 
 // Dependency that will be alive throughout the application
@@ -44,13 +44,19 @@ fn init_container(config: Config) -> Container {
         Ok(CreateUser { repo })
     }
 
-    let registry = RegistryBuilder::new()
-        // We still can use sync instance creator even with async container
-        .provide(instance(config), App)
-        .provide(|_config: Inject<Config>| Ok(PostgresUserRepo), Request)
-        // We can specify async instance creator using `provide_async` method instead of `provide`
-        .provide_async(create_user::<PostgresUserRepo>, Request);
-    Container::new(registry)
+    Container::new(async_registry! {
+        scope(Request) [
+            provide(create_user::<PostgresUserRepo>)
+        ],
+        sync = registry! {
+            scope(App) [
+                provide(instance(config))
+            ],
+            scope(Request) [
+                provide(|_config: Inject<Config>| Ok(PostgresUserRepo))
+            ]
+        }
+    })
 }
 
 #[tokio::main(flavor = "current_thread")]

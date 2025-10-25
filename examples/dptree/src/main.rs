@@ -2,8 +2,9 @@ use dptree::Endpoint;
 use froodi::{
     Container,
     DefaultScope::Request,
-    InjectTransient, InstantiatorResult, RegistryBuilder,
+    InjectTransient, InstantiatorResult,
     dptree::{Injectable, MapInject, setup_default},
+    registry,
 };
 use std::ops::ControlFlow;
 
@@ -47,12 +48,12 @@ fn init_container() -> Container {
         Ok(CreateUser { repo })
     }
 
-    let registry = RegistryBuilder::new()
-        // We still can use sync instance creator even with async container
-        .provide(|| Ok(PostgresUserRepo), Request)
-        // We can specify async instance creator using `provide_async` method instead of `provide`
-        .provide(create_user::<PostgresUserRepo>, Request);
-    Container::new(registry)
+    Container::new(registry! {
+        scope(Request) [
+            provide(|| Ok(PostgresUserRepo)),
+            provide(create_user::<PostgresUserRepo>),
+        ],
+    })
 }
 
 fn init_branch(container: Container, config: Config) -> Endpoint<'static, ()> {

@@ -2,9 +2,9 @@ use axum::{Extension, Router, routing::get};
 use froodi::{
     Container,
     DefaultScope::{App, Request},
-    Inject, InjectTransient, InstantiatorResult, RegistryBuilder,
+    Inject, InjectTransient, InstantiatorResult,
     axum::setup_default,
-    instance,
+    instance, registry,
 };
 use tokio::net::TcpListener;
 
@@ -48,11 +48,15 @@ fn init_container(config: Config) -> Container {
         Ok(CreateUser { repo })
     }
 
-    let registry = RegistryBuilder::new()
-        .provide(instance(config), App)
-        .provide(|_config: Inject<Config>| Ok(PostgresUserRepo), Request)
-        .provide(create_user::<PostgresUserRepo>, Request);
-    Container::new(registry)
+    Container::new(registry! {
+        scope(App) [
+            provide(instance(config)),
+        ],
+        scope(Request) [
+            provide(|_config: Inject<Config>| Ok(PostgresUserRepo)),
+            provide(create_user::<PostgresUserRepo>),
+        ],
+    })
 }
 
 async fn handler(

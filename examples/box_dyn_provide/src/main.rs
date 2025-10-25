@@ -1,4 +1,4 @@
-use froodi::{Container, DefaultScope::Request, InjectTransient, InstantiatorResult, RegistryBuilder, boxed};
+use froodi::{Container, DefaultScope::Request, InjectTransient, InstantiatorResult, boxed, registry};
 
 trait UserRepo: Send + Sync {
     fn create_user(&self);
@@ -30,13 +30,12 @@ fn init_container() -> Container {
         Ok(CreateUser { repo })
     }
 
-    let registry = RegistryBuilder::new()
-        .provide(
-            || Ok(boxed!(PostgresUserRepo; UserRepo)), // or just `Ok(Box::new(PostgresUserRepo) as Box<dyn UserRepo>`
-            Request,
-        )
-        .provide(create_user, Request);
-    Container::new(registry)
+    Container::new(registry! {
+        scope(Request) [
+            provide(|| Ok(boxed!(PostgresUserRepo; UserRepo))), // or just `Ok(Box::new(PostgresUserRepo) as Box<dyn UserRepo>`
+            provide(create_user),
+        ],
+    })
 }
 
 fn main() {
