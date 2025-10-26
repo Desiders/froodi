@@ -52,9 +52,7 @@ fn init_container(config: Config) -> Container {
     }
 
     Container::new(registry! {
-        scope(App) [
-            provide(instance(config), finalizer = |_dep| println!("Config finalized")),
-        ],
+        provide(App, instance(config), finalizer = |_dep| println!("Config finalized")),
         scope(Request) [
             provide(|_config: Inject<Config>| Ok(PostgresUserRepo), finalizer = |_dep| println!("Postgres repository finalized")),
             provide(create_user::<PostgresUserRepo>, finalizer = finalize_create_user::<PostgresUserRepo>),

@@ -51,9 +51,7 @@ fn init_container(config: Config) -> Container {
     }
 
     Container::new(registry! {
-        scope(App) [
-            provide(instance(config)),
-        ],
+        provide(App, instance(config)),
         scope(Request) [
             provide(|_config: Inject<Config>| Ok(PostgresUserRepo)),
             provide(create_user::<PostgresUserRepo>),
