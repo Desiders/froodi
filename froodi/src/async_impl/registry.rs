@@ -132,6 +132,111 @@ impl Registry {
     }
 }
 
+/// The `async_registry!` macro is used to create an **asynchronous dependency registry**
+/// with flexible configuration and composition options.
+///
+/// ### `provide` syntax
+///
+/// Each `provide` item defines a single asynchronous dependency registration.  
+/// The following forms are supported:
+///
+/// ```rust
+/// provide(inst)                             // async factory only
+/// provide(inst, config = Config::default()) // with configuration
+/// provide(inst, finalizer = fin)            // with async finalizer
+/// provide(inst, config = Config::default(), finalizer = fin) // with both parameters
+/// provide(inst, finalizer = fin, config = Config::default()) // order doesn’t matter
+/// ```
+///
+/// Parameters:
+/// - `config` *(optional)* — configuration object.
+/// - `finalizer` *(optional)* — asynchronous function called when the dependency is finalized.
+///
+/// ## Usage patterns
+///
+/// ### 1. Single `scope`
+/// ```rust
+/// async_registry! {
+///     scope(DefaultScope::App) [
+///         provide(inst_a),
+///     ]
+/// };
+/// ```
+///
+/// ### 2. Multiple `scope`
+/// ```rust
+/// async_registry! {
+///     scope(DefaultScope::App) [ provide(inst_a) ],
+///     scope(DefaultScope::Session) [ provide(inst_b) ],
+/// };
+/// ```
+///
+/// ### 3. Single `provide`
+/// ```rust
+/// async_registry! {
+///     provide(DefaultScope::App, inst_a)
+/// };
+/// ```
+///
+/// ### 4. Multiple `provide`
+/// ```rust
+/// async_registry! {
+///     provide(DefaultScope::App, inst_a),
+///     provide(DefaultScope::Session, inst_b),
+///     provide(DefaultScope::Request, inst_c),
+/// };
+/// ```
+///
+/// ### 5. Combination of one or more `scope` and `provide`
+/// ```rust
+/// async_registry! {
+///     scope(DefaultScope::App) [ provide(inst_a) ],
+///     provide(DefaultScope::Session, inst_b),
+///     provide(DefaultScope::Request, inst_c),
+/// };
+/// ```
+///
+/// ### 6. Using `extend` standalone
+/// ```rust
+/// async_registry! {
+///     extend(registry1)
+/// };
+/// ```
+///
+/// ### 7. Using multiple `extend`
+/// ```rust
+/// async_registry! {
+///     extend(registry1, registry2),
+///     extend(registry3),
+/// };
+/// ```
+///
+/// ### 8. Using `extend` together with a combination of `scope` and `provide`
+/// ```rust
+/// async_registry! {
+///     scope(DefaultScope::App) [ provide(inst_a) ],
+///     provide(DefaultScope::Session, inst_b),
+///     extend(registry1, registry2),
+/// };
+/// ```
+///
+/// ### 9. Empty macro usage
+/// ```rust
+/// let registry = async_registry!();
+/// ```
+/// Creates an asynchronous registry with default entries.
+///
+/// ### 10. Using `sync`
+/// ```rust
+/// async_registry! {
+///     scope(DefaultScope::App) [ provide(inst_a) ],
+///     provide(DefaultScope::Session, inst_b),
+///     extend(registry1, registry2),
+///     sync = sync_registry,
+/// };
+/// ```
+/// The `sync` keyword allows linking an existing **synchronous registry** to the asynchronous one.  
+/// Only one `sync` container can be specified, and it must appear **at the end** of the macro.
 #[macro_export]
 macro_rules! async_registry {
     () => {{

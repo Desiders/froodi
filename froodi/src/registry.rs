@@ -115,6 +115,98 @@ impl Registry {
     }
 }
 
+/// The `registry!` macro is used to create a dependency registry with various configuration options.
+///
+/// ### `provide` syntax
+///
+/// Each `provide` item defines a single dependency registration.  
+/// The following forms are supported:
+///
+/// ```rust
+/// provide(inst)                             // factory only
+/// provide(inst, config = Config::default()) // with configuration
+/// provide(inst, finalizer = fin)            // with finalizer
+/// provide(inst, config = Config::default(), finalizer = fin) // with both parameters
+/// provide(inst, finalizer = fin, config = Config::default()) // order doesn’t matter
+/// ```
+///
+/// Parameters:
+/// - `config` *(optional)* — configuration object.
+/// - `finalizer` *(optional)* — function called when the dependency is finalized.
+///
+/// ## Usage patterns
+///
+/// ### 1. Single `scope`
+/// ```rust
+/// registry! {
+///     scope(DefaultScope::App) [
+///         provide(inst_a),
+///     ]
+/// };
+/// ```
+///
+/// ### 2. Multiple `scope`
+/// ```rust
+/// registry! {
+///     scope(DefaultScope::App) [ provide(inst_a) ],
+///     scope(DefaultScope::Session) [ provide(inst_b) ],
+/// };
+/// ```
+///
+/// ### 3. Single `provide`
+/// ```rust
+/// registry! {
+///     provide(DefaultScope::App, inst_a)
+/// };
+/// ```
+///
+/// ### 4. Multiple `provide`
+/// ```rust
+/// registry! {
+///     provide(DefaultScope::App, inst_a),
+///     provide(DefaultScope::Session, inst_b),
+///     provide(DefaultScope::Request, inst_c),
+/// };
+/// ```
+///
+/// ### 5. Combination of one or more `scope` and `provide`
+/// ```rust
+/// registry! {
+///     scope(DefaultScope::App) [ provide(inst_a) ],
+///     provide(DefaultScope::Session, inst_b),
+///     provide(DefaultScope::Request, inst_c),
+/// };
+/// ```
+///
+/// ### 6. Using `extend` standalone
+/// ```rust
+/// registry! {
+///     extend(registry1)
+/// };
+/// ```
+///
+/// ### 7. Using multiple `extend`
+/// ```rust
+/// registry! {
+///     extend(registry1, registry2),
+///     extend(registry3),
+/// };
+/// ```
+///
+/// ### 8. Using `extend` together with a combination of `scope` and `provide`
+/// ```rust
+/// registry! {
+///     scope(DefaultScope::App) [ provide(inst_a) ],
+///     provide(DefaultScope::Session, inst_b),
+///     extend(registry1, registry2),
+/// };
+/// ```
+///
+/// ### 9. Empty macro usage
+/// ```rust
+/// let registry = registry!();
+/// ```
+/// In this case, a registry with default entries is created.
 #[macro_export]
 macro_rules! registry {
     () => {{
