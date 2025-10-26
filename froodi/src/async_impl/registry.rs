@@ -140,23 +140,37 @@ macro_rules! async_registry {
             sync: $crate::Registry::new_with_default_entries(),
         }
     }};
-
-    (scope($scope:expr) [ $($entries:tt)* ], $($rest:tt)+) => {{
+    (scope($scope:expr) [ $($entries:tt)+ ], $($rest:tt)+) => {{
         $crate::utils::Merge::merge(
             $crate::async_impl::RegistryWithSync {
-                registry: $crate::macros_utils::async_impl::build_registry(($scope, $crate::async_registry_internal! { scope($scope) [ $( $entries )* ] })),
+                registry: $crate::macros_utils::async_impl::build_registry(($scope, $crate::async_registry_internal! { scope($scope) [ $($entries)+ ] })),
                 sync: $crate::Registry::new_with_default_entries(),
             },
             $crate::async_registry_internal! { $($rest)+ }
         )
     }};
-    (scope($scope:expr) [ $($entries:tt)* ] $(,)?) => {{
+    (scope($scope:expr) [ $($entries:tt)+ ] $(,)?) => {{
         $crate::async_impl::RegistryWithSync {
-            registry: $crate::macros_utils::async_impl::build_registry(($scope, $crate::async_registry_internal! { scope($scope) [ $( $entries )* ] })),
+            registry: $crate::macros_utils::async_impl::build_registry(($scope, $crate::async_registry_internal! { scope($scope) [ $($entries)+ ] })),
             sync: $crate::Registry::new_with_default_entries(),
         }
     }};
-    (extend( $($registries_with_sync:expr),+ $(,)? ), $($rest:tt)+) => {{
+    (provide($scope:expr, $($entry:tt)+), $($rest:tt)+) => {{
+        $crate::utils::Merge::merge(
+            $crate::async_impl::RegistryWithSync {
+                registry: $crate::macros_utils::async_impl::build_registry(($scope, $crate::async_registry_internal! { provide($scope, $($entry)+) })),
+                sync: $crate::Registry::new_with_default_entries(),
+            },
+            $crate::async_registry_internal! { $($rest)+ }
+        )
+    }};
+    (provide($scope:expr, $($entry:tt)+ ) $(,)?) => {{
+        $crate::async_impl::RegistryWithSync {
+            registry: $crate::macros_utils::async_impl::build_registry(($scope, $crate::async_registry_internal! { provide($scope, $($entry)+) })),
+            sync: $crate::Registry::new_with_default_entries(),
+        }
+    }};
+    (extend($($registries_with_sync:expr),+ $(,)? ), $($rest:tt)+) => {{
         let mut registry_with_sync = $crate::async_impl::RegistryWithSync {
             registry: $crate::async_impl::Registry::new_with_default_entries(),
             sync: $crate::Registry::new_with_default_entries(),
@@ -166,7 +180,7 @@ macro_rules! async_registry {
         )+
         $crate::utils::Merge::merge(registry_with_sync, $crate::async_registry! { $($rest)+ })
     }};
-    (extend( $($registries_with_sync:expr),+ $(,)? ) $(,)?) => {{
+    (extend($($registries_with_sync:expr),+ $(,)? ) $(,)?) => {{
         let mut registry_with_sync = $crate::async_impl::RegistryWithSync {
             registry: $crate::async_impl::Registry::new_with_default_entries(),
             sync: $crate::Registry::new_with_default_entries(),
@@ -187,18 +201,25 @@ macro_rules! async_registry {
 #[macro_export]
 #[doc(hidden)]
 macro_rules! async_registry_internal {
-    (scope($scope:expr) [ $($entries:tt)* ] $(, $($rest:tt)+)?) => {{
+    (scope($scope:expr) [ $($entries:tt)+ ], $($rest:tt)+) => {{
         $crate::macros_utils::aliases::hlist![
-            $crate::async_registry_internal! { @entries scope($scope) [ $( $entries )* ] },
-            $(
-                $crate::async_registry_internal! { $($rest)+ },
-            )?
+            $crate::async_registry_internal! { @entries_in_scope scope($scope) [ $($entries)+ ] },
+            $crate::async_registry_internal! { $($rest)+ }
         ]
     }};
-    (scope($scope:expr) [ $($entries:tt)* ] $(,)?) => {{
-        $crate::async_registry_internal! { @entries scope($scope) [ $( $entries )* ] }
+    (scope($scope:expr) [ $($entries:tt)+ ] $(,)?) => {{
+        $crate::async_registry_internal! { @entries_in_scope scope($scope) [ $($entries)+ ] }
     }};
-    (extend( $($registries_with_sync:expr),+ $(,)? ), $($rest:tt)+) => {{
+    (provide($scope:expr, $($entry:tt)+), $($rest:tt)+) => {{
+        $crate::macros_utils::aliases::hlist![
+            $crate::async_registry_internal! { @entries_with_scope provide($scope, $($entry)+) },
+            $crate::async_registry_internal! { $($rest)+ }
+        ]
+    }};
+    (provide($scope:expr, $($entry:tt)+) $(,)?) => {{
+        $crate::async_registry_internal! { @entries_with_scope provide($scope, $($entry)*) }
+    }};
+    (extend($($registries_with_sync:expr),+ $(,)?), $($rest:tt)+) => {{
         let mut registry_with_sync = $crate::async_impl::RegistryWithSync {
             registry: $crate::async_impl::Registry::default(),
             sync: $crate::Registry::new_with_default_entries(),
@@ -208,7 +229,7 @@ macro_rules! async_registry_internal {
         )+
         $crate::utils::Merge::merge(registry_with_sync, $crate::async_registry_internal! { $($rest)+ })
     }};
-    (extend( $($registries_with_sync:expr),+ $(,)? ) $(,)?) => {{
+    (extend($($registries_with_sync:expr),+ $(,)?) $(,)?) => {{
         let mut registry_with_sync = $crate::async_impl::RegistryWithSync {
             registry: $crate::async_impl::Registry::default(),
             sync: $crate::Registry::new_with_default_entries(),
@@ -225,8 +246,11 @@ macro_rules! async_registry_internal {
         }
     }};
 
-    (@entries scope($scope:expr) [ $( provide( $($entry:tt)+ ) ),* $(,)? ]) => {{
-        $crate::macros_utils::aliases::hlist![$( $crate::async_registry_internal! { @entry scope($scope), $($entry)+ } ),*]
+    (@entries_with_scope $( provide($scope:expr, $($entry:tt)+) ),+ $(,)?) => {{
+        $crate::macros_utils::aliases::hlist![$( $crate::async_registry_internal! { @entry scope($scope), $($entry)+ } ),+]
+    }};
+    (@entries_in_scope scope($scope:expr) [ $( provide($($entry:tt)+) ),+ $(,)? ]) => {{
+        $crate::macros_utils::aliases::hlist![$( $crate::async_registry_internal! { @entry scope($scope), $($entry)+ } ),+]
     }};
     (@entry scope($scope:expr), $inst:expr $(,)?) => {{
         $crate::macros_utils::async_impl::make_entry($scope, $inst, None, None::<$crate::macros_utils::async_impl::FinDummy<_>>)
@@ -291,58 +315,95 @@ mod tests {
     #[traced_test]
     fn test_registry_mixed_entries() {
         async_registry! {
+            provide(DefaultScope::Request, inst_a),
             scope(DefaultScope::App) [
-                provide(async || Ok(())), // вместо функции замыкание
-                provide(async |Inject(_): Inject<()>| Ok(((), ()))),  // вместо функции замыкание + инъекция значения из фабрики что возвращает `()`, т.е. верхней
+                provide(async || Ok(())),
+                provide(async |Inject(_): Inject<()>| Ok(((), ()))),
                 provide(inst_c, config = Config::default()),
                 provide(inst_d, finalizer = fin_d),
                 provide(inst_e, config = Config::default(), finalizer = fin_e),
                 provide(inst_f, finalizer = fin_f, config = Config::default()),
-            ]
+            ],
+        };
+        async_registry! {
+            scope(DefaultScope::App) [
+                provide(async || Ok(())),
+                provide(async |Inject(_): Inject<()>| Ok(((), ()))),
+                provide(inst_c, config = Config::default()),
+                provide(inst_d, finalizer = fin_d),
+                provide(inst_e, config = Config::default(), finalizer = fin_e),
+                provide(inst_f, finalizer = fin_f, config = Config::default()),
+            ],
+            provide(DefaultScope::Request, inst_a),
         };
     }
 
     #[test]
     #[traced_test]
-    fn test_entry_simple_ident() {
-        async_registry_internal! { @entries scope(DefaultScope::App) [ provide(inst_a) ] };
+    fn test_entry_in_scope() {
+        async_registry_internal! { @entries_in_scope scope(DefaultScope::App) [ provide(inst_a) ] };
     }
 
     #[test]
     #[traced_test]
-    fn test_entry_tuple_single() {
-        async_registry_internal! { @entries scope(DefaultScope::App) [ provide(inst_a) ] };
+    fn test_entry_in_scope_with_config() {
+        async_registry_internal! { @entries_in_scope scope(DefaultScope::App) [ provide(inst_a, config = Config::default()) ] };
     }
 
     #[test]
     #[traced_test]
-    fn test_entry_with_config() {
-        async_registry_internal! { @entries scope(DefaultScope::App) [ provide(inst_a, config = Config::default()) ] };
+    fn test_entry_in_scope_with_finalizer() {
+        async_registry_internal! { @entries_in_scope scope(DefaultScope::App) [ provide(inst_a, finalizer = fin_a) ] };
     }
 
     #[test]
     #[traced_test]
-    fn test_entry_with_finalizer() {
-        async_registry_internal! { @entries scope(DefaultScope::App) [ provide(inst_a, finalizer = fin_a) ] };
+    fn test_entry_in_scope_with_config_and_finalizer() {
+        async_registry_internal! { @entries_in_scope scope(DefaultScope::App) [ provide(inst_a, config = Config::default(), finalizer = fin_a) ] };
     }
 
     #[test]
     #[traced_test]
-    fn test_entry_with_config_and_finalizer() {
-        async_registry_internal! { @entries scope(DefaultScope::App) [ provide(inst_a, config = Config::default(), finalizer = fin_a) ] };
+    fn test_entry_in_scope_with_finalizer_and_config_swapped() {
+        async_registry_internal! { @entries_in_scope scope(DefaultScope::App) [ provide(inst_a, finalizer = fin_a, config = Config::default()) ] };
     }
 
     #[test]
     #[traced_test]
-    fn test_entry_with_finalizer_and_config_swapped() {
-        async_registry_internal! { @entries scope(DefaultScope::App) [ provide(inst_a, finalizer = fin_a, config = Config::default()) ] };
+    fn test_entry_with_scope() {
+        async_registry_internal! { @entries_with_scope provide(DefaultScope::App, inst_a) };
     }
 
     #[test]
     #[traced_test]
-    fn test_multiple_entries() {
+    fn test_entry_with_scope_with_config() {
+        async_registry_internal! { @entries_with_scope provide(DefaultScope::App, inst_a, config = Config::default()) };
+    }
+
+    #[test]
+    #[traced_test]
+    fn test_entry_with_scope_with_finalizer() {
+        async_registry_internal! { @entries_with_scope provide(DefaultScope::App, inst_a, finalizer = fin_a) };
+    }
+
+    #[test]
+    #[traced_test]
+    fn test_entry_with_scope_with_config_and_finalizer() {
+        async_registry_internal! { @entries_with_scope provide(DefaultScope::App, inst_a, config = Config::default(), finalizer = fin_a) };
+    }
+
+    #[test]
+    #[traced_test]
+    fn test_entry_with_scope_with_finalizer_and_config_swapped() {
+        async_registry_internal! { @entries_with_scope provide(DefaultScope::App, inst_a, finalizer = fin_a, config = Config::default()) };
+    }
+
+    #[test]
+    #[traced_test]
+    fn test_multiple_entries_in_scope() {
         async_registry_internal! {
-            @entries scope(DefaultScope::App) [
+            @entries_in_scope
+            scope(DefaultScope::App) [
                 provide(inst_a),
                 provide(inst_b),
                 provide(inst_c, config = Config::default(), finalizer = fin_c),
@@ -354,9 +415,23 @@ mod tests {
 
     #[test]
     #[traced_test]
-    fn test_trailing_comma_and_spaces() {
+    fn test_multiple_entries_with_scope() {
         async_registry_internal! {
-            @entries scope(DefaultScope::App) [
+            @entries_with_scope
+            provide(DefaultScope::App, inst_a),
+            provide(DefaultScope::App, inst_b),
+            provide(DefaultScope::App, inst_c, config = Config::default(), finalizer = fin_c),
+            provide(DefaultScope::App, inst_d, finalizer = fin_d),
+            provide(DefaultScope::App, inst_e, config = Config::default(), finalizer = fin_e),
+        };
+    }
+
+    #[test]
+    #[traced_test]
+    fn test_entries_in_scope_trailing_comma_and_spaces() {
+        async_registry_internal! {
+            @entries_in_scope
+            scope(DefaultScope::App) [
                 provide(inst_a, config = Config::default(), finalizer = fin_a),
             ]
         };
@@ -364,7 +439,16 @@ mod tests {
 
     #[test]
     #[traced_test]
-    fn test_registry_single_scope_basic() {
+    fn test_entries_with_scope_trailing_comma_and_spaces() {
+        async_registry_internal! {
+            @entries_with_scope
+            provide(DefaultScope::App, inst_a, config = Config::default(), finalizer = fin_a),
+        };
+    }
+
+    #[test]
+    #[traced_test]
+    fn test_registry_entries_in_scope() {
         async_registry! {
             scope(DefaultScope::App) [
                 provide(inst_a),
@@ -378,7 +462,19 @@ mod tests {
 
     #[test]
     #[traced_test]
-    fn test_registry_multiple_scopes() {
+    fn test_registry_entries_with_scope() {
+        async_registry! {
+            provide(DefaultScope::App, inst_a),
+            provide(DefaultScope::App, inst_b),
+            provide(DefaultScope::App, inst_c, config = Config::default()),
+            provide(DefaultScope::App, inst_d, finalizer = fin_d),
+            provide(DefaultScope::App, inst_e, config = Config::default(), finalizer = fin_e),
+        };
+    }
+
+    #[test]
+    #[traced_test]
+    fn test_registry_entries_in_scope_multiple_scopes() {
         async_registry! {
             scope(DefaultScope::App) [
                 provide(inst_a),
@@ -393,10 +489,19 @@ mod tests {
 
     #[test]
     #[traced_test]
-    fn test_registry_empty_scope() {
+    fn test_registry_entries_with_scope_multiple_scopes() {
         async_registry! {
-            scope(DefaultScope::App) []
+            provide(DefaultScope::App, inst_a),
+            provide(DefaultScope::App, inst_b),
+            provide(DefaultScope::Request, inst_c, config = Config::default()),
+            provide(DefaultScope::Request, inst_d, finalizer = fin_d),
         };
+    }
+
+    #[test]
+    #[traced_test]
+    fn test_registry_empty_scope() {
+        async_registry! {};
     }
 
     #[test]
@@ -415,7 +520,6 @@ mod tests {
     #[traced_test]
     fn test_registry_get() {
         let RegistryWithSync { registry, .. } = async_registry! {
-            scope(DefaultScope::App) [],
             scope(DefaultScope::Session) [provide(inst_a), provide(inst_b), provide(inst_c)],
             scope(DefaultScope::Request) [provide(inst_d), provide(inst_e), provide(inst_f)],
         };
@@ -484,26 +588,20 @@ mod tests {
     #[traced_test]
     fn registry_extend_entries() {
         let RegistryWithSync { registry, .. } = async_registry! {
-            scope(DefaultScope::Session) [provide(inst_a)],
+            provide(DefaultScope::App, inst_a),
+            scope(DefaultScope::Session) [provide(inst_b)],
+            provide(DefaultScope::App, inst_c),
             extend(
                 async_registry! {
-                    scope(DefaultScope::App) [provide(inst_b)],
+                    scope(DefaultScope::App) [provide(inst_d)],
                     extend(
                         async_registry! {
-                            scope(DefaultScope::Session) [provide(inst_c)],
-                        },
-                        async_registry! {
-                            scope(DefaultScope::Request) [provide(inst_d)],
+                            scope(DefaultScope::Session) [provide(inst_e)],
                         },
                     ),
                 },
                 async_registry! {
-                    scope(DefaultScope::Session) [provide(inst_e)],
-                    extend(
-                        async_registry! {
-                            scope(DefaultScope::Session) [provide(inst_f)],
-                        },
-                    ),
+                    scope(DefaultScope::Session) [provide(inst_f)],
                 },
             ),
         };
@@ -518,9 +616,7 @@ mod tests {
             scope(DefaultScope::App) [
                 provide(inst_a),
             ],
-            sync = registry! {
-                scope(DefaultScope::App) []
-            },
+            sync = registry! {},
         };
     }
 
@@ -538,9 +634,7 @@ mod tests {
                     ],
                 },
             ),
-            sync = registry! {
-                scope(DefaultScope::App) []
-            },
+            sync = registry! {},
         };
     }
 }

@@ -34,6 +34,15 @@ where
     }
 }
 
+impl<Tail> IntoIterator<(TypeId, registry::InstantiatorData)> for HCons<registry::Registry, Tail>
+where
+    Tail: IntoIterator<(TypeId, registry::InstantiatorData)>,
+{
+    fn into_iter(self) -> impl Iterator<Item = (TypeId, registry::InstantiatorData)> {
+        self.head.entries.into_iter().chain(self.tail.into_iter())
+    }
+}
+
 #[cfg(feature = "async")]
 impl<Head, Tail> IntoIterator<(TypeId, async_impl::registry::InstantiatorData)> for HCons<Head, Tail>
 where
@@ -42,5 +51,15 @@ where
 {
     fn into_iter(self) -> impl Iterator<Item = (TypeId, async_impl::registry::InstantiatorData)> {
         self.head.into_iter().chain(self.tail.into_iter())
+    }
+}
+
+#[cfg(feature = "async")]
+impl<Tail> IntoIterator<(TypeId, async_impl::registry::InstantiatorData)> for HCons<async_impl::RegistryWithSync, Tail>
+where
+    Tail: IntoIterator<(TypeId, async_impl::registry::InstantiatorData)>,
+{
+    fn into_iter(self) -> impl Iterator<Item = (TypeId, async_impl::registry::InstantiatorData)> {
+        self.head.registry.entries.into_iter().chain(self.tail.into_iter())
     }
 }
