@@ -38,6 +38,7 @@ impl Registry {
 
         let mut scopes_data = Vec::with_capacity(N);
         for scope in T::all() {
+            #[allow(clippy::similar_names)]
             let scope_data = scope.into();
 
             entries.insert(
@@ -56,6 +57,7 @@ impl Registry {
     }
 
     #[inline]
+    #[must_use]
     pub fn new_with_default_entries() -> Self {
         Self::new::<DefaultScope, DefaultScope, 6>(BTreeMap::new())
     }
@@ -119,7 +121,7 @@ impl Registry {
 ///
 /// ### `provide` syntax
 ///
-/// Each `provide` item defines a single dependency registration.  
+/// Each `provide` item defines a single dependency registration.
 /// The following forms are supported:
 ///
 /// ```no_code

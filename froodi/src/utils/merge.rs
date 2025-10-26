@@ -5,6 +5,7 @@ use crate::async_impl;
 use crate::{registry, utils::hlist, Registry};
 
 pub trait Merge<T> {
+    #[must_use]
     fn merge(self, other: T) -> Self;
 }
 

@@ -227,6 +227,7 @@ where
 }
 
 #[inline]
+#[must_use]
 pub fn setup<Client, WithScope>(mut router: Router<Client>, container: Container, scope: WithScope) -> Router<Client>
 where
     WithScope: Scope + Clone + Send + Sync + 'static,
@@ -243,6 +244,7 @@ where
 }
 
 #[inline]
+#[must_use]
 pub fn setup_default<Client>(router: Router<Client>, container: Container) -> Router<Client>
 where
     Client: Send + Sync + 'static,
@@ -251,6 +253,7 @@ where
 }
 
 #[inline]
+#[must_use]
 #[cfg(feature = "async")]
 pub fn setup_async<Client, WithScope>(mut router: Router<Client>, container: AsyncContainer, scope: WithScope) -> Router<Client>
 where
@@ -268,6 +271,7 @@ where
 }
 
 #[inline]
+#[must_use]
 #[cfg(feature = "async")]
 pub fn setup_async_default<Client>(router: Router<Client>, container: AsyncContainer) -> Router<Client>
 where

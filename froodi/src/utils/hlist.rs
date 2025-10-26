@@ -15,11 +15,11 @@ impl<T> IntoIterator<T> for HNil {
     }
 }
 
-impl<T, Tail> IntoIterator<T> for HCons<T, Tail>
+impl<H, Tail> IntoIterator<H> for HCons<H, Tail>
 where
-    Tail: IntoIterator<T>,
+    Tail: IntoIterator<H>,
 {
-    fn into_iter(self) -> impl Iterator<Item = T> {
+    fn into_iter(self) -> impl Iterator<Item = H> {
         iter::once(self.head).chain(self.tail.into_iter())
     }
 }
