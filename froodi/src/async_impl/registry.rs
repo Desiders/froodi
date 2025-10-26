@@ -469,7 +469,7 @@ mod tests {
     #[test]
     #[traced_test]
     fn test_registry_mixed_entries() {
-        async_registry! {
+        let _ = async_registry! {
             provide(DefaultScope::Request, inst_a),
             scope(DefaultScope::App) [
                 provide(async || Ok(())),
@@ -480,7 +480,7 @@ mod tests {
                 provide(inst_f, finalizer = fin_f, config = Config::default()),
             ],
         };
-        async_registry! {
+        let _ = async_registry! {
             scope(DefaultScope::App) [
                 provide(async || Ok(())),
                 provide(async |Inject(_): Inject<()>| Ok(((), ()))),
@@ -618,7 +618,7 @@ mod tests {
     #[test]
     #[traced_test]
     fn test_registry_entries_with_scope() {
-        async_registry! {
+        let _ = async_registry! {
             provide(DefaultScope::App, inst_a),
             provide(DefaultScope::App, inst_b),
             provide(DefaultScope::App, inst_c, config = Config::default()),
@@ -630,7 +630,7 @@ mod tests {
     #[test]
     #[traced_test]
     fn test_registry_entries_in_scope_multiple_scopes() {
-        async_registry! {
+        let _ = async_registry! {
             scope(DefaultScope::App) [
                 provide(inst_a),
                 provide(inst_b),
@@ -645,7 +645,7 @@ mod tests {
     #[test]
     #[traced_test]
     fn test_registry_entries_with_scope_multiple_scopes() {
-        async_registry! {
+        let _ = async_registry! {
             provide(DefaultScope::App, inst_a),
             provide(DefaultScope::App, inst_b),
             provide(DefaultScope::Request, inst_c, config = Config::default()),
@@ -662,7 +662,7 @@ mod tests {
     #[test]
     #[traced_test]
     fn test_registry_trailing_commas_and_spacing() {
-        async_registry! {
+        let _ = async_registry! {
             scope(DefaultScope::App)[
                 provide(inst_a),
                 provide(inst_b , config = Config::default() , finalizer = fin_b ,)
@@ -767,7 +767,7 @@ mod tests {
     #[test]
     #[traced_test]
     fn test_registry_with_sync() {
-        async_registry! {
+        let _ = async_registry! {
             scope(DefaultScope::App) [
                 provide(inst_a),
             ],
@@ -778,7 +778,7 @@ mod tests {
     #[test]
     #[traced_test]
     fn test_registry_with_sync_and_extend() {
-        async_registry! {
+        let _ = async_registry! {
             scope(DefaultScope::App) [
                 provide(inst_a),
             ],

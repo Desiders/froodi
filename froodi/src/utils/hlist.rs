@@ -10,6 +10,7 @@ pub trait IntoIterator<T> {
 }
 
 impl<T> IntoIterator<T> for HNil {
+    #[inline]
     fn into_iter(self) -> impl Iterator<Item = T> {
         iter::empty()
     }
@@ -19,6 +20,7 @@ impl<H, Tail> IntoIterator<H> for HCons<H, Tail>
 where
     Tail: IntoIterator<H>,
 {
+    #[inline]
     fn into_iter(self) -> impl Iterator<Item = H> {
         iter::once(self.head).chain(self.tail.into_iter())
     }
@@ -29,6 +31,7 @@ where
     Head: IntoIterator<(TypeId, registry::InstantiatorData)>,
     Tail: IntoIterator<(TypeId, registry::InstantiatorData)>,
 {
+    #[inline]
     fn into_iter(self) -> impl Iterator<Item = (TypeId, registry::InstantiatorData)> {
         self.head.into_iter().chain(self.tail.into_iter())
     }
@@ -38,6 +41,7 @@ impl<Tail> IntoIterator<(TypeId, registry::InstantiatorData)> for HCons<registry
 where
     Tail: IntoIterator<(TypeId, registry::InstantiatorData)>,
 {
+    #[inline]
     fn into_iter(self) -> impl Iterator<Item = (TypeId, registry::InstantiatorData)> {
         self.head.entries.into_iter().chain(self.tail.into_iter())
     }
@@ -49,6 +53,7 @@ where
     Head: IntoIterator<(TypeId, async_impl::registry::InstantiatorData)>,
     Tail: IntoIterator<(TypeId, async_impl::registry::InstantiatorData)>,
 {
+    #[inline]
     fn into_iter(self) -> impl Iterator<Item = (TypeId, async_impl::registry::InstantiatorData)> {
         self.head.into_iter().chain(self.tail.into_iter())
     }
@@ -59,6 +64,7 @@ impl<Tail> IntoIterator<(TypeId, async_impl::registry::InstantiatorData)> for HC
 where
     Tail: IntoIterator<(TypeId, async_impl::registry::InstantiatorData)>,
 {
+    #[inline]
     fn into_iter(self) -> impl Iterator<Item = (TypeId, async_impl::registry::InstantiatorData)> {
         self.head.registry.entries.into_iter().chain(self.tail.into_iter())
     }

@@ -381,7 +381,7 @@ mod tests {
     #[test]
     #[traced_test]
     fn test_registry_mixed_entries() {
-        registry! {
+        let _ = registry! {
             provide(DefaultScope::Request, inst_a),
             scope(DefaultScope::App) [
                 provide(|| Ok(())),
@@ -392,7 +392,7 @@ mod tests {
                 provide(inst_f, finalizer = fin_f, config = Config::default()),
             ],
         };
-        registry! {
+        let _ = registry! {
             scope(DefaultScope::App) [
                 provide(|| Ok(())),
                 provide(|Inject(_): Inject<()>| Ok(((), ()))),
@@ -516,7 +516,7 @@ mod tests {
     #[test]
     #[traced_test]
     fn test_registry_entries_in_scope() {
-        registry! {
+        let _ = registry! {
             scope(DefaultScope::App) [
                 provide(inst_a),
                 provide(inst_b),
@@ -530,7 +530,7 @@ mod tests {
     #[test]
     #[traced_test]
     fn test_registry_entries_with_scope() {
-        registry! {
+        let _ = registry! {
             provide(DefaultScope::App, inst_a),
             provide(DefaultScope::App, inst_b),
             provide(DefaultScope::App, inst_c, config = Config::default()),
@@ -542,7 +542,7 @@ mod tests {
     #[test]
     #[traced_test]
     fn test_registry_entries_in_scope_multiple_scopes() {
-        registry! {
+        let _ = registry! {
             scope(DefaultScope::App) [
                 provide(inst_a),
                 provide(inst_b),
@@ -557,7 +557,7 @@ mod tests {
     #[test]
     #[traced_test]
     fn test_registry_entries_with_scope_multiple_scopes() {
-        registry! {
+        let _ = registry! {
             provide(DefaultScope::App, inst_a),
             provide(DefaultScope::App, inst_b),
             provide(DefaultScope::Request, inst_c, config = Config::default()),
@@ -568,13 +568,13 @@ mod tests {
     #[test]
     #[traced_test]
     fn test_registry_empty_scope() {
-        registry! {};
+        let _ = registry! {};
     }
 
     #[test]
     #[traced_test]
     fn test_registry_trailing_commas_and_spacing() {
-        registry! {
+        let _ = registry! {
             scope(DefaultScope::App)[
                 provide(inst_a),
                 provide(inst_b , config = Config::default() , finalizer = fin_b ,)

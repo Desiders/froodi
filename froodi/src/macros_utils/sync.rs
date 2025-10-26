@@ -14,6 +14,7 @@ use crate::{
 };
 
 #[inline]
+#[must_use]
 #[doc(hidden)]
 pub fn build_registry<H, S, const N: usize>((_, scope_entries): (S, H)) -> Registry
 where
@@ -28,6 +29,7 @@ where
 }
 
 #[inline]
+#[must_use]
 #[doc(hidden)]
 pub fn make_entry<Inst, Deps, Fin>(scope: impl Scope, inst: Inst, config: Option<Config>, fin: Option<Fin>) -> (TypeId, InstantiatorData)
 where
