@@ -122,7 +122,7 @@ impl Registry {
 /// Each `provide` item defines a single dependency registration.  
 /// The following forms are supported:
 ///
-/// ```rust
+/// ```no_code
 /// provide(inst)                             // factory only
 /// provide(inst, config = Config::default()) // with configuration
 /// provide(inst, finalizer = fin)            // with finalizer
@@ -138,72 +138,114 @@ impl Registry {
 ///
 /// ### 1. Single `scope`
 /// ```rust
+/// use froodi::{registry, InstantiateErrorKind, DefaultScope::*};
+///
+/// fn inst() -> Result<(), InstantiateErrorKind> {
+///     Ok(())
+/// }
+///
 /// registry! {
-///     scope(DefaultScope::App) [
-///         provide(inst_a),
+///     scope(App) [
+///         provide(inst),
 ///     ]
 /// };
 /// ```
 ///
 /// ### 2. Multiple `scope`
 /// ```rust
+/// use froodi::{registry, InstantiateErrorKind, DefaultScope::*};
+///
+/// fn inst() -> Result<(), InstantiateErrorKind> {
+///     Ok(())
+/// }
+///
 /// registry! {
-///     scope(DefaultScope::App) [ provide(inst_a) ],
-///     scope(DefaultScope::Session) [ provide(inst_b) ],
+///     scope(App) [ provide(inst) ],
+///     scope(Session) [ provide(inst) ],
 /// };
 /// ```
 ///
 /// ### 3. Single `provide`
 /// ```rust
+/// use froodi::{registry, InstantiateErrorKind, DefaultScope::*};
+///
+/// fn inst() -> Result<(), InstantiateErrorKind> {
+///     Ok(())
+/// }
+///
 /// registry! {
-///     provide(DefaultScope::App, inst_a)
+///     provide(App, inst)
 /// };
 /// ```
 ///
 /// ### 4. Multiple `provide`
 /// ```rust
+/// use froodi::{registry, InstantiateErrorKind, DefaultScope::*};
+///
+/// fn inst() -> Result<(), InstantiateErrorKind> {
+///     Ok(())
+/// }
+///
 /// registry! {
-///     provide(DefaultScope::App, inst_a),
-///     provide(DefaultScope::Session, inst_b),
-///     provide(DefaultScope::Request, inst_c),
+///     provide(App, inst),
+///     provide(Session, inst),
+///     provide(Request, inst),
 /// };
 /// ```
 ///
 /// ### 5. Combination of one or more `scope` and `provide`
 /// ```rust
+/// use froodi::{registry, InstantiateErrorKind, DefaultScope::*};
+///
+/// fn inst() -> Result<(), InstantiateErrorKind> {
+///     Ok(())
+/// }
+///
 /// registry! {
-///     scope(DefaultScope::App) [ provide(inst_a) ],
-///     provide(DefaultScope::Session, inst_b),
-///     provide(DefaultScope::Request, inst_c),
+///     scope(App) [ provide(inst) ],
+///     provide(Session, inst),
+///     provide(Request, inst),
 /// };
 /// ```
 ///
 /// ### 6. Using `extend` standalone
 /// ```rust
+/// use froodi::registry;
+///
 /// registry! {
-///     extend(registry1)
+///     extend(registry!())
 /// };
 /// ```
 ///
 /// ### 7. Using multiple `extend`
 /// ```rust
+/// use froodi::registry;
+///
 /// registry! {
-///     extend(registry1, registry2),
-///     extend(registry3),
+///     extend(registry!(), registry!()),
+///     extend(registry!()),
 /// };
 /// ```
 ///
 /// ### 8. Using `extend` together with a combination of `scope` and `provide`
 /// ```rust
+/// use froodi::{registry, InstantiateErrorKind, DefaultScope::*};
+///
+/// fn inst() -> Result<(), InstantiateErrorKind> {
+///     Ok(())
+/// }
+///
 /// registry! {
-///     scope(DefaultScope::App) [ provide(inst_a) ],
-///     provide(DefaultScope::Session, inst_b),
-///     extend(registry1, registry2),
+///     scope(App) [ provide(inst) ],
+///     provide(Session, inst),
+///     extend(registry!(), registry!()),
 /// };
 /// ```
 ///
 /// ### 9. Empty macro usage
 /// ```rust
+/// use froodi::registry;
+///
 /// let registry = registry!();
 /// ```
 /// In this case, a registry with default entries is created.

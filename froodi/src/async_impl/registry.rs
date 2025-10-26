@@ -140,7 +140,7 @@ impl Registry {
 /// Each `provide` item defines a single asynchronous dependency registration.  
 /// The following forms are supported:
 ///
-/// ```rust
+/// ```no_code
 /// provide(inst)                             // async factory only
 /// provide(inst, config = Config::default()) // with configuration
 /// provide(inst, finalizer = fin)            // with async finalizer
@@ -156,83 +156,131 @@ impl Registry {
 ///
 /// ### 1. Single `scope`
 /// ```rust
+/// use froodi::{async_registry, InstantiateErrorKind, DefaultScope::*};
+///
+/// async fn inst() -> Result<(), InstantiateErrorKind> {
+///     Ok(())
+/// }
+///
 /// async_registry! {
-///     scope(DefaultScope::App) [
-///         provide(inst_a),
+///     scope(App) [
+///         provide(inst),
 ///     ]
 /// };
 /// ```
 ///
 /// ### 2. Multiple `scope`
 /// ```rust
+/// use froodi::{async_registry, InstantiateErrorKind, DefaultScope::*};
+///
+/// async fn inst() -> Result<(), InstantiateErrorKind> {
+///     Ok(())
+/// }
+///
 /// async_registry! {
-///     scope(DefaultScope::App) [ provide(inst_a) ],
-///     scope(DefaultScope::Session) [ provide(inst_b) ],
+///     scope(App) [ provide(inst) ],
+///     scope(Session) [ provide(inst) ],
 /// };
 /// ```
 ///
 /// ### 3. Single `provide`
 /// ```rust
+/// use froodi::{async_registry, InstantiateErrorKind, DefaultScope::*};
+///
+/// async fn inst() -> Result<(), InstantiateErrorKind> {
+///     Ok(())
+/// }
+///
 /// async_registry! {
-///     provide(DefaultScope::App, inst_a)
+///     provide(App, inst)
 /// };
 /// ```
 ///
 /// ### 4. Multiple `provide`
 /// ```rust
+/// use froodi::{async_registry, InstantiateErrorKind, DefaultScope::*};
+///
+/// async fn inst() -> Result<(), InstantiateErrorKind> {
+///     Ok(())
+/// }
+///
 /// async_registry! {
-///     provide(DefaultScope::App, inst_a),
-///     provide(DefaultScope::Session, inst_b),
-///     provide(DefaultScope::Request, inst_c),
+///     provide(App, inst),
+///     provide(Session, inst),
+///     provide(Request, inst),
 /// };
 /// ```
 ///
 /// ### 5. Combination of one or more `scope` and `provide`
 /// ```rust
+/// use froodi::{async_registry, InstantiateErrorKind, DefaultScope::*};
+///
+/// async fn inst() -> Result<(), InstantiateErrorKind> {
+///     Ok(())
+/// }
+///
 /// async_registry! {
-///     scope(DefaultScope::App) [ provide(inst_a) ],
-///     provide(DefaultScope::Session, inst_b),
-///     provide(DefaultScope::Request, inst_c),
+///     scope(App) [ provide(inst) ],
+///     provide(Session, inst),
+///     provide(Request, inst),
 /// };
 /// ```
 ///
 /// ### 6. Using `extend` standalone
 /// ```rust
+/// use froodi::{async_registry, DefaultScope::*};
+///
 /// async_registry! {
-///     extend(registry1)
+///     extend(async_registry!())
 /// };
 /// ```
 ///
 /// ### 7. Using multiple `extend`
 /// ```rust
+/// use froodi::{async_registry, DefaultScope::*};
+///
 /// async_registry! {
-///     extend(registry1, registry2),
-///     extend(registry3),
+///     extend(async_registry!(), async_registry!()),
+///     extend(async_registry!()),
 /// };
 /// ```
 ///
 /// ### 8. Using `extend` together with a combination of `scope` and `provide`
 /// ```rust
+/// use froodi::{async_registry, InstantiateErrorKind, DefaultScope::*};
+///
+/// async fn inst() -> Result<(), InstantiateErrorKind> {
+///     Ok(())
+/// }
+///
 /// async_registry! {
-///     scope(DefaultScope::App) [ provide(inst_a) ],
-///     provide(DefaultScope::Session, inst_b),
-///     extend(registry1, registry2),
+///     scope(App) [ provide(inst) ],
+///     provide(Session, inst),
+///     extend(async_registry!(), async_registry!()),
 /// };
 /// ```
 ///
 /// ### 9. Empty macro usage
 /// ```rust
+/// use froodi::async_registry;
+///
 /// let registry = async_registry!();
 /// ```
 /// Creates an asynchronous registry with default entries.
 ///
 /// ### 10. Using `sync`
 /// ```rust
+/// use froodi::{async_registry, registry, InstantiateErrorKind, DefaultScope::*};
+///
+/// async fn inst() -> Result<(), InstantiateErrorKind> {
+///     Ok(())
+/// }
+///
 /// async_registry! {
-///     scope(DefaultScope::App) [ provide(inst_a) ],
-///     provide(DefaultScope::Session, inst_b),
-///     extend(registry1, registry2),
-///     sync = sync_registry,
+///     scope(App) [ provide(inst) ],
+///     provide(Session, inst),
+///     extend(async_registry!(), async_registry!()),
+///     sync = registry!(),
 /// };
 /// ```
 /// The `sync` keyword allows linking an existing **synchronous registry** to the asynchronous one.  
