@@ -20,3 +20,5 @@ pub use std::{Box, Vec};
 
 #[cfg(not(feature = "std"))]
 pub use alloc::{Box, Vec};
+
+pub use frunk::hlist;

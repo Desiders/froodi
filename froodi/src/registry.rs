@@ -22,7 +22,7 @@ pub struct InstantiatorData {
     pub(crate) scope_data: ScopeData,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct Registry {
     pub(crate) entries: BTreeMap<TypeId, InstantiatorData>,
     pub(crate) scopes_data: Vec<ScopeData>,
@@ -58,11 +58,6 @@ impl Registry {
     #[inline]
     pub fn new_with_default_entries() -> Self {
         Self::new::<DefaultScope, DefaultScope, 6>(BTreeMap::new())
-    }
-
-    #[inline]
-    pub fn merge(&mut self, other: Self) {
-        self.entries.extend(other.entries);
     }
 }
 
@@ -126,30 +121,22 @@ macro_rules! registry {
         $crate::Registry::new_with_default_entries()
     }};
 
-    (scope($scope:expr) [ $($entries:tt)* ] $(, $($rest:tt)+)?) => {{
-        #[allow(unused_mut)]
-        let mut registry = $crate::macros_utils::sync::build_registry([
-            ($scope, $crate::registry_internal! { @entries scope($scope) [ $( $entries )* ] })
-        ]);
-        $(
-            registry.merge($crate::registry! { $($rest)+ });
-        )*
-        registry
+    (scope($scope:expr) [ $($entries:tt)* ], $($rest:tt)+) => {{
+        $crate::utils::Merge::merge(
+            $crate::macros_utils::sync::build_registry(($scope, $crate::registry_internal! { scope($scope) [ $( $entries )* ] })),
+            $crate::registry_internal! { $($rest)+ }
+        )
     }};
-
     (scope($scope:expr) [ $($entries:tt)* ] $(,)?) => {{
-        $crate::macros_utils::sync::build_registry([
-            ($scope, $crate::registry_internal! { @entries scope($scope) [ $( $entries )* ] })
-        ])
+        $crate::macros_utils::sync::build_registry(($scope, $crate::registry_internal! { scope($scope) [ $( $entries )* ] }))
     }};
-
-    ($( extend( $($registries:expr),* $(,)? ) ),* $(,)?) => {{
+    ($( extend( $($registries:expr),+ $(,)? ) ),+ $(,)?) => {{
         let mut registry = $crate::Registry::new_with_default_entries();
         $(
             $(
-                registry.merge($registries);
+                registry = $crate::utils::Merge::merge(registry, $registries);
             )+
-        )*
+        )+
         registry
     }};
 }
@@ -157,8 +144,29 @@ macro_rules! registry {
 #[macro_export]
 #[doc(hidden)]
 macro_rules! registry_internal {
+    (scope($scope:expr) [ $($entries:tt)* ] $(, $($rest:tt)+)?) => {{
+        $crate::macros_utils::aliases::hlist![
+            $crate::registry_internal! { @entries scope($scope) [ $( $entries )* ] },
+            $(
+                $crate::registry_internal! { $($rest)+ },
+            )?
+        ]
+    }};
+    (scope($scope:expr) [ $($entries:tt)* ] $(,)?) => {{
+        $crate::registry_internal! { @entries scope($scope) [ $( $entries )* ] }
+    }};
+    ($( extend( $($registries:expr),+ $(,)? ) ),+ $(,)?) => {{
+        let mut registry = $crate::Registry::default();
+        $(
+            $(
+                registry = $crate::utils::Merge::merge(registry, $registries);
+            )+
+        )+
+        registry
+    }};
+
     (@entries scope($scope:expr) [ $( provide( $($entry:tt)+ ) ),* $(,)? ]) => {{
-        $crate::macros_utils::aliases::Vec::from_iter([$( $crate::registry_internal! { @entry scope($scope), $($entry)+ } ),*])
+        $crate::macros_utils::aliases::hlist![$( $crate::registry_internal! { @entry scope($scope), $($entry)+ } ),*]
     }};
     (@entry scope($scope:expr), $inst:expr $(,)?) => {{
         $crate::macros_utils::sync::make_entry($scope, $inst, None, None::<$crate::macros_utils::sync::FinDummy<_>>)

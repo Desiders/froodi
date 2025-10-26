@@ -1,4 +1,4 @@
-use alloc::{collections::btree_map::BTreeMap, vec::Vec};
+use alloc::collections::btree_map::BTreeMap;
 use core::any::TypeId;
 
 use crate::{
@@ -6,23 +6,25 @@ use crate::{
     finalizer::boxed_finalizer_factory,
     instantiator::{boxed_instantiator, Instantiator},
     registry::InstantiatorData,
-    utils::thread_safety::{SendSafety, SyncSafety},
+    utils::{
+        hlist,
+        thread_safety::{SendSafety, SyncSafety},
+    },
     Config, Finalizer, InstantiateErrorKind, Registry, ResolveErrorKind, Scope, Scopes,
 };
 
 #[inline]
 #[doc(hidden)]
-pub fn build_registry<S, const SCOPES_N: usize, const N: usize>(scopes_entries: [(S, Vec<(TypeId, InstantiatorData)>); N]) -> Registry
+pub fn build_registry<H, S, const N: usize>((_, scope_entries): (S, H)) -> Registry
 where
-    S: Scope + Scopes<SCOPES_N, Scope = S>,
+    S: Scope + Scopes<N, Scope = S>,
+    H: hlist::IntoIterator<(TypeId, InstantiatorData)>,
 {
     let mut entries = BTreeMap::new();
-    for (_, scope_entries) in scopes_entries {
-        for (type_id, data) in scope_entries {
-            entries.insert(type_id, data);
-        }
+    for (type_id, data) in scope_entries.into_iter() {
+        entries.insert(type_id, data);
     }
-    Registry::new::<S, S, SCOPES_N>(entries)
+    Registry::new::<S, S, N>(entries)
 }
 
 #[inline]

@@ -25,7 +25,7 @@ pub struct InstantiatorData {
     pub(crate) scope_data: ScopeData,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct Registry {
     pub(crate) entries: BTreeMap<TypeId, InstantiatorData>,
     pub(crate) scopes_data: Vec<ScopeData>,
@@ -141,54 +141,41 @@ macro_rules! async_registry {
         }
     }};
 
-    (scope($scope:expr) [ $($entries:tt)* ] $(, $($rest:tt)+)?) => {{
-        #[allow(unused_mut)]
-        let mut registry_with_sync = $crate::async_impl::RegistryWithSync {
-            registry: $crate::macros_utils::async_impl::build_registry([
-                ($scope, $crate::async_registry_internal! { @entries scope($scope) [ $( $entries )* ] })
-            ]),
-            sync: $crate::Registry::new_with_default_entries(),
-        };
-        $(
-            registry_with_sync.merge($crate::async_registry! { $($rest)+ });
-        )*
-        registry_with_sync
+    (scope($scope:expr) [ $($entries:tt)* ], $($rest:tt)+) => {{
+        $crate::utils::Merge::merge(
+            $crate::async_impl::RegistryWithSync {
+                registry: $crate::macros_utils::async_impl::build_registry(($scope, $crate::async_registry_internal! { scope($scope) [ $( $entries )* ] })),
+                sync: $crate::Registry::new_with_default_entries(),
+            },
+            $crate::async_registry_internal! { $($rest)+ }
+        )
     }};
-
     (scope($scope:expr) [ $($entries:tt)* ] $(,)?) => {{
         $crate::async_impl::RegistryWithSync {
-            registry: $crate::macros_utils::async_impl::build_registry([
-                ($scope, $crate::async_registry_internal! { @entries scope($scope) [ $( $entries )* ] })
-            ]),
+            registry: $crate::macros_utils::async_impl::build_registry(($scope, $crate::async_registry_internal! { scope($scope) [ $( $entries )* ] })),
             sync: $crate::Registry::new_with_default_entries(),
         }
     }};
-
-    (extend( $($registries_with_sync:expr),+ $(,)? ) $(, $($rest:tt)+)?) => {{
+    (extend( $($registries_with_sync:expr),+ $(,)? ), $($rest:tt)+) => {{
         let mut registry_with_sync = $crate::async_impl::RegistryWithSync {
             registry: $crate::async_impl::Registry::new_with_default_entries(),
             sync: $crate::Registry::new_with_default_entries(),
         };
         $(
-            registry_with_sync.merge($registries_with_sync);
+            registry_with_sync = $crate::utils::Merge::merge(registry_with_sync, $registries_with_sync);
         )+
-        $(
-            registry_with_sync.merge($crate::async_registry! { $($rest)+ });
-        )*
-        registry_with_sync
+        $crate::utils::Merge::merge(registry_with_sync, $crate::async_registry! { $($rest)+ })
     }};
-
     (extend( $($registries_with_sync:expr),+ $(,)? ) $(,)?) => {{
         let mut registry_with_sync = $crate::async_impl::RegistryWithSync {
             registry: $crate::async_impl::Registry::new_with_default_entries(),
             sync: $crate::Registry::new_with_default_entries(),
         };
         $(
-            registry_with_sync.merge($registries_with_sync);
+            registry_with_sync = $crate::utils::Merge::merge(registry_with_sync, $registries_with_sync);
         )+
         registry_with_sync
     }};
-
     (sync = $sync_registry:expr $(,)?) => {{
         $crate::async_impl::RegistryWithSync {
             registry: $crate::async_impl::Registry::new_with_default_entries(),
@@ -200,19 +187,52 @@ macro_rules! async_registry {
 #[macro_export]
 #[doc(hidden)]
 macro_rules! async_registry_internal {
+    (scope($scope:expr) [ $($entries:tt)* ] $(, $($rest:tt)+)?) => {{
+        $crate::macros_utils::aliases::hlist![
+            $crate::async_registry_internal! { @entries scope($scope) [ $( $entries )* ] },
+            $(
+                $crate::async_registry_internal! { $($rest)+ },
+            )?
+        ]
+    }};
+    (scope($scope:expr) [ $($entries:tt)* ] $(,)?) => {{
+        $crate::async_registry_internal! { @entries scope($scope) [ $( $entries )* ] }
+    }};
+    (extend( $($registries_with_sync:expr),+ $(,)? ), $($rest:tt)+) => {{
+        let mut registry_with_sync = $crate::async_impl::RegistryWithSync {
+            registry: $crate::async_impl::Registry::default(),
+            sync: $crate::Registry::new_with_default_entries(),
+        };
+        $(
+            registry_with_sync = $crate::utils::Merge::merge(registry_with_sync, $registries_with_sync);
+        )+
+        $crate::utils::Merge::merge(registry_with_sync, $crate::async_registry_internal! { $($rest)+ })
+    }};
+    (extend( $($registries_with_sync:expr),+ $(,)? ) $(,)?) => {{
+        let mut registry_with_sync = $crate::async_impl::RegistryWithSync {
+            registry: $crate::async_impl::Registry::default(),
+            sync: $crate::Registry::new_with_default_entries(),
+        };
+        $(
+            registry_with_sync = $crate::utils::Merge::merge(registry_with_sync, $registries_with_sync);
+        )+
+        registry_with_sync
+    }};
+    (sync = $sync_registry:expr $(,)?) => {{
+        $crate::async_impl::RegistryWithSync {
+            registry: $crate::async_impl::Registry::default(),
+            sync: $sync_registry,
+        }
+    }};
+
     (@entries scope($scope:expr) [ $( provide( $($entry:tt)+ ) ),* $(,)? ]) => {{
-        $crate::macros_utils::aliases::Vec::from_iter([$( $crate::async_registry_internal! { @entry scope($scope), $($entry)+ } ),*])
+        $crate::macros_utils::aliases::hlist![$( $crate::async_registry_internal! { @entry scope($scope), $($entry)+ } ),*]
     }};
     (@entry scope($scope:expr), $inst:expr $(,)?) => {{
         $crate::macros_utils::async_impl::make_entry($scope, $inst, None, None::<$crate::macros_utils::async_impl::FinDummy<_>>)
     }};
     (@entry scope($scope:expr), $inst:expr, config = $cfg:expr $(,)?) => {{
-        #[cfg(feature = "thread_safe")]
-        type Fin<T> = fn(T) -> ::core::pin::Pin<::alloc::boxed::Box<dyn ::core::future::Future<Output = ()> + Send>>;
-        #[cfg(not(feature = "thread_safe"))]
-        type Fin<T> = fn(T) -> ::core::pin::Pin<::alloc::boxed::Box<dyn ::core::future::Future<Output = ()>>>;
-
-        $crate::macros_utils::async_impl::make_entry($scope, $inst, Some($cfg), None::<Fin<_>>)
+        $crate::macros_utils::async_impl::make_entry($scope, $inst, Some($cfg), None::<$crate::macros_utils::async_impl::FinDummy<_>>)
     }};
     (@entry scope($scope:expr), $inst:expr, finalizer = $fin:expr $(,)?) => {{
         $crate::macros_utils::async_impl::make_entry($scope, $inst, None, Some($fin))
