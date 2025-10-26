@@ -23,7 +23,7 @@ Froodi is a lightweight, ergonomic Inversion of Control (IoC) container for Rust
 use froodi::{
     Container,
     DefaultScope::{App, Request},
-    Inject, InjectTransient, InstantiatorResult, RegistryBuilder, instance,
+    Inject, InjectTransient, InstantiatorResult, instance, registry,
 };
 
 #[derive(Default, Clone)]
@@ -63,11 +63,13 @@ fn init_container(config: Config) -> Container {
         Ok(CreateUser { repo })
     }
 
-    let registry = RegistryBuilder::new()
-        .provide(instance(config), App)
-        .provide(|_config: Inject<Config>| Ok(PostgresUserRepo), Request)
-        .provide(create_user::<PostgresUserRepo>, Request);
-    Container::new(registry)
+    Container::new(registry! {
+        provide(App, instance(config)),
+        scope(Request) [
+            provide(|_config: Inject<Config>| Ok(PostgresUserRepo)),
+            provide(create_user::<PostgresUserRepo>),
+        ],
+    })
 }
 
 fn main() {
