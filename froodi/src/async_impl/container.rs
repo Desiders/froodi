@@ -1,8 +1,5 @@
 use alloc::{boxed::Box, vec::Vec};
-use core::{
-    any::{type_name, TypeId},
-    future::Future,
-};
+use core::future::Future;
 use parking_lot::Mutex;
 use tracing::{debug, error, info_span, Instrument};
 
@@ -11,6 +8,7 @@ use super::{
     service::Service as _,
 };
 use crate::{
+    any::TypeInfo,
     async_impl::registry::RegistryWithSync,
     cache::{Cache, Resolved},
     container::{BoxedContainerInner as BoxedSyncContainerInner, Container as SyncContainer, ContainerInner as SyncContainerInner},
@@ -176,11 +174,11 @@ impl Container {
     pub fn get<Dep: SendSafety + SyncSafety + 'static>(
         &self,
     ) -> impl Future<Output = Result<RcThreadSafety<Dep>, ResolveErrorKind>> + SendSafety + '_ {
-        let type_id = TypeId::of::<Dep>();
+        let type_info = TypeInfo::of::<Dep>();
 
         Box::pin(
             async move {
-                if let Some(dependency) = self.inner.cache.lock().get(&type_id) {
+                if let Some(dependency) = self.inner.cache.lock().get(&type_info) {
                     debug!("Found in cache");
                     return Ok(dependency);
                 }
@@ -192,7 +190,7 @@ impl Container {
                     config,
                     scope_data,
                     ..
-                }) = self.inner.registry.get(&type_id)
+                }) = self.inner.registry.get(&type_info)
                 else {
                     debug!("No instantiator found, trying sync container");
                     return self.sync.get();
@@ -210,7 +208,7 @@ impl Container {
                             .await
                             {
                                 Ok(dependency) => {
-                                    self.inner.cache.lock().insert_rc(dependency.clone());
+                                    self.inner.cache.lock().insert_rc(type_info, dependency.clone());
                                     Ok(dependency)
                                 }
                                 Err(err) => Err(err),
@@ -234,12 +232,12 @@ impl Container {
                             let dependency = RcThreadSafety::new(*dependency);
                             let mut guard = self.inner.cache.lock();
                             if config.cache_provides {
-                                guard.insert_rc(dependency.clone());
+                                guard.insert_rc(type_info, dependency.clone());
                                 debug!("Cached");
                             }
                             if finalizer.is_some() {
                                 guard.push_resolved(Resolved {
-                                    type_id,
+                                    type_info,
                                     dependency: dependency.clone(),
                                 });
                                 debug!("Pushed to resolved set");
@@ -248,8 +246,8 @@ impl Container {
                         }
                         Err(incorrect_type) => {
                             let err = ResolveErrorKind::IncorrectType {
-                                expected: type_id,
-                                actual: (*incorrect_type).type_id(),
+                                expected: type_info,
+                                actual: TypeInfo::of_val(&*incorrect_type),
                             };
                             error!("{}", err);
                             Err(err)
@@ -265,11 +263,7 @@ impl Container {
                     }
                 }
             }
-            .instrument(info_span!(
-                "get",
-                dependency = type_name::<Dep>(),
-                scope = self.inner.scope_data.name,
-            )),
+            .instrument(info_span!("get", dependency = type_info.name, scope = self.inner.scope_data.name,)),
         )
     }
 
@@ -280,13 +274,13 @@ impl Container {
     /// so it should be used for dependencies that are not cached or shared, and without finalizer.
     #[allow(clippy::missing_errors_doc, clippy::multiple_bound_locations, clippy::missing_panics_doc)]
     pub fn get_transient<Dep: 'static>(&self) -> impl Future<Output = Result<Dep, ResolveErrorKind>> + SendSafety + '_ {
-        let type_id = TypeId::of::<Dep>();
+        let type_info = TypeInfo::of::<Dep>();
 
         Box::pin(
             async move {
                 let Some(InstantiatorData {
                     instantiator, scope_data, ..
-                }) = self.inner.registry.get(&type_id)
+                }) = self.inner.registry.get(&type_info)
                 else {
                     debug!("No instantiator found, trying sync container");
                     return self.sync.get_transient();
@@ -320,8 +314,8 @@ impl Container {
                         Ok(dependency) => Ok(*dependency),
                         Err(incorrect_type) => {
                             let err = ResolveErrorKind::IncorrectType {
-                                expected: type_id,
-                                actual: (*incorrect_type).type_id(),
+                                expected: type_info,
+                                actual: TypeInfo::of_val(&*incorrect_type),
                             };
                             error!("{}", err);
                             Err(err)
@@ -339,7 +333,7 @@ impl Container {
             }
             .instrument(info_span!(
                 "`get_transient",
-                dependency = type_name::<Dep>(),
+                dependency = type_info.name,
                 scope = self.inner.scope_data.name,
             )),
         )
@@ -817,15 +811,15 @@ impl ContainerInner {
         let mut resolved_set = self.cache.lock().take_resolved_set();
 
         Box::pin(async move {
-            while let Some(Resolved { type_id, dependency }) = resolved_set.0.pop_back() {
+            while let Some(Resolved { type_info, dependency }) = resolved_set.0.pop_back() {
                 let InstantiatorData { finalizer, .. } = self
                     .registry
-                    .get(&type_id)
+                    .get(&type_info)
                     .expect("Instantiator should be present for resolved type");
 
                 if let Some(finalizer) = finalizer {
                     let _ = finalizer.clone().call(dependency).await;
-                    debug!(?type_id, "Finalizer called");
+                    debug!(?type_info, "Finalizer called");
                 }
             }
 

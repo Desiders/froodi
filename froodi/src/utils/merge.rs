@@ -1,8 +1,6 @@
-use core::any::TypeId;
-
 #[cfg(feature = "async")]
 use crate::async_impl;
-use crate::{registry, utils::hlist, Registry};
+use crate::{any::TypeInfo, registry, utils::hlist, Registry};
 
 pub trait Merge<T> {
     #[must_use]
@@ -19,7 +17,7 @@ impl Merge<Registry> for Registry {
 
 impl<H> Merge<H> for Registry
 where
-    H: hlist::IntoIterator<(TypeId, registry::InstantiatorData)>,
+    H: hlist::IntoIterator<(TypeInfo, registry::InstantiatorData)>,
 {
     #[inline]
     fn merge(mut self, other: H) -> Self {
@@ -41,7 +39,7 @@ impl Merge<async_impl::RegistryWithSync> for async_impl::RegistryWithSync {
 #[cfg(feature = "async")]
 impl<H> Merge<H> for async_impl::RegistryWithSync
 where
-    H: hlist::IntoIterator<(TypeId, async_impl::registry::InstantiatorData)>,
+    H: hlist::IntoIterator<(TypeInfo, async_impl::registry::InstantiatorData)>,
 {
     #[inline]
     fn merge(mut self, other: H) -> Self {

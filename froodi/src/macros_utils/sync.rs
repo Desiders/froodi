@@ -1,7 +1,7 @@
 use alloc::collections::btree_map::BTreeMap;
-use core::any::TypeId;
 
 use crate::{
+    any::TypeInfo,
     dependency_resolver::DependencyResolver,
     finalizer::boxed_finalizer_factory,
     instantiator::{boxed_instantiator, Instantiator},
@@ -19,11 +19,11 @@ use crate::{
 pub fn build_registry<H, S, const N: usize>((_, scope_entries): (S, H)) -> Registry
 where
     S: Scope + Scopes<N, Scope = S>,
-    H: hlist::IntoIterator<(TypeId, InstantiatorData)>,
+    H: hlist::IntoIterator<(TypeInfo, InstantiatorData)>,
 {
     let mut entries = BTreeMap::new();
-    for (type_id, data) in scope_entries.into_iter() {
-        entries.insert(type_id, data);
+    for (type_info, data) in scope_entries.into_iter() {
+        entries.insert(type_info, data);
     }
     Registry::new::<S, S, N>(entries)
 }
@@ -31,7 +31,7 @@ where
 #[inline]
 #[must_use]
 #[doc(hidden)]
-pub fn make_entry<Inst, Deps, Fin>(scope: impl Scope, inst: Inst, config: Option<Config>, fin: Option<Fin>) -> (TypeId, InstantiatorData)
+pub fn make_entry<Inst, Deps, Fin>(scope: impl Scope, inst: Inst, config: Option<Config>, fin: Option<Fin>) -> (TypeInfo, InstantiatorData)
 where
     Inst: Instantiator<Deps, Error = InstantiateErrorKind> + SendSafety + SyncSafety,
     Inst::Provides: SendSafety + SyncSafety,
@@ -39,7 +39,7 @@ where
     Fin: Finalizer<Inst::Provides> + SendSafety + SyncSafety,
 {
     (
-        TypeId::of::<Inst::Provides>(),
+        TypeInfo::of::<Inst::Provides>(),
         InstantiatorData {
             dependencies: Inst::dependencies(),
             instantiator: boxed_instantiator(inst),

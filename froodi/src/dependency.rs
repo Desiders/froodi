@@ -1,6 +1,6 @@
-use core::any::TypeId;
+use crate::any::TypeInfo;
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Dependency {
-    pub type_id: TypeId,
+    pub type_info: TypeInfo,
 }

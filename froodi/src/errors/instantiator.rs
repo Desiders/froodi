@@ -1,8 +1,7 @@
 use alloc::{boxed::Box, fmt};
-use core::{
-    any::TypeId,
-    fmt::{Display, Formatter},
-};
+use core::fmt::{Display, Formatter};
+
+use crate::any::TypeInfo;
 
 #[derive(thiserror::Error, Debug)]
 pub enum InstantiatorErrorKind<DepsErr, FactoryErr> {
@@ -14,7 +13,7 @@ pub enum InstantiatorErrorKind<DepsErr, FactoryErr> {
 
 #[derive(thiserror::Error, Debug)]
 pub enum DFSErrorKind {
-    CyclicDependency { graph: (TypeId, Box<[TypeId]>) },
+    CyclicDependency { graph: (TypeInfo, Box<[TypeInfo]>) },
 }
 
 impl Display for DFSErrorKind {

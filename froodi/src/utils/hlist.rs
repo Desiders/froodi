@@ -1,9 +1,9 @@
-use core::{any::TypeId, iter};
+use core::iter;
 use frunk::{HCons, HNil};
 
 #[cfg(feature = "async")]
 use crate::async_impl;
-use crate::registry;
+use crate::{any::TypeInfo, registry};
 
 pub trait IntoIterator<T> {
     fn into_iter(self) -> impl Iterator<Item = T>;
@@ -26,46 +26,46 @@ where
     }
 }
 
-impl<Head, Tail> IntoIterator<(TypeId, registry::InstantiatorData)> for HCons<Head, Tail>
+impl<Head, Tail> IntoIterator<(TypeInfo, registry::InstantiatorData)> for HCons<Head, Tail>
 where
-    Head: IntoIterator<(TypeId, registry::InstantiatorData)>,
-    Tail: IntoIterator<(TypeId, registry::InstantiatorData)>,
+    Head: IntoIterator<(TypeInfo, registry::InstantiatorData)>,
+    Tail: IntoIterator<(TypeInfo, registry::InstantiatorData)>,
 {
     #[inline]
-    fn into_iter(self) -> impl Iterator<Item = (TypeId, registry::InstantiatorData)> {
+    fn into_iter(self) -> impl Iterator<Item = (TypeInfo, registry::InstantiatorData)> {
         self.head.into_iter().chain(self.tail.into_iter())
     }
 }
 
-impl<Tail> IntoIterator<(TypeId, registry::InstantiatorData)> for HCons<registry::Registry, Tail>
+impl<Tail> IntoIterator<(TypeInfo, registry::InstantiatorData)> for HCons<registry::Registry, Tail>
 where
-    Tail: IntoIterator<(TypeId, registry::InstantiatorData)>,
+    Tail: IntoIterator<(TypeInfo, registry::InstantiatorData)>,
 {
     #[inline]
-    fn into_iter(self) -> impl Iterator<Item = (TypeId, registry::InstantiatorData)> {
+    fn into_iter(self) -> impl Iterator<Item = (TypeInfo, registry::InstantiatorData)> {
         self.head.entries.into_iter().chain(self.tail.into_iter())
     }
 }
 
 #[cfg(feature = "async")]
-impl<Head, Tail> IntoIterator<(TypeId, async_impl::registry::InstantiatorData)> for HCons<Head, Tail>
+impl<Head, Tail> IntoIterator<(TypeInfo, async_impl::registry::InstantiatorData)> for HCons<Head, Tail>
 where
-    Head: IntoIterator<(TypeId, async_impl::registry::InstantiatorData)>,
-    Tail: IntoIterator<(TypeId, async_impl::registry::InstantiatorData)>,
+    Head: IntoIterator<(TypeInfo, async_impl::registry::InstantiatorData)>,
+    Tail: IntoIterator<(TypeInfo, async_impl::registry::InstantiatorData)>,
 {
     #[inline]
-    fn into_iter(self) -> impl Iterator<Item = (TypeId, async_impl::registry::InstantiatorData)> {
+    fn into_iter(self) -> impl Iterator<Item = (TypeInfo, async_impl::registry::InstantiatorData)> {
         self.head.into_iter().chain(self.tail.into_iter())
     }
 }
 
 #[cfg(feature = "async")]
-impl<Tail> IntoIterator<(TypeId, async_impl::registry::InstantiatorData)> for HCons<async_impl::RegistryWithSync, Tail>
+impl<Tail> IntoIterator<(TypeInfo, async_impl::registry::InstantiatorData)> for HCons<async_impl::RegistryWithSync, Tail>
 where
-    Tail: IntoIterator<(TypeId, async_impl::registry::InstantiatorData)>,
+    Tail: IntoIterator<(TypeInfo, async_impl::registry::InstantiatorData)>,
 {
     #[inline]
-    fn into_iter(self) -> impl Iterator<Item = (TypeId, async_impl::registry::InstantiatorData)> {
+    fn into_iter(self) -> impl Iterator<Item = (TypeInfo, async_impl::registry::InstantiatorData)> {
         self.head.registry.entries.into_iter().chain(self.tail.into_iter())
     }
 }

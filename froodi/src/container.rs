@@ -1,10 +1,10 @@
 use alloc::{boxed::Box, vec::Vec};
-use core::any::{type_name, TypeId};
 use parking_lot::Mutex;
 use tracing::{debug, error, info_span};
 
 use super::cache::Cache;
 use crate::{
+    any::TypeInfo,
     cache::Resolved,
     context::Context,
     errors::{InstantiatorErrorKind, ResolveErrorKind, ScopeErrorKind, ScopeWithErrorKind},
@@ -140,12 +140,11 @@ impl Container {
     /// and with optional finalizer.
     #[allow(clippy::missing_errors_doc, clippy::missing_panics_doc)]
     pub fn get<Dep: SendSafety + SyncSafety + 'static>(&self) -> Result<RcThreadSafety<Dep>, ResolveErrorKind> {
-        let span = info_span!("get", dependency = type_name::<Dep>(), scope = self.inner.scope_data.name);
+        let type_info = TypeInfo::of::<Dep>();
+        let span = info_span!("get", dependency = type_info.name, scope = self.inner.scope_data.name);
         let _guard = span.enter();
 
-        let type_id = TypeId::of::<Dep>();
-
-        if let Some(dependency) = self.inner.cache.lock().get(&type_id) {
+        if let Some(dependency) = self.inner.cache.lock().get(&type_info) {
             debug!("Found in cache");
             return Ok(dependency);
         }
@@ -157,7 +156,7 @@ impl Container {
             config,
             scope_data,
             ..
-        }) = self.inner.registry.get(&type_id)
+        }) = self.inner.registry.get(&type_info)
         else {
             let err = ResolveErrorKind::NoInstantiator;
             error!("{}", err);
@@ -170,7 +169,7 @@ impl Container {
                 if parent.inner.scope_data.priority == scope_data.priority {
                     return match parent.get::<Dep>() {
                         Ok(dependency) => {
-                            self.inner.cache.lock().insert_rc(dependency.clone());
+                            self.inner.cache.lock().insert_rc(type_info, dependency.clone());
                             Ok(dependency)
                         }
                         Err(err) => Err(err),
@@ -194,12 +193,12 @@ impl Container {
                     let dependency = RcThreadSafety::new(*dependency);
                     let mut guard = self.inner.cache.lock();
                     if config.cache_provides {
-                        guard.insert_rc(dependency.clone());
+                        guard.insert_rc(type_info, dependency.clone());
                         debug!("Cached");
                     }
                     if finalizer.is_some() {
                         guard.push_resolved(Resolved {
-                            type_id,
+                            type_info,
                             dependency: dependency.clone(),
                         });
                         debug!("Pushed to resolved set");
@@ -208,8 +207,8 @@ impl Container {
                 }
                 Err(incorrect_type) => {
                     let err = ResolveErrorKind::IncorrectType {
-                        expected: type_id,
-                        actual: (*incorrect_type).type_id(),
+                        expected: type_info,
+                        actual: TypeInfo::of_val(&*incorrect_type),
                     };
                     error!("{}", err);
                     Err(err)
@@ -236,14 +235,13 @@ impl Container {
     /// Context isn't used here. To get dependencies from the context, use [`Self::get`]
     #[allow(clippy::missing_errors_doc, clippy::missing_panics_doc)]
     pub fn get_transient<Dep: 'static>(&self) -> Result<Dep, ResolveErrorKind> {
-        let span = info_span!("get_transient", dependency = type_name::<Dep>(), scope = self.inner.scope_data.name);
+        let type_info = TypeInfo::of::<Dep>();
+        let span = info_span!("get_transient", dependency = type_info.name, scope = self.inner.scope_data.name);
         let _guard = span.enter();
-
-        let type_id = TypeId::of::<Dep>();
 
         let Some(InstantiatorData {
             instantiator, scope_data, ..
-        }) = self.inner.registry.get(&type_id)
+        }) = self.inner.registry.get(&type_info)
         else {
             let err = ResolveErrorKind::NoInstantiator;
             error!("{}", err);
@@ -273,8 +271,8 @@ impl Container {
                 Ok(dependency) => Ok(*dependency),
                 Err(incorrect_type) => {
                     let err = ResolveErrorKind::IncorrectType {
-                        expected: type_id,
-                        actual: (*incorrect_type).type_id(),
+                        expected: type_info,
+                        actual: TypeInfo::of_val(&*incorrect_type),
                     };
                     error!("{}", err);
                     Err(err)
@@ -670,15 +668,15 @@ impl ContainerInner {
 
     pub(crate) fn close_with_parent_flag(&self, close_parent: bool) {
         let mut resolved_set = self.cache.lock().take_resolved_set();
-        while let Some(Resolved { type_id, dependency }) = resolved_set.0.pop_back() {
+        while let Some(Resolved { type_info, dependency }) = resolved_set.0.pop_back() {
             let InstantiatorData { finalizer, .. } = self
                 .registry
-                .get(&type_id)
+                .get(&type_info)
                 .expect("Instantiator should be present for resolved type");
 
             if let Some(finalizer) = finalizer {
                 let _ = finalizer.clone().call(dependency);
-                debug!(?type_id, "Finalizer called");
+                debug!(?type_info, "Finalizer called");
             }
         }
 

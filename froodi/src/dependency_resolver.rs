@@ -1,11 +1,10 @@
-use core::any::TypeId;
 #[cfg(feature = "async")]
 use core::future::Future;
 
 use super::errors::ResolveErrorKind;
 #[cfg(feature = "async")]
 use crate::async_impl::Container as AsyncContainer;
-use crate::{utils::thread_safety::SendSafety, Container};
+use crate::{any::TypeInfo, utils::thread_safety::SendSafety, Container};
 
 pub trait DependencyResolver: Sized {
     type Error: Into<ResolveErrorKind>;
@@ -15,11 +14,13 @@ pub trait DependencyResolver: Sized {
     #[cfg(feature = "async")]
     fn resolve_async(container: &AsyncContainer) -> impl Future<Output = Result<Self, Self::Error>> + SendSafety;
 
-    fn type_id() -> TypeId
+    #[inline]
+    #[must_use]
+    fn type_info() -> TypeInfo
     where
         Self: 'static,
     {
-        TypeId::of::<Self>()
+        TypeInfo::of::<Self>()
     }
 }
 

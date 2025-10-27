@@ -2,9 +2,9 @@ use alloc::{
     collections::{btree_map::BTreeMap, btree_set::BTreeSet},
     vec::Vec,
 };
-use core::any::TypeId;
 
 use crate::{
+    any::TypeInfo,
     dependency::Dependency,
     errors::DFSErrorKind,
     finalizer::BoxedCloneFinalizer,
@@ -24,12 +24,13 @@ pub struct InstantiatorData {
 
 #[derive(Clone, Default)]
 pub struct Registry {
-    pub(crate) entries: BTreeMap<TypeId, InstantiatorData>,
+    pub(crate) entries: BTreeMap<TypeInfo, InstantiatorData>,
     pub(crate) scopes_data: Vec<ScopeData>,
 }
 
 impl Registry {
-    pub(crate) fn new<T, S, const N: usize>(mut entries: BTreeMap<TypeId, InstantiatorData>) -> Self
+    #[allow(clippy::similar_names)]
+    pub(crate) fn new<T, S, const N: usize>(mut entries: BTreeMap<TypeInfo, InstantiatorData>) -> Self
     where
         S: Scope,
         T: Scopes<N, Scope = S>,
@@ -38,11 +39,10 @@ impl Registry {
 
         let mut scopes_data = Vec::with_capacity(N);
         for scope in T::all() {
-            #[allow(clippy::similar_names)]
             let scope_data = scope.into();
 
             entries.insert(
-                TypeId::of::<Container>(),
+                TypeInfo::of::<Container>(),
                 InstantiatorData {
                     instantiator: boxed_container_instantiator(),
                     dependencies: DEPENDENCIES,
@@ -65,8 +65,8 @@ impl Registry {
 
 impl Registry {
     #[inline]
-    pub(crate) fn get(&self, type_id: &TypeId) -> Option<&InstantiatorData> {
-        self.entries.get(type_id)
+    pub(crate) fn get(&self, type_info: &TypeInfo) -> Option<&InstantiatorData> {
+        self.entries.get(type_info)
     }
 
     #[inline]
@@ -78,8 +78,8 @@ impl Registry {
         let mut visited = BTreeSet::new();
         let mut stack = Vec::new();
 
-        for (type_id, InstantiatorData { dependencies, .. }) in &self.entries {
-            if self.dfs_visit(type_id, dependencies, &mut visited, &mut stack) {
+        for (type_info, InstantiatorData { dependencies, .. }) in &self.entries {
+            if self.dfs_visit(type_info, dependencies, &mut visited, &mut stack) {
                 return Err(DFSErrorKind::CyclicDependency {
                     graph: (stack.remove(0), stack.into_boxed_slice()),
                 });
@@ -90,29 +90,29 @@ impl Registry {
 
     fn dfs_visit<'a>(
         &self,
-        type_id: &TypeId,
+        type_info: &TypeInfo,
         dependencies: &BTreeSet<Dependency>,
-        visited: &'a mut BTreeSet<TypeId>,
-        stack: &'a mut Vec<TypeId>,
+        visited: &'a mut BTreeSet<TypeInfo>,
+        stack: &'a mut Vec<TypeInfo>,
     ) -> bool {
-        if visited.contains(type_id) {
+        if visited.contains(type_info) {
             return false;
         }
-        if stack.contains(type_id) {
+        if stack.contains(type_info) {
             return true;
         }
-        stack.push(*type_id);
+        stack.push(*type_info);
 
-        for Dependency { type_id } in dependencies {
-            if let Some(InstantiatorData { dependencies, .. }) = self.entries.get(type_id) {
-                if self.dfs_visit(type_id, dependencies, visited, stack) {
+        for Dependency { type_info } in dependencies {
+            if let Some(InstantiatorData { dependencies, .. }) = self.entries.get(type_info) {
+                if self.dfs_visit(type_info, dependencies, visited, stack) {
                     return true;
                 }
             }
         }
 
         stack.pop();
-        visited.insert(*type_id);
+        visited.insert(*type_info);
         false
     }
 }
@@ -347,10 +347,9 @@ mod tests {
         format,
         string::{String, ToString as _},
     };
-    use core::any::TypeId;
     use tracing_test::traced_test;
 
-    use crate::{utils::thread_safety::RcThreadSafety, Config, DefaultScope, Inject, InjectTransient, InstantiateErrorKind};
+    use crate::{any::TypeInfo, utils::thread_safety::RcThreadSafety, Config, DefaultScope, Inject, InjectTransient, InstantiateErrorKind};
 
     fn inst_a() -> Result<(), InstantiateErrorKind> {
         Ok(())
@@ -591,13 +590,13 @@ mod tests {
             scope(DefaultScope::Request) [provide(inst_d), provide(inst_e), provide(inst_f)],
         };
 
-        assert!(registry.get(&TypeId::of::<()>()).is_some());
-        assert!(registry.get(&TypeId::of::<((), ())>()).is_some());
-        assert!(registry.get(&TypeId::of::<((), (), ())>()).is_some());
-        assert!(registry.get(&TypeId::of::<((), (), (), ())>()).is_some());
-        assert!(registry.get(&TypeId::of::<((), (), (), (), ())>()).is_some());
-        assert!(registry.get(&TypeId::of::<((), (), (), (), (), ())>()).is_some());
-        assert!(registry.get(&TypeId::of::<((), (), (), (), (), (), ())>()).is_none());
+        assert!(registry.get(&TypeInfo::of::<()>()).is_some());
+        assert!(registry.get(&TypeInfo::of::<((), ())>()).is_some());
+        assert!(registry.get(&TypeInfo::of::<((), (), ())>()).is_some());
+        assert!(registry.get(&TypeInfo::of::<((), (), (), ())>()).is_some());
+        assert!(registry.get(&TypeInfo::of::<((), (), (), (), ())>()).is_some());
+        assert!(registry.get(&TypeInfo::of::<((), (), (), (), (), ())>()).is_some());
+        assert!(registry.get(&TypeInfo::of::<((), (), (), (), (), (), ())>()).is_none());
     }
 
     #[test]

@@ -82,7 +82,7 @@ macro_rules! impl_instantiator {
                 BTreeSet::from_iter([
                     $(
                         Dependency {
-                            type_id: $ty::type_id(),
+                            type_info: $ty::type_info(),
                         }
                     ),*
                 ])

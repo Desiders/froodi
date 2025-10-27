@@ -1,8 +1,7 @@
-use core::any::TypeId;
-
 #[cfg(feature = "async")]
 use crate::async_impl::Container as AsyncContainer;
 use crate::{
+    any::TypeInfo,
     dependency_resolver::DependencyResolver,
     utils::thread_safety::{RcThreadSafety, SendSafety, SyncSafety},
     Container, ResolveErrorKind,
@@ -22,8 +21,8 @@ impl<Dep: SendSafety + SyncSafety + 'static> DependencyResolver for Inject<Dep> 
         container.get().await.map(Self)
     }
 
-    fn type_id() -> TypeId {
-        TypeId::of::<Dep>()
+    fn type_info() -> TypeInfo {
+        TypeInfo::of::<Dep>()
     }
 }
 
@@ -41,7 +40,7 @@ impl<Dep: 'static> DependencyResolver for InjectTransient<Dep> {
         container.get_transient().await.map(Self)
     }
 
-    fn type_id() -> TypeId {
-        TypeId::of::<Dep>()
+    fn type_info() -> TypeInfo {
+        TypeInfo::of::<Dep>()
     }
 }
