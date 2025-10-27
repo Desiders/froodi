@@ -12,15 +12,18 @@ pub struct Inject<Dep, const PREFER_SYNC_OVER_ASYNC: bool = true>(pub RcThreadSa
 impl<Dep: SendSafety + SyncSafety + 'static> DependencyResolver for Inject<Dep> {
     type Error = ResolveErrorKind;
 
+    #[inline]
     fn resolve(container: &Container) -> Result<Self, Self::Error> {
         container.get().map(Self)
     }
 
+    #[inline]
     #[cfg(feature = "async")]
     async fn resolve_async(container: &AsyncContainer) -> Result<Self, Self::Error> {
         container.get().await.map(Self)
     }
 
+    #[inline]
     fn type_info() -> TypeInfo {
         TypeInfo::of::<Dep>()
     }
@@ -31,15 +34,18 @@ pub struct InjectTransient<Dep, const PREFER_SYNC_OVER_ASYNC: bool = true>(pub D
 impl<Dep: 'static> DependencyResolver for InjectTransient<Dep> {
     type Error = ResolveErrorKind;
 
+    #[inline]
     fn resolve(container: &Container) -> Result<Self, Self::Error> {
         container.get_transient().map(Self)
     }
 
+    #[inline]
     #[cfg(feature = "async")]
     async fn resolve_async(container: &AsyncContainer) -> Result<Self, Self::Error> {
         container.get_transient().await.map(Self)
     }
 
+    #[inline]
     fn type_info() -> TypeInfo {
         TypeInfo::of::<Dep>()
     }

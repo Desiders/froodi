@@ -33,7 +33,6 @@ impl Container {
     /// - Panics if there are no child registries.
     ///   This can occur if count of scopes is 1.
     /// - Panics if all scopes except the first one are skipped by default.
-    #[inline]
     #[must_use]
     pub fn new(registry: Registry) -> Self {
         let scope_with_child_scopes = registry.get_scope_with_child_scopes();
@@ -71,7 +70,6 @@ impl Container {
     /// - Panics if registries builder doesn't create any registry.
     ///   This can occur if scopes are empty.
     /// - Panics if specified start scope not found in scopes.
-    #[inline]
     #[must_use]
     #[allow(clippy::needless_pass_by_value)]
     pub fn new_with_start_scope<S: Scope>(registry: Registry, scope: S) -> Self {
@@ -297,13 +295,13 @@ impl Container {
     ///
     /// # Warning
     /// This method can be called multiple times, but it will only call finalizers for dependencies that were resolved since the last call
+    #[inline]
     pub fn close(&self) {
         self.inner.close();
     }
 }
 
 impl Container {
-    #[inline]
     #[must_use]
     fn init_child_with_context(
         self,
@@ -329,7 +327,6 @@ impl Container {
         }
     }
 
-    #[inline]
     #[must_use]
     fn init_child(
         self,
@@ -598,7 +595,6 @@ pub(crate) struct BoxedContainerInner {
 }
 
 impl BoxedContainerInner {
-    #[inline]
     #[must_use]
     pub(crate) fn init_child(
         self,
@@ -665,6 +661,7 @@ impl ContainerInner {
         ScopeDataWithChildScopesData::new(self.scope_data, self.child_scopes_data.clone())
     }
 
+    #[inline]
     #[allow(clippy::missing_panics_doc)]
     fn close(&self) {
         self.close_with_parent_flag(self.close_parent);

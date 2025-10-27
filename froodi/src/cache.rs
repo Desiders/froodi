@@ -14,6 +14,7 @@ pub(crate) struct Cache {
 }
 
 impl Cache {
+    #[inline]
     #[must_use]
     pub fn new() -> Self {
         Self {

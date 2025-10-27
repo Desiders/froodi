@@ -78,6 +78,7 @@ macro_rules! impl_instantiator {
             type Provides = Response;
             type Error = Err;
 
+            #[inline]
             fn instantiate(&mut self, ($($ty,)*): ($($ty,)*)) -> impl Future<Output = Result<Self::Provides, Self::Error>> + SendSafety  {
                 async move { self($($ty,)*).await }
             }

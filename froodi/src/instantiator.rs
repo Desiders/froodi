@@ -22,6 +22,7 @@ where
 
     fn instantiate(&mut self, dependencies: Deps) -> Result<Self::Provides, Self::Error>;
 
+    #[must_use]
     fn dependencies() -> BTreeSet<Dependency>;
 }
 
@@ -127,6 +128,7 @@ pub const fn instance<T: Clone + 'static>(val: T) -> impl Instantiator<(), Provi
 #[macro_export]
 macro_rules! boxed {
     ($val:expr ; $trait:tt $($super_traits:tt)*) => {{
+        use $crate::macros_utils::aliases::Box;
         Box::new($val) as Box<dyn $r#trait $($super_traits)*>
     }};
 }

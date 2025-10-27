@@ -39,7 +39,6 @@ impl Container {
     /// - Panics if there are no child registries.
     ///   This can occur if count of scopes is 1.
     /// - Panics if all scopes except the first one are skipped by default.
-    #[inline]
     #[must_use]
     pub fn new(RegistryWithSync { registry, sync }: RegistryWithSync) -> Self {
         let scope_with_child_scopes = registry.get_scope_with_child_scopes();
@@ -90,7 +89,6 @@ impl Container {
     /// - Panics if registries builder doesn't create any registry.
     ///   This can occur if scopes are empty.
     /// - Panics if specified start scope not found in scopes.
-    #[inline]
     #[must_use]
     #[allow(clippy::needless_pass_by_value)]
     pub fn new_with_start_scope<S: Scope + Clone>(RegistryWithSync { registry, sync }: RegistryWithSync, scope: S) -> Self {
@@ -376,7 +374,6 @@ impl Container {
 }
 
 impl Container {
-    #[inline]
     #[allow(clippy::too_many_arguments)]
     #[must_use]
     fn init_child_with_context(
@@ -419,7 +416,6 @@ impl Container {
         }
     }
 
-    #[inline]
     #[must_use]
     fn init_child(
         self,
@@ -736,7 +732,6 @@ struct BoxedContainerInner {
 }
 
 impl BoxedContainerInner {
-    #[inline]
     #[must_use]
     fn init_child(
         self,
