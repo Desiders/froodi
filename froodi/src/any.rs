@@ -1,12 +1,35 @@
 use alloc::collections::BTreeMap;
-use core::any::{type_name, TypeId};
+use core::{
+    any::{type_name, TypeId},
+    cmp::Ordering,
+};
 
 use crate::utils::thread_safety::RcAnyThreadSafety;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy)]
 pub struct TypeInfo {
     pub name: &'static str,
     pub id: TypeId,
+}
+
+impl PartialEq for TypeInfo {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+
+impl Eq for TypeInfo {}
+
+impl PartialOrd for TypeInfo {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        self.id.partial_cmp(&other.id)
+    }
+}
+
+impl Ord for TypeInfo {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.id.cmp(&other.id)
+    }
 }
 
 impl TypeInfo {
