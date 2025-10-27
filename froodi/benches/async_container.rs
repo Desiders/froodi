@@ -88,7 +88,20 @@ fn criterion_benchmark(c: &mut Criterion) {
             let _ = action_container.enter_build().unwrap();
         });
     })
-    .bench_function("async_container_get", |b| {
+    .bench_function("async_container_get_single", |b| {
+        struct A;
+
+        let container = Container::new(async_registry! {
+            scope(App) [
+                provide(async || Ok(A)),
+            ],
+        });
+        b.to_async(Builder::new_current_thread().build().unwrap()).iter(|| {
+            let container = container.clone();
+            async move { container.get::<A>().await.unwrap() }
+        });
+    })
+    .bench_function("async_container_get_many", |b| {
         struct A(RcThreadSafety<B>, RcThreadSafety<C>);
         struct B(i32);
         struct C(RcThreadSafety<CA>);
@@ -126,7 +139,20 @@ fn criterion_benchmark(c: &mut Criterion) {
             async move { scope_container.get::<A>().await.unwrap() }
         });
     })
-    .bench_function("async_container_get_transient", |b| {
+    .bench_function("async_container_get_transient_single", |b| {
+        struct A;
+
+        let container = Container::new(async_registry! {
+            scope(App) [
+                provide(async || Ok(A)),
+            ],
+        });
+        b.to_async(Builder::new_current_thread().build().unwrap()).iter(|| {
+            let container = container.clone();
+            async move { container.get_transient::<A>().await.unwrap() }
+        });
+    })
+    .bench_function("async_container_get_transient_many", |b| {
         struct A(B, C);
         struct B(i32);
         struct C(CA);
@@ -161,7 +187,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         let scope_container = container.enter().with_scope(Step).build().unwrap();
         b.to_async(Builder::new_current_thread().build().unwrap()).iter(|| {
             let scope_container = scope_container.clone();
-            async move { scope_container.get::<A>().await.unwrap() }
+            async move { scope_container.get_transient::<A>().await.unwrap() }
         });
     });
 }
