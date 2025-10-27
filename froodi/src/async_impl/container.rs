@@ -263,7 +263,11 @@ impl Container {
                     }
                 }
             }
-            .instrument(info_span!("get", dependency = type_info.name, scope = self.inner.scope_data.name,)),
+            .instrument(info_span!(
+                "get",
+                dependency = type_info.short_name(),
+                scope = self.inner.scope_data.name,
+            )),
         )
     }
 
@@ -333,7 +337,7 @@ impl Container {
             }
             .instrument(info_span!(
                 "`get_transient",
-                dependency = type_info.name,
+                dependency = type_info.short_name(),
                 scope = self.inner.scope_data.name,
             )),
         )

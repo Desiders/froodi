@@ -33,6 +33,26 @@ impl TypeInfo {
             id: TypeId::of::<T>(),
         }
     }
+
+    #[inline]
+    #[must_use]
+    pub(crate) fn short_name(&self) -> &'static str {
+        let bytes = self.name.as_bytes();
+        let mut colons = 0;
+        let mut i = bytes.len();
+
+        while i >= 2 {
+            i -= 1;
+            if bytes[i] == b':' && i > 0 && bytes[i - 1] == b':' {
+                colons += 1;
+                if colons == 2 {
+                    return &self.name[i + 1..];
+                }
+                i -= 1;
+            }
+        }
+        self.name
+    }
 }
 
 pub(crate) type Map = BTreeMap<TypeInfo, RcAnyThreadSafety>;
