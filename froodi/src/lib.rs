@@ -7,8 +7,10 @@ pub(crate) mod macros;
 
 pub(crate) mod any;
 pub(crate) mod cache;
+pub(crate) mod config;
 pub(crate) mod container;
 pub(crate) mod context;
+pub(crate) mod dependency;
 pub(crate) mod dependency_resolver;
 pub(crate) mod errors;
 pub(crate) mod finalizer;
@@ -19,18 +21,20 @@ pub(crate) mod registry;
 pub(crate) mod scope;
 pub(crate) mod service;
 
+pub mod macros_utils;
 pub mod utils;
 
 #[cfg(feature = "async")]
 pub mod async_impl;
 
+pub use config::Config;
 pub use container::Container;
 pub use context::Context;
 pub use errors::{InstantiateErrorKind, InstantiatorResult, ResolveErrorKind, ScopeErrorKind, ScopeWithErrorKind};
 pub use finalizer::Finalizer;
 pub use inject::{Inject, InjectTransient};
-pub use instantiator::{instance, Config};
-pub use registry::RegistryBuilder;
+pub use instantiator::instance;
+pub use registry::Registry;
 pub use scope::{DefaultScope, Scope, Scopes};
 
 #[cfg(feature = "axum")]

@@ -1,8 +1,7 @@
 use alloc::boxed::Box;
-use core::any::TypeId;
 
 use super::{instantiate::InstantiateErrorKind, instantiator::InstantiatorErrorKind};
-use crate::scope::ScopeData;
+use crate::{any::TypeInfo, scope::ScopeData};
 
 #[derive(thiserror::Error, Debug)]
 pub enum ResolveErrorKind {
@@ -22,7 +21,7 @@ pub enum ResolveErrorKind {
         actual_scope_data: ScopeData,
     },
     #[error("Incorrect instantiator provides type. Actual: {actual:?}, expected: {expected:?}")]
-    IncorrectType { expected: TypeId, actual: TypeId },
+    IncorrectType { expected: TypeInfo, actual: TypeInfo },
     #[error(transparent)]
     Instantiator(InstantiatorErrorKind<Box<ResolveErrorKind>, InstantiateErrorKind>),
 }

@@ -1,15 +1,15 @@
 use alloc::{boxed::Box, vec::Vec};
-use core::any::{type_name, TypeId};
 use parking_lot::Mutex;
 use tracing::{debug, error, info_span};
 
-use super::{cache::Cache, registry::RegistryBuilder};
+use super::cache::Cache;
 use crate::{
+    any::TypeInfo,
     cache::Resolved,
     context::Context,
     errors::{InstantiatorErrorKind, ResolveErrorKind, ScopeErrorKind, ScopeWithErrorKind},
-    registry::{InstantiatorData, Registry, RegistryWithScopes},
-    scope::{Scope, ScopeData},
+    registry::{InstantiatorData, Registry},
+    scope::{Scope, ScopeData, ScopeDataWithChildScopesData},
     service::Service as _,
     utils::thread_safety::{RcThreadSafety, SendSafety, SyncSafety},
 };
@@ -35,36 +35,29 @@ impl Container {
     /// - Panics if all scopes except the first one are skipped by default.
     #[inline]
     #[must_use]
-    pub fn new<S: Scope>(registry_builder: RegistryBuilder<S>) -> Self {
-        let RegistryWithScopes {
-            registry,
-            scope_data,
-            child_scopes_data,
-        } = registry_builder.build();
-
+    pub fn new(registry: Registry) -> Self {
+        let scope_with_child_scopes = registry.get_scope_with_child_scopes();
         let registry = RcThreadSafety::new(registry);
         let mut container = BoxedContainerInner {
             cache: Cache::new(),
             context: Context::new(),
             registry: registry.clone(),
-            scope_data,
-            child_scopes_data: child_scopes_data.clone(),
+            scope_data: scope_with_child_scopes.scope_data.expect("scopes len (is 0) should be > 0"),
+            child_scopes_data: scope_with_child_scopes.child_scopes_data.clone(),
             parent: None,
             close_parent: false,
         };
 
-        let mut iter = child_scopes_data.into_iter();
-        let mut scope_data = iter.next().expect("registries len (is 1) should be > 1");
-        let mut child_scopes_data: Vec<_> = iter.collect();
+        let mut child = scope_with_child_scopes.child();
+        let mut scope_data = child.scope_data.expect("scopes len (is 1) should be > 1");
 
         let mut search_next = container.scope_data.is_skipped_by_default;
         while search_next {
             search_next = scope_data.is_skipped_by_default;
-            container = container.init_child(registry.clone(), scope_data, child_scopes_data.clone(), true);
+            container = container.init_child(registry.clone(), scope_data, child.child_scopes_data.clone(), true);
             if search_next {
-                let mut iter = child_scopes_data.into_iter();
-                scope_data = iter.next().expect("last scope can't be skipped by default");
-                child_scopes_data = iter.collect();
+                child = child.child();
+                scope_data = child.scope_data.expect("last scope can't be skipped by default");
             } else {
                 break;
             }
@@ -81,41 +74,34 @@ impl Container {
     #[inline]
     #[must_use]
     #[allow(clippy::needless_pass_by_value)]
-    pub fn new_with_start_scope<S: Scope>(registry_builder: RegistryBuilder<S>, scope: S) -> Self {
-        let RegistryWithScopes {
-            registry,
-            scope_data,
-            child_scopes_data,
-        } = registry_builder.build();
-
+    pub fn new_with_start_scope<S: Scope>(registry: Registry, scope: S) -> Self {
+        let scope_with_child_scopes = registry.get_scope_with_child_scopes();
         let registry = RcThreadSafety::new(registry);
         let mut container = BoxedContainerInner {
             cache: Cache::new(),
             context: Context::new(),
             registry: registry.clone(),
-            scope_data,
-            child_scopes_data: child_scopes_data.clone(),
+            scope_data: scope_with_child_scopes.scope_data.expect("scopes len (is 0) should be > 0"),
+            child_scopes_data: scope_with_child_scopes.child_scopes_data.clone(),
             parent: None,
             close_parent: false,
         };
 
         let priority = scope.priority();
-        if scope_data.priority == priority {
+        if container.scope_data.priority == priority {
             return container.into();
         }
 
-        let mut iter = child_scopes_data.into_iter();
-        let mut scope_data = iter.next().expect("last scope can't be with another priority");
-        let mut child_scopes_data: Vec<_> = iter.collect();
+        let mut child = scope_with_child_scopes.child();
+        let mut scope_data = child.scope_data.expect("last scope can't be with another priority");
 
         let mut search_next = container.scope_data.priority != priority;
         while search_next {
             search_next = scope_data.priority != priority;
-            container = container.init_child(registry.clone(), scope_data, child_scopes_data.clone(), true);
+            container = container.init_child(registry.clone(), scope_data, child.child_scopes_data.clone(), true);
             if search_next {
-                let mut iter = child_scopes_data.into_iter();
-                scope_data = iter.next().expect("last scope can't be with another priority");
-                child_scopes_data = iter.collect();
+                child = child.child();
+                scope_data = child.scope_data.expect("last scope can't be with another priority");
             } else {
                 break;
             }
@@ -154,12 +140,11 @@ impl Container {
     /// and with optional finalizer.
     #[allow(clippy::missing_errors_doc, clippy::missing_panics_doc)]
     pub fn get<Dep: SendSafety + SyncSafety + 'static>(&self) -> Result<RcThreadSafety<Dep>, ResolveErrorKind> {
-        let span = info_span!("get", dependency = type_name::<Dep>(), scope = self.inner.scope_data.name);
+        let type_info = TypeInfo::of::<Dep>();
+        let span = info_span!("get", dependency = type_info.short_name(), scope = self.inner.scope_data.name);
         let _guard = span.enter();
 
-        let type_id = TypeId::of::<Dep>();
-
-        if let Some(dependency) = self.inner.cache.lock().get(&type_id) {
+        if let Some(dependency) = self.inner.cache.lock().get(&type_info) {
             debug!("Found in cache");
             return Ok(dependency);
         }
@@ -170,7 +155,8 @@ impl Container {
             finalizer,
             config,
             scope_data,
-        }) = self.inner.registry.get_instantiator_data(&type_id)
+            ..
+        }) = self.inner.registry.get(&type_info)
         else {
             let err = ResolveErrorKind::NoInstantiator;
             error!("{}", err);
@@ -183,7 +169,7 @@ impl Container {
                 if parent.inner.scope_data.priority == scope_data.priority {
                     return match parent.get::<Dep>() {
                         Ok(dependency) => {
-                            self.inner.cache.lock().insert_rc(dependency.clone());
+                            self.inner.cache.lock().insert_rc(type_info, dependency.clone());
                             Ok(dependency)
                         }
                         Err(err) => Err(err),
@@ -207,12 +193,12 @@ impl Container {
                     let dependency = RcThreadSafety::new(*dependency);
                     let mut guard = self.inner.cache.lock();
                     if config.cache_provides {
-                        guard.insert_rc(dependency.clone());
+                        guard.insert_rc(type_info, dependency.clone());
                         debug!("Cached");
                     }
                     if finalizer.is_some() {
                         guard.push_resolved(Resolved {
-                            type_id,
+                            type_info,
                             dependency: dependency.clone(),
                         });
                         debug!("Pushed to resolved set");
@@ -221,8 +207,8 @@ impl Container {
                 }
                 Err(incorrect_type) => {
                     let err = ResolveErrorKind::IncorrectType {
-                        expected: type_id,
-                        actual: (*incorrect_type).type_id(),
+                        expected: type_info,
+                        actual: TypeInfo::of_val(&*incorrect_type),
                     };
                     error!("{}", err);
                     Err(err)
@@ -249,14 +235,17 @@ impl Container {
     /// Context isn't used here. To get dependencies from the context, use [`Self::get`]
     #[allow(clippy::missing_errors_doc, clippy::missing_panics_doc)]
     pub fn get_transient<Dep: 'static>(&self) -> Result<Dep, ResolveErrorKind> {
-        let span = info_span!("get_transient", dependency = type_name::<Dep>(), scope = self.inner.scope_data.name);
+        let type_info = TypeInfo::of::<Dep>();
+        let span = info_span!(
+            "get_transient",
+            dependency = type_info.short_name(),
+            scope = self.inner.scope_data.name
+        );
         let _guard = span.enter();
-
-        let type_id = TypeId::of::<Dep>();
 
         let Some(InstantiatorData {
             instantiator, scope_data, ..
-        }) = self.inner.registry.get_instantiator_data(&type_id)
+        }) = self.inner.registry.get(&type_info)
         else {
             let err = ResolveErrorKind::NoInstantiator;
             error!("{}", err);
@@ -286,8 +275,8 @@ impl Container {
                 Ok(dependency) => Ok(*dependency),
                 Err(incorrect_type) => {
                     let err = ResolveErrorKind::IncorrectType {
-                        expected: type_id,
-                        actual: (*incorrect_type).type_id(),
+                        expected: type_info,
+                        actual: TypeInfo::of_val(&*incorrect_type),
                     };
                     error!("{}", err);
                     Err(err)
@@ -403,19 +392,25 @@ impl ChildContainerBuiler {
     pub fn build(self) -> Result<Container, ScopeErrorKind> {
         use ScopeErrorKind::{NoChildRegistries, NoNonSkippedRegistries};
 
-        let mut iter = self.container.inner.child_scopes_data.clone().into_iter();
-        let scope_data = iter.next().ok_or(NoChildRegistries)?;
-        let child_scopes_data = iter.collect();
+        let scope_with_child_scopes = self.container.inner.get_scope_with_child_scopes().child();
         let registry = self.container.inner.registry.clone();
 
-        let mut child = self.container.init_child(registry, scope_data, child_scopes_data, false);
+        let mut child = self.container.init_child(
+            registry,
+            scope_with_child_scopes.scope_data.ok_or(NoChildRegistries)?,
+            scope_with_child_scopes.child_scopes_data,
+            false,
+        );
         while child.inner.scope_data.is_skipped_by_default {
-            let mut iter = child.inner.child_scopes_data.clone().into_iter();
-            let scope_data = iter.next().ok_or(NoNonSkippedRegistries)?;
-            let child_scopes_data = iter.collect();
+            let scope_with_child_scopes = child.inner.get_scope_with_child_scopes().child();
             let registry = child.inner.registry.clone();
 
-            child = child.init_child(registry, scope_data, child_scopes_data, true);
+            child = child.init_child(
+                registry,
+                scope_with_child_scopes.scope_data.ok_or(NoNonSkippedRegistries)?,
+                scope_with_child_scopes.child_scopes_data,
+                true,
+            );
         }
 
         Ok(child)
@@ -452,23 +447,29 @@ where
     pub fn build(self) -> Result<Container, ScopeWithErrorKind> {
         use ScopeWithErrorKind::{NoChildRegistries, NoChildRegistriesWithScope};
 
-        let mut iter = self.container.inner.child_scopes_data.clone().into_iter();
-        let scope_data = iter.next().ok_or(NoChildRegistries)?;
-        let child_scopes_data = iter.collect();
+        let scope_with_child_scopes = self.container.inner.get_scope_with_child_scopes().child();
         let registry = self.container.inner.registry.clone();
         let priority = self.scope.priority();
 
-        let mut child = self.container.init_child(registry, scope_data, child_scopes_data, false);
+        let mut child = self.container.init_child(
+            registry,
+            scope_with_child_scopes.scope_data.ok_or(NoChildRegistries)?,
+            scope_with_child_scopes.child_scopes_data,
+            false,
+        );
         while child.inner.scope_data.priority != priority {
-            let mut iter = child.inner.child_scopes_data.clone().into_iter();
-            let scope_data = iter.next().ok_or(NoChildRegistriesWithScope {
-                name: self.scope.name(),
-                priority,
-            })?;
-            let child_scopes_data = iter.collect();
+            let scope_with_child_scopes = child.inner.get_scope_with_child_scopes().child();
             let registry = child.inner.registry.clone();
 
-            child = child.init_child(registry, scope_data, child_scopes_data, true);
+            child = child.init_child(
+                registry,
+                scope_with_child_scopes.scope_data.ok_or(NoChildRegistriesWithScope {
+                    name: self.scope.name(),
+                    priority,
+                })?,
+                scope_with_child_scopes.child_scopes_data,
+                true,
+            );
         }
 
         Ok(child)
@@ -502,23 +503,29 @@ impl ChildContainerWithContext {
     pub fn build(self) -> Result<Container, ScopeErrorKind> {
         use ScopeErrorKind::{NoChildRegistries, NoNonSkippedRegistries};
 
-        let mut iter = self.container.inner.child_scopes_data.clone().into_iter();
-        let scope_data = iter.next().ok_or(NoChildRegistries)?;
-        let child_scopes_data = iter.collect();
+        let scope_with_child_scopes = self.container.inner.get_scope_with_child_scopes().child();
         let context = self.context.clone();
         let registry = self.container.inner.registry.clone();
 
-        let mut child = self
-            .container
-            .init_child_with_context(context, registry, scope_data, child_scopes_data, false);
+        let mut child = self.container.init_child_with_context(
+            context,
+            registry,
+            scope_with_child_scopes.scope_data.ok_or(NoChildRegistries)?,
+            scope_with_child_scopes.child_scopes_data,
+            false,
+        );
         while child.inner.scope_data.is_skipped_by_default {
-            let mut iter = child.inner.child_scopes_data.clone().into_iter();
-            let scope_data = iter.next().ok_or(NoNonSkippedRegistries)?;
-            let child_scopes_data = iter.collect();
+            let scope_with_child_scopes = child.inner.get_scope_with_child_scopes().child();
             let context = self.context.clone();
             let registry = child.inner.registry.clone();
 
-            child = child.init_child_with_context(context, registry, scope_data, child_scopes_data, true);
+            child = child.init_child_with_context(
+                context,
+                registry,
+                scope_with_child_scopes.scope_data.ok_or(NoNonSkippedRegistries)?,
+                scope_with_child_scopes.child_scopes_data,
+                true,
+            );
         }
 
         Ok(child)
@@ -546,27 +553,33 @@ where
     pub fn build(self) -> Result<Container, ScopeWithErrorKind> {
         use ScopeWithErrorKind::{NoChildRegistries, NoChildRegistriesWithScope};
 
-        let mut iter = self.container.inner.child_scopes_data.clone().into_iter();
-        let scope_data = iter.next().ok_or(NoChildRegistries)?;
-        let child_scopes_data = iter.collect();
+        let scope_with_child_scopes = self.container.inner.get_scope_with_child_scopes().child();
         let context = self.context.clone();
         let registry = self.container.inner.registry.clone();
         let priority = self.scope.priority();
 
-        let mut child = self
-            .container
-            .init_child_with_context(context, registry, scope_data, child_scopes_data, false);
+        let mut child = self.container.init_child_with_context(
+            context,
+            registry,
+            scope_with_child_scopes.scope_data.ok_or(NoChildRegistries)?,
+            scope_with_child_scopes.child_scopes_data,
+            false,
+        );
         while child.inner.scope_data.priority != priority {
-            let mut iter = child.inner.child_scopes_data.clone().into_iter();
-            let scope_data = iter.next().ok_or(NoChildRegistriesWithScope {
-                name: self.scope.name(),
-                priority,
-            })?;
-            let child_scopes_data = iter.collect();
+            let scope_with_child_scopes = child.inner.get_scope_with_child_scopes().child();
             let context = self.context.clone();
             let registry = child.inner.registry.clone();
 
-            child = child.init_child_with_context(context, registry, scope_data, child_scopes_data, true);
+            child = child.init_child_with_context(
+                context,
+                registry,
+                scope_with_child_scopes.scope_data.ok_or(NoChildRegistriesWithScope {
+                    name: self.scope.name(),
+                    priority,
+                })?,
+                scope_with_child_scopes.child_scopes_data,
+                true,
+            );
         }
 
         Ok(child)
@@ -647,6 +660,11 @@ pub(crate) struct ContainerInner {
 }
 
 impl ContainerInner {
+    #[inline]
+    pub(crate) fn get_scope_with_child_scopes(&self) -> ScopeDataWithChildScopesData {
+        ScopeDataWithChildScopesData::new(self.scope_data, self.child_scopes_data.clone())
+    }
+
     #[allow(clippy::missing_panics_doc)]
     fn close(&self) {
         self.close_with_parent_flag(self.close_parent);
@@ -654,15 +672,15 @@ impl ContainerInner {
 
     pub(crate) fn close_with_parent_flag(&self, close_parent: bool) {
         let mut resolved_set = self.cache.lock().take_resolved_set();
-        while let Some(Resolved { type_id, dependency }) = resolved_set.0.pop_back() {
+        while let Some(Resolved { type_info, dependency }) = resolved_set.0.pop_back() {
             let InstantiatorData { finalizer, .. } = self
                 .registry
-                .get_instantiator_data(&type_id)
+                .get(&type_info)
                 .expect("Instantiator should be present for resolved type");
 
             if let Some(finalizer) = finalizer {
                 let _ = finalizer.clone().call(dependency);
-                debug!(?type_id, "Finalizer called");
+                debug!(?type_info, "Finalizer called");
             }
         }
 
@@ -693,10 +711,11 @@ impl Drop for ContainerInner {
 mod tests {
     extern crate std;
 
-    use super::{Container, RegistryBuilder};
+    use super::Container;
     use crate::{
         container::ContainerInner,
         inject::{Inject, InjectTransient},
+        registry,
         scope::DefaultScope::*,
         utils::thread_safety::RcThreadSafety,
         ResolveErrorKind, Scope,
@@ -726,16 +745,28 @@ mod tests {
         struct CAAAA(RcThreadSafety<CAAAAA>);
         struct CAAAAA;
 
-        let registry = RegistryBuilder::new()
-            .provide(|| (Ok(CAAAAA)), Runtime)
-            .provide(|Inject(caaaaa): Inject<CAAAAA>| Ok(CAAAA(caaaaa)), App)
-            .provide(|Inject(caaaa): Inject<CAAAA>| Ok(CAAA(caaaa)), Session)
-            .provide(|Inject(caaa): Inject<CAAA>| Ok(CAA(caaa)), Request)
-            .provide(|Inject(caa): Inject<CAA>| Ok(CA(caa)), Request)
-            .provide(|Inject(ca): Inject<CA>| Ok(C(ca)), Action)
-            .provide(|| Ok(B(2)), App)
-            .provide(|Inject(b): Inject<B>, Inject(c): Inject<C>| Ok(A(b, c)), Step);
-        let app_container = Container::new(registry);
+        let app_container = Container::new(registry! {
+            scope(Runtime) [
+                provide(|| Ok(CAAAAA)),
+            ],
+            scope(App) [
+                provide(|Inject(caaaaa): Inject<CAAAAA>| Ok(CAAAA(caaaaa))),
+                provide(|| Ok(B(2))),
+            ],
+            scope(Session) [
+                provide(|Inject(caaaa): Inject<CAAAA>| Ok(CAAA(caaaa))),
+            ],
+            scope(Request) [
+                provide(|Inject(caaa): Inject<CAAA>| Ok(CAA(caaa))),
+                provide(|Inject(caa): Inject<CAA>| Ok(CA(caa))),
+            ],
+            scope(Action) [
+                provide(|Inject(ca): Inject<CA>| Ok(C(ca))),
+            ],
+            scope(Step) [
+                provide(|Inject(b): Inject<B>, Inject(c): Inject<C>| Ok(A(b, c))),
+            ],
+        });
         let request_container = app_container.clone().enter_build().unwrap();
         let action_container = request_container.clone().enter_build().unwrap();
         let step_container = action_container.clone().enter_build().unwrap();
@@ -757,19 +788,17 @@ mod tests {
     #[test]
     #[traced_test]
     fn test_transient_get() {
-        let registry = RegistryBuilder::new()
-            .provide(|| Ok(RequestTransient1), App)
-            .provide(
-                |InjectTransient(req): InjectTransient<RequestTransient1>| Ok(RequestTransient2(req)),
-                Request,
-            )
-            .provide(
-                |InjectTransient(req_1): InjectTransient<RequestTransient1>, InjectTransient(req_2): InjectTransient<RequestTransient2>| {
+        let app_container = Container::new(registry! {
+            scope(App) [
+                provide(|| Ok(RequestTransient1)),
+            ],
+            scope(Request) [
+                provide(|InjectTransient(req): InjectTransient<RequestTransient1>| Ok(RequestTransient2(req))),
+                provide(|InjectTransient(req_1): InjectTransient<RequestTransient1>, InjectTransient(req_2): InjectTransient<RequestTransient2>| {
                     Ok(RequestTransient3(req_1, req_2))
-                },
-                Request,
-            );
-        let app_container = Container::new(registry);
+                }),
+            ]
+        });
         let request_container = app_container.clone().enter().with_scope(Request).build().unwrap();
 
         assert!(app_container.get_transient::<RequestTransient1>().is_ok());
@@ -796,15 +825,26 @@ mod tests {
     #[test]
     #[traced_test]
     fn test_scope_hierarchy() {
-        let registry = RegistryBuilder::new()
-            .provide(|| Ok(()), Runtime)
-            .provide(|| Ok(((), ())), App)
-            .provide(|| Ok(((), (), ())), Session)
-            .provide(|| Ok(((), (), (), ())), Request)
-            .provide(|| Ok(((), (), (), (), ())), Action)
-            .provide(|| Ok(((), (), (), (), (), ())), Step);
-
-        let app_container = Container::new(registry);
+        let app_container = Container::new(registry! {
+            scope(Runtime) [
+                provide(|| Ok(())),
+            ],
+            scope(App) [
+                provide(|| Ok(((), ()))),
+            ],
+            scope(Session) [
+                provide(|| Ok(((), (), ()))),
+            ],
+            scope(Request) [
+                provide(|| Ok(((), (), (), ()))),
+            ],
+            scope(Action) [
+                provide(|| Ok(((), (), (), (), ()))),
+            ],
+            scope(Step) [
+                provide(|| Ok(((), (), (), (), (), ()))),
+            ],
+        });
         let request_container = app_container.clone().enter_build().unwrap();
         let action_container = request_container.clone().enter_build().unwrap();
         let step_container = action_container.clone().enter_build().unwrap();
@@ -853,15 +893,29 @@ mod tests {
     #[test]
     #[traced_test]
     fn test_scope_with_hierarchy() {
-        let registry = RegistryBuilder::new()
-            .provide(|| Ok(()), Runtime)
-            .provide(|| Ok(((), ())), App)
-            .provide(|| Ok(((), (), ())), Session)
-            .provide(|| Ok(((), (), (), ())), Request)
-            .provide(|| Ok(((), (), (), (), ())), Action)
-            .provide(|| Ok(((), (), (), (), (), ())), Step);
-
-        let runtime_container = Container::new_with_start_scope(registry, Runtime);
+        let runtime_container = Container::new_with_start_scope(
+            registry! {
+                scope(Runtime) [
+                    provide(|| Ok(())),
+                ],
+                scope(App) [
+                    provide(|| Ok(((), ()))),
+                ],
+                scope(Session) [
+                    provide(|| Ok(((), (), ()))),
+                ],
+                scope(Request) [
+                    provide(|| Ok(((), (), (), ()))),
+                ],
+                scope(Action) [
+                    provide(|| Ok(((), (), (), (), ()))),
+                ],
+                scope(Step) [
+                    provide(|| Ok(((), (), (), (), (), ()))),
+                ],
+            },
+            Runtime,
+        );
         let app_container = runtime_container.clone().enter().with_scope(App).build().unwrap();
         let session_container = runtime_container.clone().enter().with_scope(Session).build().unwrap();
         let request_container = app_container.clone().enter().with_scope(Request).build().unwrap();
@@ -922,30 +976,41 @@ mod tests {
         let finalizer_2_request_call_count = RcThreadSafety::new(AtomicU8::new(0));
         let finalizer_3_request_call_count = RcThreadSafety::new(AtomicU8::new(0));
 
-        let registry = RegistryBuilder::new()
-            .provide(|| Ok(()), Runtime)
-            .provide(|| Ok(((), ())), App)
-            .provide(|| Ok(((), (), (), ())), Request)
-            .add_finalizer({
-                let finalizer_1_request_call_count = finalizer_1_request_call_count.clone();
-                move |_: RcThreadSafety<()>| {
-                    finalizer_1_request_call_count.fetch_add(1, Ordering::SeqCst);
-                }
-            })
-            .add_finalizer({
-                let finalizer_2_request_call_count = finalizer_2_request_call_count.clone();
-                move |_: RcThreadSafety<((), ())>| {
-                    finalizer_2_request_call_count.fetch_add(1, Ordering::SeqCst);
-                }
-            })
-            .add_finalizer({
-                let finalizer_3_request_call_count = finalizer_3_request_call_count.clone();
-                move |_: RcThreadSafety<((), (), (), ())>| {
-                    finalizer_3_request_call_count.fetch_add(1, Ordering::SeqCst);
-                }
-            });
-
-        let app_container = Container::new(registry);
+        let app_container = Container::new(registry! {
+            scope(Runtime) [
+                provide(
+                    || Ok(()),
+                    finalizer = {
+                        let finalizer_1_request_call_count = finalizer_1_request_call_count.clone();
+                        move |_: RcThreadSafety<()>| {
+                            finalizer_1_request_call_count.fetch_add(1, Ordering::SeqCst);
+                        }
+                    }
+                ),
+            ],
+            scope(App) [
+                provide(
+                    || Ok(((), ())),
+                    finalizer = {
+                        let finalizer_2_request_call_count = finalizer_2_request_call_count.clone();
+                        move |_: RcThreadSafety<((), ())>| {
+                            finalizer_2_request_call_count.fetch_add(1, Ordering::SeqCst);
+                        }
+                    }
+                ),
+            ],
+            scope(Request) [
+                provide(
+                    || Ok(((), (), (), ())),
+                    finalizer = {
+                        let finalizer_3_request_call_count = finalizer_3_request_call_count.clone();
+                        move |_: RcThreadSafety<((), (), (), ())>| {
+                            finalizer_3_request_call_count.fetch_add(1, Ordering::SeqCst);
+                        }
+                    }
+                ),
+            ],
+        });
         let request_container = app_container.clone().enter().with_scope(Request).build().unwrap();
 
         request_container.close();
@@ -970,61 +1035,74 @@ mod tests {
         let finalizer_4_request_call_count = RcThreadSafety::new(AtomicU8::new(0));
         let finalizer_4_request_call_position = RcThreadSafety::new(AtomicU8::new(0));
 
-        let registry = RegistryBuilder::new()
-            .provide(|| Ok(()), Runtime)
-            .provide(|| Ok(((), ())), App)
-            .provide(|| Ok(((), (), (), ())), Request)
-            .provide(|| Ok(((), (), (), (), ())), Request)
-            .add_finalizer({
-                let request_call_count = request_call_count.clone();
-                let finalizer_1_request_call_position = finalizer_1_request_call_position.clone();
-                let finalizer_1_request_call_count = finalizer_1_request_call_count.clone();
-                move |_: RcThreadSafety<()>| {
-                    request_call_count.fetch_add(1, Ordering::SeqCst);
-                    finalizer_1_request_call_position.store(request_call_count.load(Ordering::SeqCst), Ordering::SeqCst);
-                    finalizer_1_request_call_count.fetch_add(1, Ordering::SeqCst);
+        let app_container = Container::new(registry! {
+            scope(Runtime) [
+                provide(
+                    || Ok(()),
+                    finalizer = {
+                        let request_call_count = request_call_count.clone();
+                        let finalizer_1_request_call_position = finalizer_1_request_call_position.clone();
+                        let finalizer_1_request_call_count = finalizer_1_request_call_count.clone();
+                        move |_: RcThreadSafety<()>| {
+                            request_call_count.fetch_add(1, Ordering::SeqCst);
+                            finalizer_1_request_call_position.store(request_call_count.load(Ordering::SeqCst), Ordering::SeqCst);
+                            finalizer_1_request_call_count.fetch_add(1, Ordering::SeqCst);
 
-                    debug!("Finalizer 1 called");
-                }
-            })
-            .add_finalizer({
-                let request_call_count = request_call_count.clone();
-                let finalizer_2_request_call_position = finalizer_2_request_call_position.clone();
-                let finalizer_2_request_call_count = finalizer_2_request_call_count.clone();
-                move |_: RcThreadSafety<((), ())>| {
-                    request_call_count.fetch_add(1, Ordering::SeqCst);
-                    finalizer_2_request_call_position.store(request_call_count.load(Ordering::SeqCst), Ordering::SeqCst);
-                    finalizer_2_request_call_count.fetch_add(1, Ordering::SeqCst);
+                            debug!("Finalizer 1 called");
+                        }
+                    }
+                ),
+            ],
+            scope(App) [
+                provide(
+                    || Ok(((), ())),
+                    finalizer = {
+                        let request_call_count = request_call_count.clone();
+                        let finalizer_2_request_call_position = finalizer_2_request_call_position.clone();
+                        let finalizer_2_request_call_count = finalizer_2_request_call_count.clone();
+                        move |_: RcThreadSafety<((), ())>| {
+                            request_call_count.fetch_add(1, Ordering::SeqCst);
+                            finalizer_2_request_call_position.store(request_call_count.load(Ordering::SeqCst), Ordering::SeqCst);
+                            finalizer_2_request_call_count.fetch_add(1, Ordering::SeqCst);
 
-                    debug!("Finalizer 2 called");
-                }
-            })
-            .add_finalizer({
-                let request_call_count = request_call_count.clone();
-                let finalizer_3_request_call_position = finalizer_3_request_call_position.clone();
-                let finalizer_3_request_call_count = finalizer_3_request_call_count.clone();
-                move |_: RcThreadSafety<((), (), (), ())>| {
-                    request_call_count.fetch_add(1, Ordering::SeqCst);
-                    finalizer_3_request_call_position.store(request_call_count.load(Ordering::SeqCst), Ordering::SeqCst);
-                    finalizer_3_request_call_count.fetch_add(1, Ordering::SeqCst);
+                            debug!("Finalizer 2 called");
+                        }
+                    }
+                ),
+            ],
+            scope(Request) [
+                provide(
+                    || Ok(((), (), (), ())),
+                    finalizer = {
+                        let request_call_count = request_call_count.clone();
+                        let finalizer_3_request_call_position = finalizer_3_request_call_position.clone();
+                        let finalizer_3_request_call_count = finalizer_3_request_call_count.clone();
+                        move |_: RcThreadSafety<((), (), (), ())>| {
+                            request_call_count.fetch_add(1, Ordering::SeqCst);
+                            finalizer_3_request_call_position.store(request_call_count.load(Ordering::SeqCst), Ordering::SeqCst);
+                            finalizer_3_request_call_count.fetch_add(1, Ordering::SeqCst);
 
-                    debug!("Finalizer 3 called");
-                }
-            })
-            .add_finalizer({
-                let request_call_count = request_call_count.clone();
-                let finalizer_4_request_call_position = finalizer_4_request_call_position.clone();
-                let finalizer_4_request_call_count = finalizer_4_request_call_count.clone();
-                move |_: RcThreadSafety<((), (), (), (), ())>| {
-                    request_call_count.fetch_add(1, Ordering::SeqCst);
-                    finalizer_4_request_call_position.store(request_call_count.load(Ordering::SeqCst), Ordering::SeqCst);
-                    finalizer_4_request_call_count.fetch_add(1, Ordering::SeqCst);
+                            debug!("Finalizer 3 called");
+                        }
+                    }
+                ),
+                provide(
+                    || Ok(((), (), (), (), ())),
+                    finalizer = {
+                        let request_call_count = request_call_count.clone();
+                        let finalizer_4_request_call_position = finalizer_4_request_call_position.clone();
+                        let finalizer_4_request_call_count = finalizer_4_request_call_count.clone();
+                        move |_: RcThreadSafety<((), (), (), (), ())>| {
+                            request_call_count.fetch_add(1, Ordering::SeqCst);
+                            finalizer_4_request_call_position.store(request_call_count.load(Ordering::SeqCst), Ordering::SeqCst);
+                            finalizer_4_request_call_count.fetch_add(1, Ordering::SeqCst);
 
-                    debug!("Finalizer 4 called");
-                }
-            });
-
-        let app_container = Container::new(registry);
+                            debug!("Finalizer 4 called");
+                        }
+                    }
+                ),
+            ],
+        });
         let request_container = app_container.clone().enter().with_scope(Request).build().unwrap();
 
         let _ = request_container.get::<()>().unwrap();
@@ -1098,35 +1176,40 @@ mod tests {
             }
         }
 
-        let registry = RegistryBuilder::new()
-            .provide(|| Ok(Type1), App)
-            .provide(|Inject(type_1): Inject<Type1>| Ok(Type2(type_1)), Request)
-            .add_finalizer({
-                let call_count = call_count.clone();
-                let finalizer_1_call_count = finalizer_1_call_count.clone();
-                let finalizer_1_call_position = finalizer_1_call_position.clone();
-                move |_: RcThreadSafety<Type1>| {
-                    call_count.fetch_add(1, Ordering::SeqCst);
-                    finalizer_1_call_position.store(call_count.load(Ordering::SeqCst), Ordering::SeqCst);
-                    finalizer_1_call_count.fetch_add(1, Ordering::SeqCst);
+        let app_container = Container::new(registry! {
+            scope(App) [
+                provide(
+                    || Ok(Type1),
+                    finalizer = {
+                        let call_count = call_count.clone();
+                        let finalizer_1_call_count = finalizer_1_call_count.clone();
+                        let finalizer_1_call_position = finalizer_1_call_position.clone();
+                        move |_: RcThreadSafety<Type1>| {
+                            call_count.fetch_add(1, Ordering::SeqCst);
+                            finalizer_1_call_position.store(call_count.load(Ordering::SeqCst), Ordering::SeqCst);
+                            finalizer_1_call_count.fetch_add(1, Ordering::SeqCst);
 
-                    debug!("Finalizer 1 called");
-                }
-            })
-            .add_finalizer({
-                let call_count = call_count.clone();
-                let finalizer_2_call_count = finalizer_2_call_count.clone();
-                let finalizer_2_call_position = finalizer_2_call_position.clone();
-                move |_: RcThreadSafety<Type2>| {
-                    call_count.fetch_add(1, Ordering::SeqCst);
-                    finalizer_2_call_position.store(call_count.load(Ordering::SeqCst), Ordering::SeqCst);
-                    finalizer_2_call_count.fetch_add(1, Ordering::SeqCst);
+                            debug!("Finalizer 1 called");
+                        }
+                    }
+                ),
+                provide(
+                    |Inject(type_1): Inject<Type1>| Ok(Type2(type_1)),
+                    finalizer = {
+                        let call_count = call_count.clone();
+                        let finalizer_2_call_count = finalizer_2_call_count.clone();
+                        let finalizer_2_call_position = finalizer_2_call_position.clone();
+                        move |_: RcThreadSafety<Type2>| {
+                            call_count.fetch_add(1, Ordering::SeqCst);
+                            finalizer_2_call_position.store(call_count.load(Ordering::SeqCst), Ordering::SeqCst);
+                            finalizer_2_call_count.fetch_add(1, Ordering::SeqCst);
 
-                    debug!("Finalizer 2 called");
-                }
-            });
-
-        let app_container = Container::new(registry);
+                            debug!("Finalizer 2 called");
+                        }
+                    }
+                ),
+            ]
+        });
         let request_container = app_container.enter_build().unwrap();
         DropWrapper {
             val: request_container,
@@ -1166,8 +1249,11 @@ mod tests {
 
         impl_bounds::<(Container, ContainerInner)>();
 
-        let registry = RegistryBuilder::new().provide(|| Ok(RequestTransient1), App);
-        let app_container = Container::new(registry);
+        let app_container = Container::new(registry! {
+            scope(App) [
+                provide(|| Ok(RequestTransient1)),
+            ],
+        });
         std::thread::spawn(move || {
             let request1 = app_container.get_transient::<Request1>();
             let request2 = app_container.get::<Request1>();

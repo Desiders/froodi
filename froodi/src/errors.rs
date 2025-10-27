@@ -6,7 +6,7 @@ mod instantiator;
 pub use container::{ScopeErrorKind, ScopeWithErrorKind};
 pub use dependency_resolver::ResolveErrorKind;
 pub use instantiate::InstantiateErrorKind;
-pub use instantiator::InstantiatorErrorKind;
+pub use instantiator::{DFSErrorKind, InstantiatorErrorKind};
 
 use crate::dependency_resolver::DependencyResolver;
 

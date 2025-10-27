@@ -467,9 +467,8 @@ mod tests {
 
     use super::{setup_async_default, setup_default, AsyncContainer, Container, Inject, InjectTransient};
     use crate::{
-        async_impl::RegistryBuilder as AsyncRegistriesBuilder,
+        async_registry, registry,
         DefaultScope::{App, Request, Session},
-        RegistryBuilder,
     };
 
     use alloc::{
@@ -502,16 +501,24 @@ mod tests {
                 .into_boxed_str()
         }
 
-        let container = Container::new(
-            RegistryBuilder::new()
-                .provide(|| Ok(Config { num: 1 }), App)
-                .provide(|Inject(cfg): Inject<Config>| Ok(cfg.num + 1), Request),
-        );
-        let async_container = AsyncContainer::new(
-            AsyncRegistriesBuilder::new()
-                .provide(|| Ok(Config { num: 1 }), App)
-                .provide_async(async |Inject(cfg): Inject<Config>| Ok(cfg.num + 1), Request),
-        );
+        let container = Container::new(registry! {
+            scope(App) [
+                provide(|| Ok(Config { num: 1 })),
+            ],
+            scope(Request) [
+                provide(|Inject(cfg): Inject<Config>| Ok(cfg.num + 1)),
+            ],
+        });
+        let async_container = AsyncContainer::new(async_registry! {
+            scope(Request) [
+                provide(async |Inject(cfg): Inject<Config>| Ok(cfg.num + 1)),
+            ],
+            sync = registry! {
+                scope(App) [
+                    provide(|| Ok(Config { num: 1 })),
+                ],
+            }
+        });
 
         let router = Router::new().route("/", get(handler));
         let router = setup_default(router, container);
@@ -557,16 +564,24 @@ mod tests {
             }
         }
 
-        let container = Container::new(
-            RegistryBuilder::new()
-                .provide(|| Ok(Config { num: 1 }), App)
-                .provide(|Inject(cfg): Inject<Config>| Ok(cfg.num + 1), Session),
-        );
-        let async_container = AsyncContainer::new(
-            AsyncRegistriesBuilder::new()
-                .provide(|| Ok(Config { num: 1 }), App)
-                .provide_async(async |Inject(cfg): Inject<Config>| Ok(cfg.num + 1), Session),
-        );
+        let container = Container::new(registry! {
+            scope(App) [
+                provide(|| Ok(Config { num: 1 })),
+            ],
+            scope(Session) [
+                provide(|Inject(cfg): Inject<Config>| Ok(cfg.num + 1)),
+            ],
+        });
+        let async_container = AsyncContainer::new(async_registry! {
+            scope(Session) [
+                provide(async |Inject(cfg): Inject<Config>| Ok(cfg.num + 1)),
+            ],
+            sync = registry! {
+                scope(App) [
+                    provide(|| Ok(Config { num: 1 })),
+                ],
+            }
+        });
 
         let router = Router::new().route("/", any(ws_upgrade));
         let router = setup_default(router, container);
@@ -593,11 +608,14 @@ mod tests {
             num.to_string().into_boxed_str()
         }
 
-        let container = Container::new(RegistryBuilder::new().provide(|| Ok(Config { num: 1 }), App).provide(
-            |Inject(cfg): Inject<Config>, Inject(_parts): Inject<Parts>| Ok(cfg.num + 1),
-            Request,
-        ));
-
+        let container = Container::new(registry! {
+            scope(App) [
+                provide(|| Ok(Config { num: 1 })),
+            ],
+            scope(Request) [
+                provide(|Inject(cfg): Inject<Config>, Inject(_parts): Inject<Parts>| Ok(cfg.num + 1)),
+            ],
+        });
         let router = setup_default(Router::new().route("/", get(handler)), container);
 
         let server = TestServer::builder().http_transport().build(router).unwrap();

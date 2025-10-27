@@ -1,295 +1,677 @@
-use alloc::{collections::BTreeMap, vec::Vec};
-use core::any::TypeId;
-
-use super::{
-    errors::{InstantiateErrorKind, ResolveErrorKind},
-    instantiator::{BoxedCloneInstantiator, Config},
+use alloc::{
+    collections::{btree_map::BTreeMap, btree_set::BTreeSet},
+    vec::Vec,
 };
+
 use crate::{
-    dependency_resolver::DependencyResolver,
-    finalizer::{boxed_finalizer_factory, BoxedCloneFinalizer, Finalizer},
-    instantiator::{boxed_container_instantiator, boxed_instantiator, Instantiator},
-    scope::{Scope, ScopeData},
-    utils::thread_safety::{SendSafety, SyncSafety},
-    Container, DefaultScope, Scopes as ScopesTrait,
+    any::TypeInfo,
+    dependency::Dependency,
+    errors::DFSErrorKind,
+    finalizer::BoxedCloneFinalizer,
+    instantiator::{boxed_container_instantiator, BoxedCloneInstantiator},
+    scope::{ScopeData, ScopeDataWithChildScopesData},
+    Config, Container, DefaultScope, InstantiateErrorKind, ResolveErrorKind, Scope, Scopes,
 };
 
 #[derive(Clone)]
-pub(crate) struct InstantiatorData {
+pub struct InstantiatorData {
     pub(crate) instantiator: BoxedCloneInstantiator<ResolveErrorKind, InstantiateErrorKind>,
+    pub(crate) dependencies: BTreeSet<Dependency>,
     pub(crate) finalizer: Option<BoxedCloneFinalizer>,
     pub(crate) config: Config,
     pub(crate) scope_data: ScopeData,
 }
 
-pub struct RegistryBuilder<S> {
-    instantiators: BTreeMap<TypeId, InstantiatorData>,
-    finalizers: BTreeMap<TypeId, BoxedCloneFinalizer>,
-    scopes: Vec<S>,
+#[derive(Clone, Default)]
+pub struct Registry {
+    pub(crate) entries: BTreeMap<TypeInfo, InstantiatorData>,
+    pub(crate) scopes_data: Vec<ScopeData>,
 }
 
-impl Default for RegistryBuilder<DefaultScope> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl RegistryBuilder<DefaultScope> {
-    #[inline]
-    #[must_use]
-    pub fn new() -> Self {
-        Self {
-            instantiators: BTreeMap::new(),
-            finalizers: BTreeMap::new(),
-            scopes: Vec::from(DefaultScope::all()),
-        }
-    }
-}
-
-impl<S> RegistryBuilder<S> {
-    #[inline]
-    #[must_use]
-    pub fn new_with_scopes<Scopes, const N: usize>() -> Self
+impl Registry {
+    #[allow(clippy::similar_names)]
+    pub(crate) fn new<T, S, const N: usize>(mut entries: BTreeMap<TypeInfo, InstantiatorData>) -> Self
     where
-        Scopes: ScopesTrait<N, Scope = S>,
-    {
-        Self {
-            instantiators: BTreeMap::new(),
-            finalizers: BTreeMap::new(),
-            scopes: Vec::from(Scopes::all()),
-        }
-    }
-}
-
-impl<S> RegistryBuilder<S> {
-    #[inline]
-    #[must_use]
-    pub fn provide<Inst, Deps>(mut self, instantiator: Inst, scope: S) -> Self
-    where
-        Inst: Instantiator<Deps, Error = InstantiateErrorKind> + SendSafety + SyncSafety,
-        Deps: DependencyResolver<Error = ResolveErrorKind>,
         S: Scope,
+        T: Scopes<N, Scope = S>,
     {
-        self.add_instantiator::<Inst::Provides>(boxed_instantiator(instantiator), scope);
-        self
-    }
+        const DEPENDENCIES: BTreeSet<Dependency> = BTreeSet::new();
 
-    #[inline]
-    #[must_use]
-    pub fn provide_with_config<Inst, Deps>(mut self, instantiator: Inst, config: Config, scope: S) -> Self
-    where
-        Inst: Instantiator<Deps, Error = InstantiateErrorKind> + SendSafety + SyncSafety,
-        Deps: DependencyResolver<Error = ResolveErrorKind>,
-        S: Scope,
-    {
-        self.add_instantiator_with_config::<Inst::Provides>(boxed_instantiator(instantiator), config, scope);
-        self
-    }
+        let mut scopes_data = Vec::with_capacity(N);
+        for scope in T::all() {
+            let scope_data = scope.into();
 
-    /// Adds a finalizer for the given a non transient dependency type.
-    /// The finalizer will be called when the container is being closed in LIFO order of their usage (not the order of registration).
-    ///
-    /// # Warning
-    /// - The finalizer can only be used for non-transient dependencies, because the transient doesn't have a lifetime and isn't cached.
-    ///
-    /// - [`Drop`] trait isn't a equivalent of a finalizer, because:
-    ///     1. The finalizer is called in LIFO order of their usage, while [`Drop`] is called in the order of registration.
-    ///     2. The finalized used for life cycle management, while [`Drop`] is used for resource management.
-    #[inline]
-    #[must_use]
-    pub fn add_finalizer<Dep>(mut self, finalizer: impl Finalizer<Dep> + SendSafety + SyncSafety) -> Self
-    where
-        Dep: SendSafety + SyncSafety + 'static,
-    {
-        self.finalizers.insert(TypeId::of::<Dep>(), boxed_finalizer_factory(finalizer));
-        self
-    }
-}
-
-impl<S> RegistryBuilder<S>
-where
-    S: Scope,
-{
-    #[inline]
-    pub(crate) fn add_instantiator<Dep: 'static>(
-        &mut self,
-        instantiator: BoxedCloneInstantiator<ResolveErrorKind, InstantiateErrorKind>,
-        scope: S,
-    ) -> Option<InstantiatorData> {
-        self.add_instantiator_with_config::<Dep>(instantiator, Config::default(), scope)
-    }
-
-    #[inline]
-    pub(crate) fn add_instantiator_with_config<Dep: 'static>(
-        &mut self,
-        instantiator: BoxedCloneInstantiator<ResolveErrorKind, InstantiateErrorKind>,
-        config: Config,
-        scope: S,
-    ) -> Option<InstantiatorData> {
-        self.instantiators.insert(
-            TypeId::of::<Dep>(),
-            InstantiatorData {
-                instantiator,
-                finalizer: None,
-                config,
-                scope_data: scope.into(),
-            },
-        )
-    }
-}
-
-pub(crate) struct RegistryWithScopes {
-    pub(crate) registry: Registry,
-    pub(crate) scope_data: ScopeData,
-    pub(crate) child_scopes_data: Vec<ScopeData>,
-}
-
-impl<S> RegistryBuilder<S>
-where
-    S: Scope,
-{
-    pub(crate) fn build(mut self) -> RegistryWithScopes {
-        let mut scope_iter = self.scopes.into_iter();
-        let scope_data = scope_iter.next().expect("registries len (is 0) should be > 0").into();
-        let child_scopes_data = scope_iter.map(Into::into).collect();
-
-        RegistryWithScopes {
-            registry: Registry {
-                instantiators: self
-                    .instantiators
-                    .into_iter()
-                    .map(
-                        |(
-                            type_id,
-                            InstantiatorData {
-                                instantiator,
-                                finalizer,
-                                config,
-                                scope_data,
-                            },
-                        )| {
-                            (
-                                type_id,
-                                InstantiatorData {
-                                    instantiator,
-                                    finalizer: finalizer.or(self.finalizers.remove(&type_id)),
-                                    config,
-                                    scope_data,
-                                },
-                            )
-                        },
-                    )
-                    .chain(Some((
-                        TypeId::of::<Container>(),
-                        InstantiatorData {
-                            instantiator: boxed_container_instantiator(),
-                            finalizer: None,
-                            config: Config { cache_provides: true },
-                            scope_data,
-                        },
-                    )))
-                    .collect(),
-            },
-            scope_data,
-            child_scopes_data,
+            entries.insert(
+                TypeInfo::of::<Container>(),
+                InstantiatorData {
+                    instantiator: boxed_container_instantiator(),
+                    dependencies: DEPENDENCIES,
+                    finalizer: None,
+                    config: Config { cache_provides: true },
+                    scope_data,
+                },
+            );
+            scopes_data.push(scope_data);
         }
+        Self { entries, scopes_data }
     }
-}
 
-pub(crate) struct Registry {
-    pub(crate) instantiators: BTreeMap<TypeId, InstantiatorData>,
+    #[inline]
+    #[must_use]
+    pub fn new_with_default_entries() -> Self {
+        Self::new::<DefaultScope, DefaultScope, 6>(BTreeMap::new())
+    }
 }
 
 impl Registry {
     #[inline]
-    pub(crate) fn get_instantiator_data(&self, type_id: &TypeId) -> Option<&InstantiatorData> {
-        self.instantiators.get(type_id)
+    pub(crate) fn get(&self, type_info: &TypeInfo) -> Option<&InstantiatorData> {
+        self.entries.get(type_info)
     }
+
+    #[inline]
+    pub(crate) fn get_scope_with_child_scopes(&self) -> ScopeDataWithChildScopesData {
+        ScopeDataWithChildScopesData::new_with_sort(self.scopes_data.clone().into_iter().collect())
+    }
+
+    pub(crate) fn dfs_detect(&self) -> Result<(), DFSErrorKind> {
+        let mut visited = BTreeSet::new();
+        let mut stack = Vec::new();
+
+        for (type_info, InstantiatorData { dependencies, .. }) in &self.entries {
+            if self.dfs_visit(type_info, dependencies, &mut visited, &mut stack) {
+                return Err(DFSErrorKind::CyclicDependency {
+                    graph: (stack.remove(0), stack.into_boxed_slice()),
+                });
+            }
+        }
+        Ok(())
+    }
+
+    fn dfs_visit<'a>(
+        &self,
+        type_info: &TypeInfo,
+        dependencies: &BTreeSet<Dependency>,
+        visited: &'a mut BTreeSet<TypeInfo>,
+        stack: &'a mut Vec<TypeInfo>,
+    ) -> bool {
+        if visited.contains(type_info) {
+            return false;
+        }
+        if stack.contains(type_info) {
+            return true;
+        }
+        stack.push(*type_info);
+
+        for Dependency { type_info } in dependencies {
+            if let Some(InstantiatorData { dependencies, .. }) = self.entries.get(type_info) {
+                if self.dfs_visit(type_info, dependencies, visited, stack) {
+                    return true;
+                }
+            }
+        }
+
+        stack.pop();
+        visited.insert(*type_info);
+        false
+    }
+}
+
+/// The `registry!` macro is used to create a dependency registry with various configuration options.
+///
+/// ### `provide` syntax
+///
+/// Each `provide` item defines a single dependency registration.
+/// The following forms are supported:
+///
+/// ```no_code
+/// provide(inst)                             // factory only
+/// provide(inst, config = Config::default()) // with configuration
+/// provide(inst, finalizer = fin)            // with finalizer
+/// provide(inst, config = Config::default(), finalizer = fin) // with both parameters
+/// provide(inst, finalizer = fin, config = Config::default()) // order doesn’t matter
+/// ```
+///
+/// Parameters:
+/// - `config` *(optional)* — configuration object.
+/// - `finalizer` *(optional)* — function called when the dependency is finalized.
+///
+/// ## Usage patterns
+///
+/// ### 1. Single `scope`
+/// ```rust
+/// use froodi::{registry, InstantiateErrorKind, DefaultScope::*};
+///
+/// fn inst() -> Result<(), InstantiateErrorKind> {
+///     Ok(())
+/// }
+///
+/// registry! {
+///     scope(App) [
+///         provide(inst),
+///     ]
+/// };
+/// ```
+///
+/// ### 2. Multiple `scope`
+/// ```rust
+/// use froodi::{registry, InstantiateErrorKind, DefaultScope::*};
+///
+/// fn inst() -> Result<(), InstantiateErrorKind> {
+///     Ok(())
+/// }
+///
+/// registry! {
+///     scope(App) [ provide(inst) ],
+///     scope(Session) [ provide(inst) ],
+/// };
+/// ```
+///
+/// ### 3. Single `provide`
+/// ```rust
+/// use froodi::{registry, InstantiateErrorKind, DefaultScope::*};
+///
+/// fn inst() -> Result<(), InstantiateErrorKind> {
+///     Ok(())
+/// }
+///
+/// registry! {
+///     provide(App, inst)
+/// };
+/// ```
+///
+/// ### 4. Multiple `provide`
+/// ```rust
+/// use froodi::{registry, InstantiateErrorKind, DefaultScope::*};
+///
+/// fn inst() -> Result<(), InstantiateErrorKind> {
+///     Ok(())
+/// }
+///
+/// registry! {
+///     provide(App, inst),
+///     provide(Session, inst),
+///     provide(Request, inst),
+/// };
+/// ```
+///
+/// ### 5. Combination of one or more `scope` and `provide`
+/// ```rust
+/// use froodi::{registry, InstantiateErrorKind, DefaultScope::*};
+///
+/// fn inst() -> Result<(), InstantiateErrorKind> {
+///     Ok(())
+/// }
+///
+/// registry! {
+///     scope(App) [ provide(inst) ],
+///     provide(Session, inst),
+///     provide(Request, inst),
+/// };
+/// ```
+///
+/// ### 6. Using `extend` standalone
+/// ```rust
+/// use froodi::registry;
+///
+/// registry! {
+///     extend(registry!())
+/// };
+/// ```
+///
+/// ### 7. Using multiple `extend`
+/// ```rust
+/// use froodi::registry;
+///
+/// registry! {
+///     extend(registry!(), registry!()),
+///     extend(registry!()),
+/// };
+/// ```
+///
+/// ### 8. Using `extend` together with a combination of `scope` and `provide`
+/// ```rust
+/// use froodi::{registry, InstantiateErrorKind, DefaultScope::*};
+///
+/// fn inst() -> Result<(), InstantiateErrorKind> {
+///     Ok(())
+/// }
+///
+/// registry! {
+///     scope(App) [ provide(inst) ],
+///     provide(Session, inst),
+///     extend(registry!(), registry!()),
+/// };
+/// ```
+///
+/// ### 9. Empty macro usage
+/// ```rust
+/// use froodi::registry;
+///
+/// let registry = registry!();
+/// ```
+/// In this case, a registry with default entries is created.
+#[macro_export]
+macro_rules! registry {
+    () => {{
+        $crate::Registry::new_with_default_entries()
+    }};
+    (scope($scope:expr) [ $($entries:tt)+ ], $($rest:tt)+) => {{
+        $crate::utils::Merge::merge(
+            $crate::macros_utils::sync::build_registry(($scope, $crate::registry_internal! { scope($scope) [ $($entries)+ ] })),
+            $crate::registry_internal! { $($rest)+ }
+        )
+    }};
+    (scope($scope:expr) [ $($entries:tt)+ ] $(,)?) => {{
+        $crate::macros_utils::sync::build_registry(($scope, $crate::registry_internal! { scope($scope) [ $($entries)+ ] }))
+    }};
+    (provide($scope:expr, $($entry:tt)+), $($rest:tt)+) => {{
+        $crate::utils::Merge::merge(
+            $crate::macros_utils::sync::build_registry(($scope, $crate::registry_internal! { provide($scope, $($entry)+) })),
+            $crate::registry_internal! { $($rest)+ }
+        )
+    }};
+    (provide($scope:expr, $($entry:tt)+ ) $(,)?) => {{
+        $crate::macros_utils::sync::build_registry(($scope, $crate::registry_internal! { provide($scope, $($entry)+) }))
+    }};
+    ($( extend( $($registries:expr),+ $(,)? ) ),+ $(,)?) => {{
+        let mut registry = $crate::Registry::new_with_default_entries();
+        $(
+            $(
+                registry = $crate::utils::Merge::merge(registry, $registries);
+            )+
+        )+
+        registry
+    }};
+}
+
+#[macro_export]
+#[doc(hidden)]
+macro_rules! registry_internal {
+    (scope($scope:expr) [ $($entries:tt)+ ], $($rest:tt)+) => {{
+        $crate::macros_utils::aliases::hlist![
+            $crate::registry_internal! { @entries_in_scope scope($scope) [ $($entries)+ ] },
+            $crate::registry_internal! { $($rest)+ }
+        ]
+    }};
+    (scope($scope:expr) [ $($entries:tt)+ ] $(,)?) => {{
+        $crate::registry_internal! { @entries_in_scope scope($scope) [ $($entries)+ ] }
+    }};
+    (provide($scope:expr, $($entry:tt)+), $($rest:tt)+) => {{
+        $crate::macros_utils::aliases::hlist![
+            $crate::registry_internal! { @entries_with_scope provide($scope, $($entry)+) },
+            $crate::registry_internal! { $($rest)+ }
+        ]
+    }};
+    (provide($scope:expr, $($entry:tt)+) $(,)?) => {{
+        $crate::registry_internal! { @entries_with_scope provide($scope, $($entry)*) }
+    }};
+    ($( extend( $($registries:expr),+ $(,)? ) ),+ $(,)?) => {{
+        let mut registry = $crate::Registry::default();
+        $(
+            $(
+                registry = $crate::utils::Merge::merge(registry, $registries);
+            )+
+        )+
+        registry
+    }};
+
+    (@entries_with_scope $( provide($scope:expr, $($entry:tt)+) ),+ $(,)?) => {{
+        $crate::macros_utils::aliases::hlist![$( $crate::registry_internal! { @entry scope($scope), $($entry)+ } ),+]
+    }};
+    (@entries_in_scope scope($scope:expr) [ $( provide($($entry:tt)+) ),+ $(,)? ]) => {{
+        $crate::macros_utils::aliases::hlist![$( $crate::registry_internal! { @entry scope($scope), $($entry)+ } ),+]
+    }};
+    (@entry scope($scope:expr), $inst:expr $(,)?) => {{
+        $crate::macros_utils::sync::make_entry($scope, $inst, None, None::<$crate::macros_utils::sync::FinDummy<_>>)
+    }};
+    (@entry scope($scope:expr), $inst:expr, config = $cfg:expr $(,)?) => {{
+        $crate::macros_utils::sync::make_entry($scope, $inst, Some($cfg), None::<$crate::macros_utils::sync::FinDummy<_>>)
+    }};
+    (@entry scope($scope:expr), $inst:expr, finalizer = $fin:expr $(,)?) => {{
+        $crate::macros_utils::sync::make_entry($scope, $inst, None, Some($fin))
+    }};
+    (@entry scope($scope:expr), $inst:expr, config = $cfg:expr, finalizer = $fin:expr $(,)?) => {{
+        $crate::macros_utils::sync::make_entry($scope, $inst, Some($cfg), Some($fin))
+    }};
+    (@entry scope($scope:expr), $inst:expr, finalizer = $fin:expr, config = $cfg:expr $(,)?) => {{
+        $crate::macros_utils::sync::make_entry($scope, $inst, Some($cfg), Some($fin))
+    }};
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Registry, RegistryBuilder, RegistryWithScopes};
-    use crate::{
-        scope::DefaultScope::{self, *},
-        utils::thread_safety::RcThreadSafety,
-        Scopes,
+    extern crate std;
+
+    use alloc::{
+        format,
+        string::{String, ToString as _},
     };
-    use core::any::TypeId;
+    use tracing_test::traced_test;
+
+    use crate::{any::TypeInfo, utils::thread_safety::RcThreadSafety, Config, DefaultScope, Inject, InjectTransient, InstantiateErrorKind};
+
+    fn inst_a() -> Result<(), InstantiateErrorKind> {
+        Ok(())
+    }
+    fn inst_b() -> Result<((), ()), InstantiateErrorKind> {
+        Ok(((), ()))
+    }
+    fn inst_c() -> Result<((), (), ()), InstantiateErrorKind> {
+        Ok(((), (), ()))
+    }
+    fn inst_d() -> Result<((), (), (), ()), InstantiateErrorKind> {
+        Ok(((), (), (), ()))
+    }
+    fn inst_e() -> Result<((), (), (), (), ()), InstantiateErrorKind> {
+        Ok(((), (), (), (), ()))
+    }
+    fn inst_f() -> Result<((), (), (), (), (), ()), InstantiateErrorKind> {
+        Ok(((), (), (), (), (), ()))
+    }
+
+    fn fin_a(_val: RcThreadSafety<()>) {}
+    fn fin_b(_val: RcThreadSafety<((), ())>) {}
+    fn fin_c(_val: RcThreadSafety<((), (), ())>) {}
+    fn fin_d(_val: RcThreadSafety<((), (), (), ())>) {}
+    fn fin_e(_val: RcThreadSafety<((), (), (), (), ())>) {}
+    fn fin_f(_val: RcThreadSafety<((), (), (), (), (), ())>) {}
 
     #[test]
-    fn test_build_empty() {
-        let RegistryWithScopes {
-            registry: Registry { instantiators },
-            child_scopes_data,
-            ..
-        } = RegistryBuilder::<DefaultScope>::new().build();
-        assert_eq!(instantiators.len(), 1);
-        assert!(!child_scopes_data.is_empty());
+    #[traced_test]
+    fn test_registry_mixed_entries() {
+        let _ = registry! {
+            provide(DefaultScope::Request, inst_a),
+            scope(DefaultScope::App) [
+                provide(|| Ok(())),
+                provide(|Inject(_): Inject<()>| Ok(((), ()))),
+                provide(inst_c, config = Config::default()),
+                provide(inst_d, finalizer = fin_d),
+                provide(inst_e, config = Config::default(), finalizer = fin_e),
+                provide(inst_f, finalizer = fin_f, config = Config::default()),
+            ],
+        };
+        let _ = registry! {
+            scope(DefaultScope::App) [
+                provide(|| Ok(())),
+                provide(|Inject(_): Inject<()>| Ok(((), ()))),
+                provide(inst_c, config = Config::default()),
+                provide(inst_d, finalizer = fin_d),
+                provide(inst_e, config = Config::default(), finalizer = fin_e),
+                provide(inst_f, finalizer = fin_f, config = Config::default()),
+            ],
+            provide(DefaultScope::Request, inst_a),
+        };
     }
 
     #[test]
-    fn test_build_equal_provides() {
-        let RegistryWithScopes {
-            registry,
-            child_scopes_data,
-            ..
-        } = RegistryBuilder::new()
-            .provide(|| Ok(()), Runtime)
-            .provide(|| Ok(()), Runtime)
-            .provide(|| Ok(()), App)
-            .provide(|| Ok(()), App)
-            .build();
-        assert_eq!(child_scopes_data.len() + 1, DefaultScope::all().len());
-        assert_eq!(registry.instantiators.len(), 2);
+    #[traced_test]
+    fn test_entry_in_scope() {
+        registry_internal! { @entries_in_scope scope(DefaultScope::App) [ provide(inst_a) ] };
     }
 
     #[test]
-    fn test_build_several_scopes() {
-        let RegistryWithScopes {
-            registry,
-            child_scopes_data,
-            ..
-        } = RegistryBuilder::new()
-            .provide(|| Ok(1i8), Runtime)
-            .provide(|| Ok(1i16), Runtime)
-            .provide(|| Ok(1i32), App)
-            .provide(|| Ok(1i64), App)
-            .build();
-        assert_eq!(child_scopes_data.len() + 1, DefaultScope::all().len());
-        assert_eq!(registry.instantiators.len(), 5);
+    #[traced_test]
+    fn test_entry_in_scope_with_config() {
+        registry_internal! { @entries_in_scope scope(DefaultScope::App) [ provide(inst_a, config = Config::default()) ] };
     }
 
     #[test]
-    fn test_add_finalizer() {
-        let RegistryWithScopes {
-            registry: Registry { instantiators },
-            ..
-        } = RegistryBuilder::new()
-            .provide(|| Ok(1i8), Runtime)
-            .provide(|| Ok(1i16), Runtime)
-            .provide(|| Ok(1i32), App)
-            .provide(|| Ok(1i64), App)
-            .add_finalizer(|_: RcThreadSafety<i8>| {})
-            .add_finalizer(|_: RcThreadSafety<i32>| {})
-            .build();
+    #[traced_test]
+    fn test_entry_in_scope_with_finalizer() {
+        registry_internal! { @entries_in_scope scope(DefaultScope::App) [ provide(inst_a, finalizer = fin_a) ] };
+    }
 
-        let i8_type_id = TypeId::of::<i8>();
-        let i16_type_id = TypeId::of::<i16>();
-        let i32_type_id = TypeId::of::<i32>();
-        let i64_type_id = TypeId::of::<i64>();
+    #[test]
+    #[traced_test]
+    fn test_entry_in_scope_with_config_and_finalizer() {
+        registry_internal! { @entries_in_scope scope(DefaultScope::App) [ provide(inst_a, config = Config::default(), finalizer = fin_a) ] };
+    }
 
-        if let Some(data) = instantiators.get(&i8_type_id) {
-            assert!(data.finalizer.is_some());
-        }
-        if let Some(data) = instantiators.get(&i16_type_id) {
-            assert!(data.finalizer.is_none());
-        }
-        if let Some(data) = instantiators.get(&i32_type_id) {
-            assert!(data.finalizer.is_some());
-        }
-        if let Some(data) = instantiators.get(&i64_type_id) {
-            assert!(data.finalizer.is_none());
-        }
+    #[test]
+    #[traced_test]
+    fn test_entry_in_scope_with_finalizer_and_config_swapped() {
+        registry_internal! { @entries_in_scope scope(DefaultScope::App) [ provide(inst_a, finalizer = fin_a, config = Config::default()) ] };
+    }
+
+    #[test]
+    #[traced_test]
+    fn test_entry_with_scope() {
+        registry_internal! { @entries_with_scope provide(DefaultScope::App, inst_a) };
+    }
+
+    #[test]
+    #[traced_test]
+    fn test_entry_with_scope_with_config() {
+        registry_internal! { @entries_with_scope provide(DefaultScope::App, inst_a, config = Config::default()) };
+    }
+
+    #[test]
+    #[traced_test]
+    fn test_entry_with_scope_with_finalizer() {
+        registry_internal! { @entries_with_scope provide(DefaultScope::App, inst_a, finalizer = fin_a) };
+    }
+
+    #[test]
+    #[traced_test]
+    fn test_entry_with_scope_with_config_and_finalizer() {
+        registry_internal! { @entries_with_scope provide(DefaultScope::App, inst_a, config = Config::default(), finalizer = fin_a) };
+    }
+
+    #[test]
+    #[traced_test]
+    fn test_entry_with_scope_with_finalizer_and_config_swapped() {
+        registry_internal! { @entries_with_scope provide(DefaultScope::App, inst_a, finalizer = fin_a, config = Config::default()) };
+    }
+
+    #[test]
+    #[traced_test]
+    fn test_multiple_entries_in_scope() {
+        registry_internal! {
+            @entries_in_scope
+            scope(DefaultScope::App) [
+                provide(inst_a),
+                provide(inst_b),
+                provide(inst_c, config = Config::default(), finalizer = fin_c),
+                provide(inst_d, finalizer = fin_d),
+                provide(inst_e, config = Config::default(), finalizer = fin_e),
+            ]
+        };
+    }
+
+    #[test]
+    #[traced_test]
+    fn test_multiple_entries_with_scope() {
+        registry_internal! {
+            @entries_with_scope
+            provide(DefaultScope::App, inst_a),
+            provide(DefaultScope::App, inst_b),
+            provide(DefaultScope::App, inst_c, config = Config::default(), finalizer = fin_c),
+            provide(DefaultScope::App, inst_d, finalizer = fin_d),
+            provide(DefaultScope::App, inst_e, config = Config::default(), finalizer = fin_e),
+        };
+    }
+
+    #[test]
+    #[traced_test]
+    fn test_entries_in_scope_trailing_comma_and_spaces() {
+        registry_internal! {
+            @entries_in_scope
+            scope(DefaultScope::App) [
+                provide(inst_a, config = Config::default(), finalizer = fin_a),
+            ]
+        };
+    }
+
+    #[test]
+    #[traced_test]
+    fn test_entries_with_scope_trailing_comma_and_spaces() {
+        registry_internal! {
+            @entries_with_scope
+            provide(DefaultScope::App, inst_a, config = Config::default(), finalizer = fin_a),
+        };
+    }
+
+    #[test]
+    #[traced_test]
+    fn test_registry_entries_in_scope() {
+        let _ = registry! {
+            scope(DefaultScope::App) [
+                provide(inst_a),
+                provide(inst_b),
+                provide(inst_c, config = Config::default()),
+                provide(inst_d, finalizer = fin_d),
+                provide(inst_e, config = Config::default(), finalizer = fin_e),
+            ],
+        };
+    }
+
+    #[test]
+    #[traced_test]
+    fn test_registry_entries_with_scope() {
+        let _ = registry! {
+            provide(DefaultScope::App, inst_a),
+            provide(DefaultScope::App, inst_b),
+            provide(DefaultScope::App, inst_c, config = Config::default()),
+            provide(DefaultScope::App, inst_d, finalizer = fin_d),
+            provide(DefaultScope::App, inst_e, config = Config::default(), finalizer = fin_e),
+        };
+    }
+
+    #[test]
+    #[traced_test]
+    fn test_registry_entries_in_scope_multiple_scopes() {
+        let _ = registry! {
+            scope(DefaultScope::App) [
+                provide(inst_a),
+                provide(inst_b),
+            ],
+            scope(DefaultScope::Request) [
+                provide(inst_c, config = Config::default()),
+                provide(inst_d, finalizer = fin_d),
+            ],
+        };
+    }
+
+    #[test]
+    #[traced_test]
+    fn test_registry_entries_with_scope_multiple_scopes() {
+        let _ = registry! {
+            provide(DefaultScope::App, inst_a),
+            provide(DefaultScope::App, inst_b),
+            provide(DefaultScope::Request, inst_c, config = Config::default()),
+            provide(DefaultScope::Request, inst_d, finalizer = fin_d),
+        };
+    }
+
+    #[test]
+    #[traced_test]
+    fn test_registry_empty_scope() {
+        let _ = registry! {};
+    }
+
+    #[test]
+    #[traced_test]
+    fn test_registry_trailing_commas_and_spacing() {
+        let _ = registry! {
+            scope(DefaultScope::App)[
+                provide(inst_a),
+                provide(inst_b , config = Config::default() , finalizer = fin_b ,)
+            ]
+            , scope(DefaultScope::Request)[ provide(inst_c) , ]
+        };
+    }
+
+    #[test]
+    #[traced_test]
+    fn test_registry_get() {
+        let registry = registry! {
+            scope(DefaultScope::Session) [provide(inst_a), provide(inst_b), provide(inst_c)],
+            scope(DefaultScope::Request) [provide(inst_d), provide(inst_e), provide(inst_f)],
+        };
+
+        assert!(registry.get(&TypeInfo::of::<()>()).is_some());
+        assert!(registry.get(&TypeInfo::of::<((), ())>()).is_some());
+        assert!(registry.get(&TypeInfo::of::<((), (), ())>()).is_some());
+        assert!(registry.get(&TypeInfo::of::<((), (), (), ())>()).is_some());
+        assert!(registry.get(&TypeInfo::of::<((), (), (), (), ())>()).is_some());
+        assert!(registry.get(&TypeInfo::of::<((), (), (), (), (), ())>()).is_some());
+        assert!(registry.get(&TypeInfo::of::<((), (), (), (), (), (), ())>()).is_none());
+    }
+
+    #[test]
+    #[traced_test]
+    fn test_registry_dfs_detect_ok() {
+        struct A;
+        struct B(A);
+        struct C(B, A);
+
+        let registry = registry! {
+            scope(DefaultScope::App) [
+                provide(|| Ok(A)),
+            ],
+            scope(DefaultScope::Session) [
+                provide(|InjectTransient(a): InjectTransient<A>| Ok(B(a))),
+            ],
+            scope(DefaultScope::Request) [
+                provide(|InjectTransient(b): InjectTransient<B>, InjectTransient(a): InjectTransient<A>| Ok(C(b, a))),
+            ],
+        };
+        registry.dfs_detect().unwrap();
+    }
+
+    #[test]
+    #[traced_test]
+    fn test_registry_dfs_detect_single() {
+        struct A;
+
+        let registry = registry! {
+            scope(DefaultScope::App) [
+                provide(|InjectTransient(_): InjectTransient<A>| Ok(A)),
+            ],
+        };
+        registry.dfs_detect().unwrap_err();
+    }
+
+    #[test]
+    #[traced_test]
+    fn test_registry_dfs_detect_many() {
+        struct A;
+        struct B;
+
+        let registry = registry! {
+            scope(DefaultScope::App) [
+                provide(|InjectTransient(_): InjectTransient<B>| Ok(A)),
+            ],
+            scope(DefaultScope::Session) [
+                provide(|InjectTransient(_): InjectTransient<A>| Ok(B)),
+            ],
+        };
+        registry.dfs_detect().unwrap_err();
+    }
+
+    #[test]
+    #[traced_test]
+    fn registry_extend_entries() {
+        let registry = registry! {
+            provide(DefaultScope::App, inst_a),
+            scope(DefaultScope::Session) [provide(inst_b)],
+            provide(DefaultScope::App, inst_c),
+            extend(
+                registry! {
+                    scope(DefaultScope::App) [provide(inst_d)],
+                    extend(
+                        registry! {
+                            scope(DefaultScope::Session) [provide(inst_e)],
+                        },
+                    ),
+                },
+                registry! {
+                    scope(DefaultScope::Session) [provide(inst_f)],
+                },
+            ),
+        };
+
+        assert_eq!(registry.entries.len(), 7);
     }
 }

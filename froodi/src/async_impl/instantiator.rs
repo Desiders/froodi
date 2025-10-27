@@ -1,4 +1,4 @@
-use alloc::boxed::Box;
+use alloc::{boxed::Box, collections::btree_set::BTreeSet};
 use core::{any::Any, future::Future};
 use tracing::debug;
 
@@ -7,6 +7,7 @@ use super::{
     Container,
 };
 use crate::{
+    dependency::Dependency,
     dependency_resolver::DependencyResolver,
     errors::{InstantiateErrorKind, InstantiatorErrorKind},
     utils::thread_safety::{SendSafety, SyncSafety},
@@ -21,24 +22,8 @@ where
     type Error: Into<InstantiateErrorKind>;
 
     fn instantiate(&mut self, dependencies: Deps) -> impl Future<Output = Result<Self::Provides, Self::Error>> + SendSafety;
-}
 
-/// Config for an instantiator
-/// ## Fields
-/// - `cache_provides`:
-///   If `true`, the instance provided by the instantiator will be cached and reused.
-///
-///   This does **not** affect the dependencies of the instance.
-///   Only the final result is cached if caching is applicable.
-#[derive(Clone, Copy)]
-pub struct Config {
-    pub cache_provides: bool,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self { cache_provides: true }
-    }
+    fn dependencies() -> BTreeSet<Dependency>;
 }
 
 pub(crate) type BoxedCloneInstantiator<DepsErr, FactoryErr> =
@@ -88,13 +73,24 @@ macro_rules! impl_instantiator {
             Fut: Future<Output = Result<Response, Err>> + SendSafety,
             Response: 'static,
             Err: Into<InstantiateErrorKind>,
-            $( $ty: DependencyResolver + SendSafety, )*
+            $( $ty: DependencyResolver + SendSafety + 'static, )*
         {
             type Provides = Response;
             type Error = Err;
 
             fn instantiate(&mut self, ($($ty,)*): ($($ty,)*)) -> impl Future<Output = Result<Self::Provides, Self::Error>> + SendSafety  {
                 async move { self($($ty,)*).await }
+            }
+
+            #[inline]
+            fn dependencies() -> BTreeSet<Dependency> {
+                BTreeSet::from_iter([
+                    $(
+                        Dependency {
+                            type_info: $ty::type_info(),
+                        }
+                    ),*
+                ])
             }
         }
     };
@@ -108,7 +104,8 @@ mod tests {
 
     use super::{boxed_instantiator, DependencyResolver, InstantiateErrorKind, Instantiator};
     use crate::{
-        async_impl::{registry::BoxedInstantiator, service::Service as _, Container, RegistryBuilder},
+        async_impl::{service::Service as _, Container},
+        async_registry,
         scope::DefaultScope::*,
         utils::thread_safety::RcThreadSafety,
         Inject, InjectTransient,
@@ -140,19 +137,6 @@ mod tests {
         let instantiator_request_call_count = RcThreadSafety::new(AtomicU8::new(0));
         let instantiator_response_call_count = RcThreadSafety::new(AtomicU8::new(0));
 
-        let instantiator_request = boxed_instantiator({
-            let instantiator_request_call_count = instantiator_request_call_count.clone();
-            move |()| {
-                let instantiator_request_call_count = instantiator_request_call_count.clone();
-
-                async move {
-                    instantiator_request_call_count.fetch_add(1, Ordering::SeqCst);
-
-                    debug!("Call instantiator request");
-                    Ok::<_, InstantiateErrorKind>(Request(true))
-                }
-            }
-        });
         let mut instantiator_response = boxed_instantiator({
             let instantiator_response_call_count = instantiator_response_call_count.clone();
             move |InjectTransient(Request(val_1)), InjectTransient(Request(val_2))| {
@@ -169,10 +153,23 @@ mod tests {
             }
         });
 
-        let mut registry_builder = RegistryBuilder::new();
-        registry_builder.add_instantiator::<Request>(BoxedInstantiator::Async(instantiator_request), App);
+        let container = Container::new(async_registry! {
+            scope(App) [
+                provide({
+                    let instantiator_request_call_count = instantiator_request_call_count.clone();
+                    move |()| {
+                        let instantiator_request_call_count = instantiator_request_call_count.clone();
 
-        let container = Container::new(registry_builder);
+                        async move {
+                            instantiator_request_call_count.fetch_add(1, Ordering::SeqCst);
+
+                            debug!("Call instantiator request");
+                            Ok::<_, InstantiateErrorKind>(Request(true))
+                        }
+                    }
+                }),
+            ]
+        });
 
         let response_1 = instantiator_response.call(container.clone()).await.unwrap();
         let response_2 = instantiator_response.call(container).await.unwrap();
@@ -189,19 +186,6 @@ mod tests {
         let instantiator_request_call_count = RcThreadSafety::new(AtomicU8::new(0));
         let instantiator_response_call_count = RcThreadSafety::new(AtomicU8::new(0));
 
-        let instantiator_request = boxed_instantiator({
-            let instantiator_request_call_count = instantiator_request_call_count.clone();
-            move |()| {
-                let instantiator_request_call_count = instantiator_request_call_count.clone();
-
-                async move {
-                    instantiator_request_call_count.fetch_add(1, Ordering::SeqCst);
-
-                    debug!("Call instantiator request");
-                    Ok::<_, InstantiateErrorKind>(Request(true))
-                }
-            }
-        });
         let mut instantiator_response = boxed_instantiator({
             let instantiator_response_call_count = instantiator_response_call_count.clone();
             move |val_1: Inject<Request>, val_2: Inject<Request>| {
@@ -218,10 +202,23 @@ mod tests {
             }
         });
 
-        let mut registry_builder = RegistryBuilder::new();
-        registry_builder.add_instantiator::<Request>(BoxedInstantiator::Async(instantiator_request), App);
+        let container = Container::new(async_registry! {
+            scope(App) [
+                provide({
+                    let instantiator_request_call_count = instantiator_request_call_count.clone();
+                    move |()| {
+                        let instantiator_request_call_count = instantiator_request_call_count.clone();
 
-        let container = Container::new(registry_builder);
+                        async move {
+                            instantiator_request_call_count.fetch_add(1, Ordering::SeqCst);
+
+                            debug!("Call instantiator request");
+                            Ok::<_, InstantiateErrorKind>(Request(true))
+                        }
+                    }
+                }),
+            ]
+        });
 
         let response_1 = instantiator_response.call(container.clone()).await.unwrap();
         let response_2 = instantiator_response.call(container.clone()).await.unwrap();

@@ -1,7 +1,7 @@
 use froodi::{
     Container,
     DefaultScope::{App, Request},
-    Inject, InstantiatorResult, RegistryBuilder, instance,
+    Inject, InstantiatorResult, instance, registry,
 };
 use std::sync::Arc;
 
@@ -51,14 +51,13 @@ fn init_container(config: Config) -> Container {
         println!("Create user interactor finalized");
     }
 
-    let registry = RegistryBuilder::new()
-        .provide(instance(config), App)
-        .provide(|_config: Inject<Config>| Ok(PostgresUserRepo), Request)
-        .provide(create_user::<PostgresUserRepo>, Request)
-        .add_finalizer::<PostgresUserRepo>(|_dep| println!("Postgres repository finalized"))
-        .add_finalizer(finalize_create_user::<PostgresUserRepo>)
-        .add_finalizer::<Config>(|_dep| println!("Config finalized"));
-    Container::new(registry)
+    Container::new(registry! {
+        provide(App, instance(config), finalizer = |_dep| println!("Config finalized")),
+        scope(Request) [
+            provide(|_config: Inject<Config>| Ok(PostgresUserRepo), finalizer = |_dep| println!("Postgres repository finalized")),
+            provide(create_user::<PostgresUserRepo>, finalizer = finalize_create_user::<PostgresUserRepo>),
+        ],
+    })
 }
 
 // Output:

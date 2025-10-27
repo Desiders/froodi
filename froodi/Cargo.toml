@@ -17,6 +17,7 @@ anyhow = { version = "1.0", default-features = false }
 thiserror = { version = "2.0", default-features = false }
 tracing = { version = "0.1", default-features = false }
 parking_lot = { version = "0.12", default-features = false }
+frunk = { version = "0.4", default-features = false }
 
 tower-layer = { version = "0.3", optional = true }
 tower-service = { version = "0.3", optional = true }
@@ -35,7 +36,13 @@ std = ["anyhow/std", "thiserror/std", "tracing/std"]
 thread_safe = []
 async = []
 
-axum = ["dep:axum", "axum/ws", "dep:tower-layer", "dep:tower-service", "thread_safe"]
+axum = [
+    "dep:axum",
+    "axum/ws",
+    "dep:tower-layer",
+    "dep:tower-service",
+    "thread_safe",
+]
 http2-axum = ["dep:h2", "axum/http2"]
 
 dptree = ["dep:dptree"]
