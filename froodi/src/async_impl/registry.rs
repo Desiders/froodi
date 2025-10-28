@@ -468,7 +468,7 @@ mod tests {
     #[test]
     #[traced_test]
     fn test_registry_mixed_entries() {
-        let _ = async_registry! {
+        let registry_a = async_registry! {
             provide(DefaultScope::Request, inst_a),
             scope(DefaultScope::App) [
                 provide(async || Ok(())),
@@ -479,7 +479,7 @@ mod tests {
                 provide(inst_f, finalizer = fin_f, config = Config::default()),
             ],
         };
-        let _ = async_registry! {
+        let registry_b = async_registry! {
             scope(DefaultScope::App) [
                 provide(async || Ok(())),
                 provide(async |Inject(_): Inject<()>| Ok(((), ()))),
@@ -490,6 +490,11 @@ mod tests {
             ],
             provide(DefaultScope::Request, inst_a),
         };
+
+        assert_eq!(registry_a.registry.entries.len(), 7);
+        assert_eq!(registry_a.sync.entries.len(), 1);
+        assert_eq!(registry_b.registry.entries.len(), 7);
+        assert_eq!(registry_b.sync.entries.len(), 1);
     }
 
     #[test]
@@ -603,7 +608,7 @@ mod tests {
     #[test]
     #[traced_test]
     fn test_registry_entries_in_scope() {
-        async_registry! {
+        let registry = async_registry! {
             scope(DefaultScope::App) [
                 provide(inst_a),
                 provide(inst_b),
@@ -612,24 +617,30 @@ mod tests {
                 provide(inst_e, config = Config::default(), finalizer = fin_e),
             ],
         };
+
+        assert_eq!(registry.registry.entries.len(), 6);
+        assert_eq!(registry.sync.entries.len(), 1);
     }
 
     #[test]
     #[traced_test]
     fn test_registry_entries_with_scope() {
-        let _ = async_registry! {
+        let registry = async_registry! {
             provide(DefaultScope::App, inst_a),
             provide(DefaultScope::App, inst_b),
             provide(DefaultScope::App, inst_c, config = Config::default()),
             provide(DefaultScope::App, inst_d, finalizer = fin_d),
             provide(DefaultScope::App, inst_e, config = Config::default(), finalizer = fin_e),
         };
+
+        assert_eq!(registry.registry.entries.len(), 6);
+        assert_eq!(registry.sync.entries.len(), 1);
     }
 
     #[test]
     #[traced_test]
     fn test_registry_entries_in_scope_multiple_scopes() {
-        let _ = async_registry! {
+        let registry = async_registry! {
             scope(DefaultScope::App) [
                 provide(inst_a),
                 provide(inst_b),
@@ -639,44 +650,59 @@ mod tests {
                 provide(inst_d, finalizer = fin_d),
             ],
         };
+
+        assert_eq!(registry.registry.entries.len(), 5);
+        assert_eq!(registry.sync.entries.len(), 1);
     }
 
     #[test]
     #[traced_test]
     fn test_registry_entries_with_scope_multiple_scopes() {
-        let _ = async_registry! {
+        let registry = async_registry! {
             provide(DefaultScope::App, inst_a),
             provide(DefaultScope::App, inst_b),
             provide(DefaultScope::Request, inst_c, config = Config::default()),
             provide(DefaultScope::Request, inst_d, finalizer = fin_d),
         };
+
+        assert_eq!(registry.registry.entries.len(), 5);
+        assert_eq!(registry.sync.entries.len(), 1);
     }
 
     #[test]
     #[traced_test]
     fn test_registry_empty_scope() {
-        async_registry! {};
+        let registry = async_registry! {};
+
+        assert_eq!(registry.registry.entries.len(), 1);
+        assert_eq!(registry.sync.entries.len(), 1);
     }
 
     #[test]
     #[traced_test]
     fn test_registry_trailing_commas_and_spacing() {
-        let _ = async_registry! {
+        let registry = async_registry! {
             scope(DefaultScope::App)[
                 provide(inst_a),
                 provide(inst_b , config = Config::default() , finalizer = fin_b ,)
             ]
             , scope(DefaultScope::Request)[ provide(inst_c) , ]
         };
+
+        assert_eq!(registry.registry.entries.len(), 4);
+        assert_eq!(registry.sync.entries.len(), 1);
     }
 
     #[test]
     #[traced_test]
     fn test_registry_get() {
-        let RegistryWithSync { registry, .. } = async_registry! {
+        let RegistryWithSync { registry, sync } = async_registry! {
             scope(DefaultScope::Session) [provide(inst_a), provide(inst_b), provide(inst_c)],
             scope(DefaultScope::Request) [provide(inst_d), provide(inst_e), provide(inst_f)],
         };
+
+        assert_eq!(registry.entries.len(), 7);
+        assert_eq!(sync.entries.len(), 1);
 
         assert!(registry.get(&TypeInfo::of::<()>()).is_some());
         assert!(registry.get(&TypeInfo::of::<((), ())>()).is_some());
@@ -694,7 +720,7 @@ mod tests {
         struct B(A);
         struct C(B, A);
 
-        let RegistryWithSync { registry, .. } = async_registry! {
+        let RegistryWithSync { registry, sync } = async_registry! {
             scope(DefaultScope::App) [
                 provide(async || Ok(A)),
             ],
@@ -706,6 +732,9 @@ mod tests {
             ],
         };
         registry.dfs_detect().unwrap();
+
+        assert_eq!(registry.entries.len(), 4);
+        assert_eq!(sync.entries.len(), 1);
     }
 
     #[test]
@@ -713,12 +742,15 @@ mod tests {
     fn test_registry_dfs_detect_single() {
         struct A;
 
-        let RegistryWithSync { registry, .. } = async_registry! {
+        let RegistryWithSync { registry, sync } = async_registry! {
             scope(DefaultScope::App) [
                 provide(async |InjectTransient(_): InjectTransient<A>| Ok(A)),
             ],
         };
         registry.dfs_detect().unwrap_err();
+
+        assert_eq!(registry.entries.len(), 2);
+        assert_eq!(sync.entries.len(), 1);
     }
 
     #[test]
@@ -727,7 +759,7 @@ mod tests {
         struct A;
         struct B;
 
-        let RegistryWithSync { registry, .. } = async_registry! {
+        let RegistryWithSync { registry, sync } = async_registry! {
             scope(DefaultScope::App) [
                 provide(async |InjectTransient(_): InjectTransient<B>| Ok(A)),
             ],
@@ -736,12 +768,15 @@ mod tests {
             ],
         };
         registry.dfs_detect().unwrap_err();
+
+        assert_eq!(registry.entries.len(), 3);
+        assert_eq!(sync.entries.len(), 1);
     }
 
     #[test]
     #[traced_test]
     fn registry_extend_entries() {
-        let RegistryWithSync { registry, .. } = async_registry! {
+        let RegistryWithSync { registry, sync } = async_registry! {
             provide(DefaultScope::App, inst_a),
             scope(DefaultScope::Session) [provide(inst_b)],
             provide(DefaultScope::App, inst_c),
@@ -761,23 +796,32 @@ mod tests {
         };
 
         assert_eq!(registry.entries.len(), 7);
+        assert_eq!(sync.entries.len(), 1);
     }
 
     #[test]
     #[traced_test]
     fn test_registry_with_sync() {
-        let _ = async_registry! {
+        let RegistryWithSync { registry, sync } = async_registry! {
             scope(DefaultScope::App) [
                 provide(inst_a),
             ],
-            sync = registry! {},
+            sync = registry! {
+                scope(DefaultScope::Session) [
+                    provide(|| Ok(((), ()))),
+                ],
+                provide(DefaultScope::App, || Ok(((), (), ()))),
+            },
         };
+
+        assert_eq!(registry.entries.len(), 2);
+        assert_eq!(sync.entries.len(), 3);
     }
 
     #[test]
     #[traced_test]
     fn test_registry_with_sync_and_extend() {
-        let _ = async_registry! {
+        let registry = async_registry! {
             scope(DefaultScope::App) [
                 provide(inst_a),
             ],
@@ -790,5 +834,8 @@ mod tests {
             ),
             sync = registry! {},
         };
+
+        assert_eq!(registry.registry.entries.len(), 3);
+        assert_eq!(registry.sync.entries.len(), 1);
     }
 }

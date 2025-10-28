@@ -381,28 +381,38 @@ mod tests {
     #[test]
     #[traced_test]
     fn test_registry_mixed_entries() {
-        let _ = registry! {
-            provide(DefaultScope::Request, inst_a),
-            scope(DefaultScope::App) [
-                provide(|| Ok(())),
-                provide(|Inject(_): Inject<()>| Ok(((), ()))),
-                provide(inst_c, config = Config::default()),
-                provide(inst_d, finalizer = fin_d),
-                provide(inst_e, config = Config::default(), finalizer = fin_e),
-                provide(inst_f, finalizer = fin_f, config = Config::default()),
-            ],
-        };
-        let _ = registry! {
-            scope(DefaultScope::App) [
-                provide(|| Ok(())),
-                provide(|Inject(_): Inject<()>| Ok(((), ()))),
-                provide(inst_c, config = Config::default()),
-                provide(inst_d, finalizer = fin_d),
-                provide(inst_e, config = Config::default(), finalizer = fin_e),
-                provide(inst_f, finalizer = fin_f, config = Config::default()),
-            ],
-            provide(DefaultScope::Request, inst_a),
-        };
+        assert_eq!(
+            registry! {
+                provide(DefaultScope::Request, inst_a),
+                scope(DefaultScope::App) [
+                    provide(|| Ok(())),
+                    provide(|Inject(_): Inject<()>| Ok(((), ()))),
+                    provide(inst_c, config = Config::default()),
+                    provide(inst_d, finalizer = fin_d),
+                    provide(inst_e, config = Config::default(), finalizer = fin_e),
+                    provide(inst_f, finalizer = fin_f, config = Config::default()),
+                ],
+            }
+            .entries
+            .len(),
+            7
+        );
+        assert_eq!(
+            registry! {
+                scope(DefaultScope::App) [
+                    provide(|| Ok(())),
+                    provide(|Inject(_): Inject<()>| Ok(((), ()))),
+                    provide(inst_c, config = Config::default()),
+                    provide(inst_d, finalizer = fin_d),
+                    provide(inst_e, config = Config::default(), finalizer = fin_e),
+                    provide(inst_f, finalizer = fin_f, config = Config::default()),
+                ],
+                provide(DefaultScope::Request, inst_a),
+            }
+            .entries
+            .len(),
+            7
+        );
     }
 
     #[test]
@@ -516,71 +526,96 @@ mod tests {
     #[test]
     #[traced_test]
     fn test_registry_entries_in_scope() {
-        let _ = registry! {
-            scope(DefaultScope::App) [
-                provide(inst_a),
-                provide(inst_b),
-                provide(inst_c, config = Config::default()),
-                provide(inst_d, finalizer = fin_d),
-                provide(inst_e, config = Config::default(), finalizer = fin_e),
-            ],
-        };
+        assert_eq!(
+            registry! {
+                scope(DefaultScope::App) [
+                    provide(inst_a),
+                    provide(inst_b),
+                    provide(inst_c, config = Config::default()),
+                    provide(inst_d, finalizer = fin_d),
+                    provide(inst_e, config = Config::default(), finalizer = fin_e),
+                ],
+            }
+            .entries
+            .len(),
+            6
+        );
     }
 
     #[test]
     #[traced_test]
     fn test_registry_entries_with_scope() {
-        let _ = registry! {
-            provide(DefaultScope::App, inst_a),
-            provide(DefaultScope::App, inst_b),
-            provide(DefaultScope::App, inst_c, config = Config::default()),
-            provide(DefaultScope::App, inst_d, finalizer = fin_d),
-            provide(DefaultScope::App, inst_e, config = Config::default(), finalizer = fin_e),
-        };
+        assert_eq!(
+            registry! {
+                provide(DefaultScope::App, inst_a),
+                provide(DefaultScope::App, inst_b),
+                provide(DefaultScope::App, inst_c, config = Config::default()),
+                provide(DefaultScope::App, inst_d, finalizer = fin_d),
+                provide(DefaultScope::App, inst_e, config = Config::default(), finalizer = fin_e),
+            }
+            .entries
+            .len(),
+            6
+        );
     }
 
     #[test]
     #[traced_test]
     fn test_registry_entries_in_scope_multiple_scopes() {
-        let _ = registry! {
-            scope(DefaultScope::App) [
-                provide(inst_a),
-                provide(inst_b),
-            ],
-            scope(DefaultScope::Request) [
-                provide(inst_c, config = Config::default()),
-                provide(inst_d, finalizer = fin_d),
-            ],
-        };
+        assert_eq!(
+            registry! {
+                scope(DefaultScope::App) [
+                    provide(inst_a),
+                    provide(inst_b),
+                ],
+                scope(DefaultScope::Request) [
+                    provide(inst_c, config = Config::default()),
+                    provide(inst_d, finalizer = fin_d),
+                ],
+            }
+            .entries
+            .len(),
+            5
+        );
     }
 
     #[test]
     #[traced_test]
     fn test_registry_entries_with_scope_multiple_scopes() {
-        let _ = registry! {
-            provide(DefaultScope::App, inst_a),
-            provide(DefaultScope::App, inst_b),
-            provide(DefaultScope::Request, inst_c, config = Config::default()),
-            provide(DefaultScope::Request, inst_d, finalizer = fin_d),
-        };
+        assert_eq!(
+            registry! {
+                provide(DefaultScope::App, inst_a),
+                provide(DefaultScope::App, inst_b),
+                provide(DefaultScope::Request, inst_c, config = Config::default()),
+                provide(DefaultScope::Request, inst_d, finalizer = fin_d),
+            }
+            .entries
+            .len(),
+            5
+        );
     }
 
     #[test]
     #[traced_test]
     fn test_registry_empty_scope() {
-        let _ = registry! {};
+        assert_eq!(registry! {}.entries.len(), 1)
     }
 
     #[test]
     #[traced_test]
     fn test_registry_trailing_commas_and_spacing() {
-        let _ = registry! {
-            scope(DefaultScope::App)[
-                provide(inst_a),
-                provide(inst_b , config = Config::default() , finalizer = fin_b ,)
-            ]
-            , scope(DefaultScope::Request)[ provide(inst_c) , ]
-        };
+        assert_eq!(
+            registry! {
+                scope(DefaultScope::App)[
+                    provide(inst_a),
+                    provide(inst_b , config = Config::default() , finalizer = fin_b ,)
+                ]
+                , scope(DefaultScope::Request)[ provide(inst_c) , ]
+            }
+            .entries
+            .len(),
+            4
+        )
     }
 
     #[test]
@@ -590,6 +625,8 @@ mod tests {
             scope(DefaultScope::Session) [provide(inst_a), provide(inst_b), provide(inst_c)],
             scope(DefaultScope::Request) [provide(inst_d), provide(inst_e), provide(inst_f)],
         };
+
+        assert_eq!(registry.entries.len(), 7);
 
         assert!(registry.get(&TypeInfo::of::<()>()).is_some());
         assert!(registry.get(&TypeInfo::of::<((), ())>()).is_some());
@@ -619,6 +656,8 @@ mod tests {
             ],
         };
         registry.dfs_detect().unwrap();
+
+        assert_eq!(registry.entries.len(), 4);
     }
 
     #[test]
@@ -632,6 +671,8 @@ mod tests {
             ],
         };
         registry.dfs_detect().unwrap_err();
+
+        assert_eq!(registry.entries.len(), 2);
     }
 
     #[test]
@@ -649,6 +690,8 @@ mod tests {
             ],
         };
         registry.dfs_detect().unwrap_err();
+
+        assert_eq!(registry.entries.len(), 3);
     }
 
     #[test]
