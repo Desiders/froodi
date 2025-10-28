@@ -220,17 +220,7 @@ impl Registry {
 /// };
 /// ```
 ///
-/// ### 7. Using multiple `extend`
-/// ```rust
-/// use froodi::registry;
-///
-/// registry! {
-///     extend(registry!(), registry!()),
-///     extend(registry!()),
-/// };
-/// ```
-///
-/// ### 8. Using `extend` together with a combination of `scope` and `provide`
+/// ### 7. Using `extend` together with a combination of `scope` and `provide`
 /// ```rust
 /// use froodi::{registry, InstantiateErrorKind, DefaultScope::*};
 ///
@@ -245,7 +235,7 @@ impl Registry {
 /// };
 /// ```
 ///
-/// ### 9. Empty macro usage
+/// ### 8. Empty macro usage
 /// ```rust
 /// use froodi::registry;
 ///
@@ -272,17 +262,16 @@ macro_rules! registry {
             $crate::registry_internal! { $($rest)+ }
         )
     }};
-    (provide($scope:expr, $($entry:tt)+ ) $(,)?) => {{
+    (provide($scope:expr, $($entry:tt)+) $(,)?) => {{
         $crate::macros_utils::sync::build_registry(($scope, $crate::registry_internal! { provide($scope, $($entry)+) }))
     }};
-    ($( extend( $($registries:expr),+ $(,)? ) ),+ $(,)?) => {{
-        let mut registry = $crate::Registry::new_with_default_entries();
+    (extend($registry:expr $(, $registries:expr),* $(,)?) $(,)?) => {{
+        #[allow(unused_mut)]
+        let mut registry = $registry;
         $(
-            $(
-                registry = $crate::utils::Merge::merge(registry, $registries);
-            )+
-        )+
-        registry
+            registry = $crate::utils::Merge::merge(registry, $registries);
+        )*
+        registry as $crate::Registry
     }};
 }
 
@@ -307,14 +296,13 @@ macro_rules! registry_internal {
     (provide($scope:expr, $($entry:tt)+) $(,)?) => {{
         $crate::registry_internal! { @entries_with_scope provide($scope, $($entry)*) }
     }};
-    ($( extend( $($registries:expr),+ $(,)? ) ),+ $(,)?) => {{
-        let mut registry = $crate::Registry::default();
+    (extend($registry:expr $(, $registries:expr),* $(,)?) $(,)?) => {{
+        #[allow(unused_mut)]
+        let mut registry = $registry;
         $(
-            $(
-                registry = $crate::utils::Merge::merge(registry, $registries);
-            )+
-        )+
-        registry
+            registry = $crate::utils::Merge::merge(registry, $registries);
+        )*
+        $crate::macros_utils::types::RegistryOrEntry::Registry(registry)
     }};
 
     (@entries_with_scope $( provide($scope:expr, $($entry:tt)+) ),+ $(,)?) => {{
@@ -324,19 +312,23 @@ macro_rules! registry_internal {
         $crate::macros_utils::aliases::hlist![$( $crate::registry_internal! { @entry scope($scope), $($entry)+ } ),+]
     }};
     (@entry scope($scope:expr), $inst:expr $(,)?) => {{
-        $crate::macros_utils::sync::make_entry($scope, $inst, None, None::<$crate::macros_utils::sync::FinDummy<_>>)
+        $crate::macros_utils::types::RegistryOrEntry::Entry(
+            $crate::macros_utils::sync::make_entry($scope, $inst, None, None::<$crate::macros_utils::sync::FinDummy<_>>)
+        )
     }};
     (@entry scope($scope:expr), $inst:expr, config = $cfg:expr $(,)?) => {{
-        $crate::macros_utils::sync::make_entry($scope, $inst, Some($cfg), None::<$crate::macros_utils::sync::FinDummy<_>>)
+        $crate::macros_utils::types::RegistryOrEntry::Entry(
+            $crate::macros_utils::sync::make_entry($scope, $inst, Some($cfg), None::<$crate::macros_utils::sync::FinDummy<_>>)
+        )
     }};
     (@entry scope($scope:expr), $inst:expr, finalizer = $fin:expr $(,)?) => {{
-        $crate::macros_utils::sync::make_entry($scope, $inst, None, Some($fin))
+        $crate::macros_utils::types::RegistryOrEntry::Entry($crate::macros_utils::sync::make_entry($scope, $inst, None, Some($fin)))
     }};
     (@entry scope($scope:expr), $inst:expr, config = $cfg:expr, finalizer = $fin:expr $(,)?) => {{
-        $crate::macros_utils::sync::make_entry($scope, $inst, Some($cfg), Some($fin))
+        $crate::macros_utils::types::RegistryOrEntry::Entry($crate::macros_utils::sync::make_entry($scope, $inst, Some($cfg), Some($fin)))
     }};
     (@entry scope($scope:expr), $inst:expr, finalizer = $fin:expr, config = $cfg:expr $(,)?) => {{
-        $crate::macros_utils::sync::make_entry($scope, $inst, Some($cfg), Some($fin))
+        $crate::macros_utils::types::RegistryOrEntry::Entry($crate::macros_utils::sync::make_entry($scope, $inst, Some($cfg), Some($fin)))
     }};
 }
 

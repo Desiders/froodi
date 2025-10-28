@@ -4,32 +4,52 @@ use core::{future::Future, pin::Pin};
 use crate::{
     any::TypeInfo,
     async_impl::{
+        self,
         finalizer::boxed_finalizer_factory,
         instantiator::{boxed_instantiator, Instantiator},
         registry::InstantiatorData,
-        Finalizer, Registry,
+        Finalizer, RegistryWithSync,
     },
     dependency_resolver::DependencyResolver,
+    macros_utils::types::{RegistryKind, RegistryKindOrEntry},
     utils::{
         hlist,
         thread_safety::{SendSafety, SyncSafety},
     },
-    Config, InstantiateErrorKind, ResolveErrorKind, Scope, Scopes,
+    Config, InstantiateErrorKind, Registry, ResolveErrorKind, Scope, Scopes,
 };
 
 #[inline]
 #[must_use]
 #[doc(hidden)]
-pub fn build_registry<H, S, const N: usize>((_, scope_entries): (S, H)) -> Registry
+pub fn build_registry<H, S, const N: usize>((_, iterable): (S, H)) -> RegistryWithSync
 where
     S: Scope + Scopes<N, Scope = S>,
-    H: hlist::IntoIterator<(TypeInfo, InstantiatorData)>,
+    H: hlist::IntoIterator<RegistryKindOrEntry>,
 {
     let mut entries = BTreeMap::new();
-    for (type_info, data) in scope_entries.into_iter() {
-        entries.insert(type_info, data);
+    let mut sync_entries = BTreeMap::new();
+    for registry_kind_or_entry in iterable.into_iter() {
+        match registry_kind_or_entry {
+            RegistryKindOrEntry::Kind(RegistryKind::Sync(registry)) => {
+                sync_entries.extend(registry.entries);
+            }
+            RegistryKindOrEntry::Kind(RegistryKind::Async(registry)) => {
+                entries.extend(registry.entries);
+            }
+            RegistryKindOrEntry::Kind(RegistryKind::AsyncWithSync(RegistryWithSync { registry, sync })) => {
+                entries.extend(registry.entries);
+                sync_entries.extend(sync.entries);
+            }
+            RegistryKindOrEntry::Entry((key, value)) => {
+                entries.insert(key, value);
+            }
+        }
     }
-    Registry::new::<S, S, N>(entries)
+    RegistryWithSync {
+        registry: async_impl::Registry::new::<S, S, N>(entries),
+        sync: Registry::new::<S, S, N>(sync_entries),
+    }
 }
 
 #[inline]

@@ -5,6 +5,7 @@ use crate::{
     dependency_resolver::DependencyResolver,
     finalizer::boxed_finalizer_factory,
     instantiator::{boxed_instantiator, Instantiator},
+    macros_utils::types::RegistryOrEntry,
     registry::InstantiatorData,
     utils::{
         hlist,
@@ -16,14 +17,21 @@ use crate::{
 #[inline]
 #[must_use]
 #[doc(hidden)]
-pub fn build_registry<H, S, const N: usize>((_, scope_entries): (S, H)) -> Registry
+pub fn build_registry<H, S, const N: usize>((_, iterable): (S, H)) -> Registry
 where
     S: Scope + Scopes<N, Scope = S>,
-    H: hlist::IntoIterator<(TypeInfo, InstantiatorData)>,
+    H: hlist::IntoIterator<RegistryOrEntry>,
 {
     let mut entries = BTreeMap::new();
-    for (type_info, data) in scope_entries.into_iter() {
-        entries.insert(type_info, data);
+    for registry_or_entry in iterable.into_iter() {
+        match registry_or_entry {
+            RegistryOrEntry::Registry(registry) => {
+                entries.extend(registry.entries);
+            }
+            RegistryOrEntry::Entry((key, value)) => {
+                entries.insert(key, value);
+            }
+        }
     }
     Registry::new::<S, S, N>(entries)
 }
