@@ -699,7 +699,7 @@ impl ContainerInner {
 impl Drop for ContainerInner {
     fn drop(&mut self) {
         self.close();
-        debug!("Container closed on drop");
+        debug!("Container with scope {:?} closed on drop", self.scope_data);
     }
 }
 
