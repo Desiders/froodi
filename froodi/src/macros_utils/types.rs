@@ -1,4 +1,4 @@
-use crate::{any::TypeInfo, async_impl::RegistryWithSync, registry::InstantiatorData, Registry};
+use crate::{any::TypeInfo, registry::InstantiatorData, Registry};
 
 pub enum RegistryOrEntry {
     Registry(Registry),
@@ -7,10 +7,10 @@ pub enum RegistryOrEntry {
 
 #[cfg(feature = "async")]
 mod async_impl {
-    use super::{Registry, RegistryWithSync};
+    use super::Registry;
     use crate::{
         any::TypeInfo,
-        async_impl::{self, registry::InstantiatorData},
+        async_impl::{self, registry::InstantiatorData, RegistryWithSync},
     };
 
     pub enum RegistryKind {
