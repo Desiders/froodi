@@ -8,6 +8,7 @@ use dptree::{
 #[cfg(feature = "async")]
 use crate::async_impl::Container as AsyncContainer;
 use crate::{
+    any::TypeInfo,
     dependency_resolver::DependencyResolver,
     Container,
     DefaultScope::{self, Request as RequestScope},
@@ -24,7 +25,9 @@ impl<T: Send + Sync + 'static> DependencyResolver for MapInject<T> {
         let map = container.get::<DependencyMap>()?;
         match map.try_get::<T>() {
             Some(val) => Ok(Self(val)),
-            None => Err(Self::Error::NoInstantiator),
+            None => Err(Self::Error::NoInstantiator {
+                type_info: TypeInfo::of::<T>(),
+            }),
         }
     }
 
@@ -33,7 +36,9 @@ impl<T: Send + Sync + 'static> DependencyResolver for MapInject<T> {
         let map = container.get::<DependencyMap>().await?;
         match map.try_get::<T>() {
             Some(val) => Ok(Self(val)),
-            None => Err(Self::Error::NoInstantiator),
+            None => Err(Self::Error::NoInstantiator {
+                type_info: TypeInfo::of::<T>(),
+            }),
         }
     }
 }

@@ -5,8 +5,8 @@ use crate::{any::TypeInfo, scope::ScopeData};
 
 #[derive(thiserror::Error, Debug)]
 pub enum ResolveErrorKind {
-    #[error("Instantiator not found in registry")]
-    NoInstantiator,
+    #[error("Instantiator for {type_info:?} not found in registry")]
+    NoInstantiator { type_info: TypeInfo },
     #[error(
         "\
         Instantiator no accessible. \

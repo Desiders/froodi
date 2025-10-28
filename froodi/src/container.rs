@@ -156,7 +156,7 @@ impl Container {
             ..
         }) = self.inner.registry.get(&type_info)
         else {
-            let err = ResolveErrorKind::NoInstantiator;
+            let err = ResolveErrorKind::NoInstantiator { type_info };
             error!("{}", err);
             return Err(err);
         };
@@ -245,7 +245,7 @@ impl Container {
             instantiator, scope_data, ..
         }) = self.inner.registry.get(&type_info)
         else {
-            let err = ResolveErrorKind::NoInstantiator;
+            let err = ResolveErrorKind::NoInstantiator { type_info };
             error!("{}", err);
             return Err(err);
         };
