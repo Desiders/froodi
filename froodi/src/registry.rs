@@ -265,12 +265,15 @@ macro_rules! registry {
     (provide($scope:expr, $($entry:tt)+) $(,)?) => {{
         $crate::macros_utils::sync::build_registry(($scope, $crate::registry_internal! { provide($scope, $($entry)+) }))
     }};
-    (extend($registry:expr $(, $registries:expr),* $(,)?) $(,)?) => {{
+    (extend($registry:expr $(, $($registries:expr),+ )? $(,)?) $(,)?) => {{
         #[allow(unused_mut)]
-        let mut registry = $registry as $crate::Registry;
+        let mut registry: $crate::Registry = $registry;
         $(
-            registry = $crate::utils::Merge::merge(registry, $registries);
-        )*
+            $(
+                let registry_to_merge: $crate::Registry = $registries;
+                registry = $crate::utils::Merge::merge(registry, registry_to_merge);
+            )+
+        )?
         registry
     }};
 }
@@ -296,12 +299,15 @@ macro_rules! registry_internal {
     (provide($scope:expr, $($entry:tt)+) $(,)?) => {{
         $crate::registry_internal! { @entries_with_scope provide($scope, $($entry)*) }
     }};
-    (extend($registry:expr $(, $registries:expr),* $(,)?) $(,)?) => {{
+    (extend($registry:expr $(, $($registries:expr),+ )? $(,)?) $(,)?) => {{
         #[allow(unused_mut)]
-        let mut registry = $registry as $crate::Registry;
+        let mut registry: $crate::Registry = $registry;
         $(
-            registry = $crate::utils::Merge::merge(registry, $registries);
-        )*
+            $(
+                let registry_to_merge: $crate::Registry = $registries;
+                registry = $crate::utils::Merge::merge(registry, registry_to_merge);
+            )+
+        )?
         $crate::macros_utils::types::RegistryOrEntry::Registry(registry)
     }};
 
