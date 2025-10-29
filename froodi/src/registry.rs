@@ -267,11 +267,11 @@ macro_rules! registry {
     }};
     (extend($registry:expr $(, $registries:expr),* $(,)?) $(,)?) => {{
         #[allow(unused_mut)]
-        let mut registry = $registry;
+        let mut registry = $registry as $crate::Registry;
         $(
             registry = $crate::utils::Merge::merge(registry, $registries);
         )*
-        registry as $crate::Registry
+        registry
     }};
 }
 
@@ -298,7 +298,7 @@ macro_rules! registry_internal {
     }};
     (extend($registry:expr $(, $registries:expr),* $(,)?) $(,)?) => {{
         #[allow(unused_mut)]
-        let mut registry = $registry;
+        let mut registry = $registry as $crate::Registry;
         $(
             registry = $crate::utils::Merge::merge(registry, $registries);
         )*

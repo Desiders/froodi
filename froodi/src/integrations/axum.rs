@@ -513,11 +513,11 @@ mod tests {
             scope(Request) [
                 provide(async |Inject(cfg): Inject<Config>| Ok(cfg.num + 1)),
             ],
-            sync = registry! {
+            extend(registry! {
                 scope(App) [
                     provide(|| Ok(Config { num: 1 })),
                 ],
-            }
+            })
         });
 
         let router = Router::new().route("/", get(handler));
@@ -576,11 +576,11 @@ mod tests {
             scope(Session) [
                 provide(async |Inject(cfg): Inject<Config>| Ok(cfg.num + 1)),
             ],
-            sync = registry! {
+            extend(registry! {
                 scope(App) [
                     provide(|| Ok(Config { num: 1 })),
                 ],
-            }
+            })
         });
 
         let router = Router::new().route("/", any(ws_upgrade));

@@ -66,10 +66,20 @@ impl Registry {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct RegistryWithSync {
     pub registry: Registry,
     pub sync: SyncRegistry,
+}
+
+#[allow(clippy::default_trait_access)]
+impl From<Registry> for RegistryWithSync {
+    fn from(registry: Registry) -> Self {
+        Self {
+            registry,
+            sync: Default::default(),
+        }
+    }
 }
 
 impl Registry {
@@ -220,7 +230,7 @@ impl Registry {
 /// };
 /// ```
 ///
-/// ### 6. Using `extend` standalone
+/// ### 6. Single `extend`
 /// ```rust
 /// use froodi::{async_registry, DefaultScope::*};
 ///
@@ -229,9 +239,19 @@ impl Registry {
 /// };
 /// ```
 ///
-/// ### 7. Using `extend` together with a combination of `scope` and `provide`
+/// ### 7. Multiple `extend`
 /// ```rust
-/// use froodi::{async_registry, InstantiateErrorKind, DefaultScope::*};
+/// use froodi::{registry, async_registry, DefaultScope::*};
+///
+/// async_registry! {
+///     extend(async_registry!(), registry!()),
+///     extend(registry!(), async_registry!()),
+/// };
+/// ```
+///
+/// ### 8. Using `extend` together with a combination of `scope` and `provide`
+/// ```rust
+/// use froodi::{registry, async_registry, InstantiateErrorKind, DefaultScope::*};
 ///
 /// async fn inst() -> Result<(), InstantiateErrorKind> {
 ///     Ok(())
@@ -240,35 +260,17 @@ impl Registry {
 /// async_registry! {
 ///     scope(App) [ provide(inst) ],
 ///     provide(Session, inst),
-///     extend(async_registry!(), async_registry!()),
+///     extend(async_registry!(), registry!()),
 /// };
 /// ```
+/// **Attention**: `extend` must be the last macro invocation.
 ///
-/// ### 8. Empty macro usage
+/// ### 9. Empty macro usage
 /// ```rust
 /// use froodi::async_registry;
 ///
 /// let registry = async_registry!();
 /// ```
-/// Creates an asynchronous registry with default entries.
-///
-/// ### 9. Using `sync`
-/// ```rust
-/// use froodi::{async_registry, registry, InstantiateErrorKind, DefaultScope::*};
-///
-/// async fn inst() -> Result<(), InstantiateErrorKind> {
-///     Ok(())
-/// }
-///
-/// async_registry! {
-///     scope(App) [ provide(inst) ],
-///     provide(Session, inst),
-///     extend(async_registry!(), async_registry!()),
-///     sync = registry!(),
-/// };
-/// ```
-/// The `sync` keyword allows linking an existing **synchronous registry** to the asynchronous one.
-/// Only one `sync` container can be specified, and it must appear **at the end** of the macro.
 #[macro_export]
 macro_rules! async_registry {
     () => {{
@@ -278,7 +280,6 @@ macro_rules! async_registry {
         }
     }};
     (scope($scope:expr) [ $($entries:tt)+ ], $($rest:tt)+) => {{
-
         $crate::utils::Merge::merge(
             $crate::macros_utils::async_impl::build_registry(($scope, $crate::async_registry_internal! { scope($scope) [ $($entries)+ ] })),
             $crate::async_registry_internal! { $($rest)+ }
@@ -296,27 +297,25 @@ macro_rules! async_registry {
     (provide($scope:expr, $($entry:tt)+) $(,)?) => {{
         $crate::macros_utils::async_impl::build_registry(($scope, $crate::async_registry_internal! { provide($scope, $($entry)+) }))
     }};
-    (extend($registry:expr $(, $registries:expr),* $(,)?), $($rest:tt)+) => {{
-        #[allow(unused_mut)]
-        let mut registry = $registry;
-        $(
-            registry = $crate::utils::Merge::merge(registry, $registries);
-        )*
-        $crate::utils::Merge::merge(registry, $crate::async_registry! { $($rest)+ }) as $crate::async_impl::RegistryWithSync
-    }};
-    (extend($registry:expr $(, $registries:expr),* $(,)?) $(,)?) => {{
-        #[allow(unused_mut)]
-        let mut registry = $registry;
-        $(
-            registry = $crate::utils::Merge::merge(registry, $registries);
-        )*
-        registry as $crate::async_impl::RegistryWithSync
-    }};
-    (sync = $sync_registry:expr $(,)?) => {{
-        $crate::async_impl::RegistryWithSync {
+    (extend($($registries:expr),+ $(,)?), $($rest:tt)+) => {{
+        let mut registry = $crate::async_impl::RegistryWithSync {
             registry: $crate::async_impl::Registry::new_with_default_entries(),
-            sync: $sync_registry,
-        }
+            sync: $crate::Registry::new_with_default_entries(),
+        };
+        $(
+            registry = $crate::utils::Merge::merge(registry, $registries);
+        )+
+        $crate::utils::Merge::merge(registry, $crate::async_registry! { $($rest)+ })
+    }};
+    (extend($($registries:expr),+ $(,)?) $(,)?) => {{
+        let mut registry = $crate::async_impl::RegistryWithSync {
+            registry: $crate::async_impl::Registry::new_with_default_entries(),
+            sync: $crate::Registry::new_with_default_entries(),
+        };
+        $(
+            registry = $crate::utils::Merge::merge(registry, $registries);
+        )+
+        registry
     }};
 }
 
@@ -341,32 +340,21 @@ macro_rules! async_registry_internal {
     (provide($scope:expr, $($entry:tt)+) $(,)?) => {{
         $crate::async_registry_internal! { @entries_with_scope provide($scope, $($entry)*) }
     }};
-    (extend($registry:expr $(, $registries:expr),* $(,)?), $($rest:tt)+) => {{
-        #[allow(unused_mut)]
-        let mut registry = $registry;
+    (extend($($registries:expr),+ $(,)?), $($rest:tt)+) => {{
+        let mut registry_kind = $crate::macros_utils::types::RegistryKind::AsyncWithSync(Default::default());
         $(
-            registry = $crate::utils::Merge::merge(registry, $registries);
-        )*
+            registry_kind = $crate::utils::Merge::merge(registry_kind, $registries);
+        )+
         $crate::macros_utils::types::RegistryKindOrEntry::Kind(
-            $crate::macros_utils::types::RegistryKind::AsyncWithSync(
-                $crate::utils::Merge::merge(registry, $crate::async_registry_internal! { $($rest)+ })
-            )
+            $crate::utils::Merge::merge(registry_kind, $crate::async_registry_internal! { $($rest)+ })
         )
     }};
-    (extend($registry:expr $(, $registries:expr),* $(,)?) $(,)?) => {{
-        #[allow(unused_mut)]
-        let mut registry = $registry;
+    (extend($($registries:expr),+ $(,)?) $(,)?) => {{
+        let mut registry_kind = $crate::macros_utils::types::RegistryKind::AsyncWithSync(Default::default());
         $(
-            registry = $crate::utils::Merge::merge(registry, $registries);
-        )*
-        $crate::macros_utils::types::RegistryKindOrEntry::Kind(
-            $crate::macros_utils::types::RegistryKind::AsyncWithSync(registry)
-        )
-    }};
-    (sync = $sync_registry:expr $(,)?) => {{
-        $crate::macros_utils::types::RegistryKindOrEntry::Kind(
-            $crate::macros_utils::types::RegistryKind::Sync($sync_registry)
-        )
+            registry_kind = $crate::utils::Merge::merge(registry_kind, $registries);
+        )+
+        $crate::macros_utils::types::RegistryKindOrEntry::Kind(registry_kind)
     }};
 
     (@entries_with_scope $( provide($scope:expr, $($entry:tt)+) ),+ $(,)?) => {{
@@ -775,24 +763,6 @@ mod tests {
 
     #[test]
     #[traced_test]
-    fn test_registry_with_sync() {
-        let RegistryWithSync { registry, sync } = async_registry! {
-            provide(DefaultScope::App, inst_a),
-            provide(DefaultScope::App, inst_b),
-            sync = registry! {
-                scope(DefaultScope::Session) [
-                    provide(|| Ok(((), ()))),
-                ],
-                provide(DefaultScope::App, || Ok(((), (), ()))),
-            },
-        };
-
-        assert_eq!(registry.entries.len(), 3);
-        assert_eq!(sync.entries.len(), 3);
-    }
-
-    #[test]
-    #[traced_test]
     fn test_registry_with_sync_and_extend() {
         let registry = async_registry! {
             scope(DefaultScope::App) [
@@ -804,11 +774,16 @@ mod tests {
                         provide(inst_b),
                     ],
                 },
+                registry! {
+                    provide(DefaultScope::Session, || Ok(((), ()))),
+                },
             ),
-            sync = registry! {},
+            extend(registry! {
+                provide(DefaultScope::App, || Ok(((), (), ()))),
+            }),
         };
 
         assert_eq!(registry.registry.entries.len(), 3);
-        assert_eq!(registry.sync.entries.len(), 1);
+        assert_eq!(registry.sync.entries.len(), 3);
     }
 }

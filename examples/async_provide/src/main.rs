@@ -46,10 +46,10 @@ fn init_container(config: Config) -> Container {
 
     Container::new(async_registry! {
         provide(Request, create_user::<PostgresUserRepo>),
-        sync = registry! {
+        extend(registry! {
             provide(App, instance(config)),
             provide(Request, |_config: Inject<Config>| Ok(PostgresUserRepo))
-        }
+        })
     })
 }
 

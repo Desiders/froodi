@@ -22,7 +22,7 @@ impl Eq for TypeInfo {}
 
 impl PartialOrd for TypeInfo {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        self.id.partial_cmp(&other.id)
+        Some(self.cmp(other))
     }
 }
 
