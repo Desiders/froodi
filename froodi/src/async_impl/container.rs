@@ -958,7 +958,7 @@ mod tests {
     #[traced_test]
     async fn test_transient_get() {
         let app_container = Container::new(async_registry! {
-            sync = registry! {
+            extend(registry! {
                 scope(App) [
                     provide(|| Ok(RequestTransient1)),
                 ],
@@ -968,7 +968,7 @@ mod tests {
                         Ok(RequestTransient3(req_1, req_2))
                     }),
                 ]
-            },
+            })
         });
         let request_container = app_container.clone().enter().with_scope(Request).build().unwrap();
 
@@ -1197,7 +1197,7 @@ mod tests {
                     }
                 ),
             ],
-            sync = registry! {
+            extend(registry! {
                 scope(Runtime) [
                     provide(
                         || Ok(()),
@@ -1231,7 +1231,7 @@ mod tests {
                         }
                     ),
                 ],
-            },
+            }),
         });
         let session_container = app_container.clone().enter().with_scope(Session).build().unwrap();
         let request_container = app_container.clone().enter().with_scope(Request).build().unwrap();
@@ -1285,7 +1285,7 @@ mod tests {
                     }
                 ),
             ],
-            sync = registry! {
+            extend(registry! {
                 scope(Runtime) [
                     provide(
                         || Ok(()),
@@ -1352,7 +1352,7 @@ mod tests {
                         }
                     ),
                 ],
-            }
+            })
         });
         let request_container = app_container.clone().enter().with_scope(Request).build().unwrap();
 
@@ -1445,7 +1445,7 @@ mod tests {
         }
 
         let app_container = Container::new(async_registry! {
-            sync = registry! {
+            extend(registry! {
                 scope(App) [
                     provide(
                         || Ok(Type1),
@@ -1478,7 +1478,7 @@ mod tests {
                         }
                     ),
                 ]
-            },
+            }),
         });
         let request_container = app_container.enter_build().unwrap();
         DropWrapper {
