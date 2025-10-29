@@ -1,6 +1,6 @@
 [package]
 name = "froodi"
-version = "1.0.0-alpha.2"
+version = "1.0.0-beta.11"
 edition = "2021"
 authors = ["Desiders"]
 license = "Apache-2.0"
