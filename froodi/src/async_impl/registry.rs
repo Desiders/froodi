@@ -230,7 +230,7 @@ impl Registry {
 /// };
 /// ```
 ///
-/// ### 6. Single `extend`
+/// ### 6.Using `extend` standalone
 /// ```rust
 /// use froodi::{async_registry, DefaultScope::*};
 ///
@@ -239,13 +239,12 @@ impl Registry {
 /// };
 /// ```
 ///
-/// ### 7. Multiple `extend`
+/// ### 7. Using `extend` with different registries
 /// ```rust
 /// use froodi::{registry, async_registry, DefaultScope::*};
 ///
 /// async_registry! {
 ///     extend(async_registry!(), registry!()),
-///     extend(registry!(), async_registry!()),
 /// };
 /// ```
 ///
@@ -279,13 +278,13 @@ macro_rules! async_registry {
             sync: $crate::Registry::new_with_default_entries(),
         }
     }};
-    (scope($scope:expr) [ $($entries:tt)+ ], $($rest:tt)+) => {{
+    (scope($scope:expr $(,)?) [ $($entries:tt)+ ], $($rest:tt)+) => {{
         $crate::utils::Merge::merge(
             $crate::macros_utils::async_impl::build_registry(($scope, $crate::async_registry_internal! { scope($scope) [ $($entries)+ ] })),
             $crate::async_registry_internal! { $($rest)+ }
         )
     }};
-    (scope($scope:expr) [ $($entries:tt)+ ] $(,)?) => {{
+    (scope($scope:expr $(,)?) [ $($entries:tt)+ ] $(,)?) => {{
         $crate::macros_utils::async_impl::build_registry(($scope, $crate::async_registry_internal! { scope($scope) [ $($entries)+ ] }))
     }};
     (provide($scope:expr, $($entry:tt)+), $($rest:tt)+) => {{
@@ -297,16 +296,6 @@ macro_rules! async_registry {
     (provide($scope:expr, $($entry:tt)+) $(,)?) => {{
         $crate::macros_utils::async_impl::build_registry(($scope, $crate::async_registry_internal! { provide($scope, $($entry)+) }))
     }};
-    (extend($($registries:expr),+ $(,)?), $($rest:tt)+) => {{
-        let mut registry = $crate::async_impl::RegistryWithSync {
-            registry: $crate::async_impl::Registry::new_with_default_entries(),
-            sync: $crate::Registry::new_with_default_entries(),
-        };
-        $(
-            registry = $crate::utils::Merge::merge(registry, $registries);
-        )+
-        $crate::utils::Merge::merge(registry, $crate::async_registry! { $($rest)+ })
-    }};
     (extend($($registries:expr),+ $(,)?) $(,)?) => {{
         let mut registry = $crate::async_impl::RegistryWithSync {
             registry: $crate::async_impl::Registry::new_with_default_entries(),
@@ -317,20 +306,59 @@ macro_rules! async_registry {
         )+
         registry
     }};
+
+    (scope() $($rest:tt)*) => {
+        compile_error!("`scope` block must have a scope")
+    };
+    (scope($scope:expr) [] $($rest:tt)*) => {
+        compile_error!("`scope` block must contain at least one entry")
+    };
+    (scope($scope:expr $(,)?) [ $($entries:tt)* ] $($rest:tt)+) => {
+        compile_error!("Missing comma after `scope` block")
+    };
+    (provide() $($rest:tt)*) => {
+        compile_error!("`provide` must have a scope and an instantiator")
+    };
+    (provide($scope:expr $(,)?) $($rest:tt)*) => {
+        compile_error!("`provide` must include an instantiator after the scope")
+    };
+    (provide(, $($entity:tt)+) $($rest:tt)*) => {
+        compile_error!("`provide` must include a scope before the instantiator")
+    };
+    (provide($($entry:tt)*) $($rest:tt)+) => {
+        compile_error!("Missing comma after `provide` block")
+    };
+    (extend() $($rest:tt)*) => {
+        compile_error!("`extend` macro must be called with at least one argument")
+    };
+    (extend($($entry:tt)*) $($rest:tt)+) => {
+        compile_error!("Missing comma after/in `extend` block or unexpected comma in the block")
+    };
+    (,) => {
+        compile_error!("Duplicate or unexpected comma")
+    };
+    ($($rest:tt)*) => {
+        compile_error!(concat!("Unknown syntax: ", stringify!($($rest)*)))
+    };
 }
 
 #[macro_export]
 #[doc(hidden)]
 macro_rules! async_registry_internal {
-    (scope($scope:expr) [ $($entries:tt)+ ], $($rest:tt)+) => {{
+    (scope($scope:expr $(,)?) [ $($entries:tt)+ ], $($rest:tt)+) => {{
         $crate::macros_utils::aliases::hlist![
             $crate::async_registry_internal! { @entries_in_scope scope($scope) [ $($entries)+ ] },
             $crate::async_registry_internal! { $($rest)+ }
         ]
     }};
-    (scope($scope:expr) [ $($entries:tt)+ ] $(,)?) => {{
+    (scope($scope:expr $(,)?) [ $($entries:tt)+ ] $(,)?) => {{
         $crate::async_registry_internal! { @entries_in_scope scope($scope) [ $($entries)+ ] }
     }};
+
+    (provide($scope:expr,, $($entry:tt)*) $($rest:tt)*) => {
+        compile_error!("Unexpected double comma after scope in `provide` entry")
+    };
+
     (provide($scope:expr, $($entry:tt)+), $($rest:tt)+) => {{
         $crate::macros_utils::aliases::hlist![
             $crate::async_registry_internal! { @entries_with_scope provide($scope, $($entry)+) },
@@ -339,15 +367,6 @@ macro_rules! async_registry_internal {
     }};
     (provide($scope:expr, $($entry:tt)+) $(,)?) => {{
         $crate::async_registry_internal! { @entries_with_scope provide($scope, $($entry)*) }
-    }};
-    (extend($($registries:expr),+ $(,)?), $($rest:tt)+) => {{
-        let mut registry_kind = $crate::macros_utils::types::RegistryKind::AsyncWithSync(Default::default());
-        $(
-            registry_kind = $crate::utils::Merge::merge(registry_kind, $registries);
-        )+
-        $crate::macros_utils::types::RegistryKindOrEntry::Kind(
-            $crate::utils::Merge::merge(registry_kind, $crate::async_registry_internal! { $($rest)+ })
-        )
     }};
     (extend($($registries:expr),+ $(,)?) $(,)?) => {{
         let mut registry_kind = $crate::macros_utils::types::RegistryKind::AsyncWithSync(Default::default());
@@ -382,6 +401,65 @@ macro_rules! async_registry_internal {
     (@entry scope($scope:expr), $inst:expr, finalizer = $fin:expr, config = $cfg:expr $(,)?) => {{
         $crate::macros_utils::types::RegistryKindOrEntry::Entry($crate::macros_utils::async_impl::make_entry($scope, $inst, Some($cfg), Some($fin)))
     }};
+
+    (@entries_in_scope scope($scope:expr) [ $($entry:tt)+ ]) => {
+        compile_error!("`scope` block supports only non empty `provide` entries")
+    };
+    (@entry scope($scope:expr), $inst:expr,, $($rest:tt)*) => {
+        compile_error!("Unexpected double comma in `provide` entry")
+    };
+    (@entry scope($scope:expr), $inst:expr, config = $cfg:expr,, $($rest:tt)*) => {
+        compile_error!("Unexpected double comma after `config` in `provide` entry")
+    };
+    (@entry scope($scope:expr), $inst:expr, finalizer = $fin:expr,, $($rest:tt)*) => {
+        compile_error!("Unexpected double comma after `finalizer` in `provide` entry")
+    };
+    (@entry scope($scope:expr), $inst:expr, config = $cfg:expr, finalizer = $fin:expr,, $($rest:tt)*) => {
+        compile_error!("Unexpected double comma after entry arguments")
+    };
+    (@entry scope($scope:expr), $inst:expr, finalizer = $fin:expr, config = $cfg:expr,, $($rest:tt)*) => {
+        compile_error!("Unexpected double comma after entry arguments")
+    };
+    (@entry scope($scope:expr), $inst:expr, $($rest:tt)*) => {
+        compile_error!(concat!("One of parameter in `provide` entry is unexpected: ", stringify!($($rest)*)))
+    };
+
+    (scope() $($rest:tt)*) => {
+        compile_error!("`scope` block must have a scope")
+    };
+    (scope($scope:expr) [] $($rest:tt)*) => {
+        compile_error!("`scope` block must contain at least one entry")
+    };
+    (scope($scope:expr $(,)?) [ $($entries:tt)* ] $($rest:tt)+) => {
+        compile_error!("Missing comma after `scope` block")
+    };
+    (provide() $($rest:tt)*) => {
+        compile_error!("`provide` must have a scope and an instantiator")
+    };
+    (provide($scope:expr $(,)?) $($rest:tt)*) => {
+        compile_error!("`provide` must include an instantiator after the scope")
+    };
+    (provide(, $($entity:tt)+) $($rest:tt)*) => {
+        compile_error!("`provide` must include a scope before the instantiator")
+    };
+    (provide($($entry:tt)*) $($rest:tt)+) => {
+        compile_error!("Missing comma after `provide` block")
+    };
+    (extend($($entry:tt)*), $($rest:tt)+) => {
+        compile_error!("`extend` macro must be at the last macro invocation")
+    };
+    (extend() $($rest:tt)*) => {
+        compile_error!("`extend` macro must be called with at least one argument")
+    };
+    (extend($($entry:tt)*) $($rest:tt)+) => {
+        compile_error!("Missing comma after/in `extend` block or unexpected comma in the block")
+    };
+    (,) => {
+        compile_error!("Duplicate or unexpected comma")
+    };
+    ($($rest:tt)*) => {
+        compile_error!(concat!("Unknown syntax: ", stringify!($($rest)*)))
+    };
 }
 
 #[cfg(test)]
@@ -746,44 +824,30 @@ mod tests {
                     extend(
                         async_registry! {
                             scope(DefaultScope::Session) [provide(inst_e)],
+                            extend(registry! {
+                                provide(DefaultScope::App, || Ok(((), (), ()))),
+                                extend(
+                                    registry! {
+                                        extend(registry! {})
+                                    },
+                                    registry! {},
+                                    registry! {},
+                                ),
+                            }),
                         },
                     ),
                 },
-            ),
-            extend(
                 async_registry! {
                     scope(DefaultScope::Session) [provide(inst_f)],
+                },
+                registry! {
+                    provide(DefaultScope::Session, || Ok(((), ()))),
+                    extend(registry! {}, registry! {}, registry! {}),
                 },
             ),
         };
 
         assert_eq!(registry.entries.len(), 7);
-        assert_eq!(sync.entries.len(), 1);
-    }
-
-    #[test]
-    #[traced_test]
-    fn test_registry_with_sync_and_extend() {
-        let registry = async_registry! {
-            scope(DefaultScope::App) [
-                provide(inst_a),
-            ],
-            extend(
-                async_registry! {
-                    scope(DefaultScope::Session) [
-                        provide(inst_b),
-                    ],
-                },
-                registry! {
-                    provide(DefaultScope::Session, || Ok(((), ()))),
-                },
-            ),
-            extend(registry! {
-                provide(DefaultScope::App, || Ok(((), (), ()))),
-            }),
-        };
-
-        assert_eq!(registry.registry.entries.len(), 3);
-        assert_eq!(registry.sync.entries.len(), 3);
+        assert_eq!(sync.entries.len(), 3);
     }
 }
