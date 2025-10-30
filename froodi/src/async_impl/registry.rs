@@ -72,6 +72,13 @@ pub struct RegistryWithSync {
     pub sync: SyncRegistry,
 }
 
+impl RegistryWithSync {
+    pub fn dfs_detect(&self) -> Result<(), DFSErrorKind> {
+        self.registry.dfs_detect()?;
+        self.sync.dfs_detect()
+    }
+}
+
 #[allow(clippy::default_trait_access)]
 impl From<Registry> for RegistryWithSync {
     fn from(registry: Registry) -> Self {
@@ -279,22 +286,30 @@ macro_rules! async_registry {
         }
     }};
     (scope($scope:expr $(,)?) [ $($entries:tt)+ ], $($rest:tt)+) => {{
-        $crate::utils::Merge::merge(
+        let registry = $crate::utils::Merge::merge(
             $crate::macros_utils::async_impl::build_registry(($scope, $crate::async_registry_internal! { scope($scope) [ $($entries)+ ] })),
             $crate::async_registry_internal! { $($rest)+ }
-        )
+        );
+        registry.dfs_detect().unwrap();
+        registry
     }};
     (scope($scope:expr $(,)?) [ $($entries:tt)+ ] $(,)?) => {{
-        $crate::macros_utils::async_impl::build_registry(($scope, $crate::async_registry_internal! { scope($scope) [ $($entries)+ ] }))
+        let registry = $crate::macros_utils::async_impl::build_registry(($scope, $crate::async_registry_internal! { scope($scope) [ $($entries)+ ] }));
+        registry.dfs_detect().unwrap();
+        registry
     }};
     (provide($scope:expr, $($entry:tt)+), $($rest:tt)+) => {{
-        $crate::utils::Merge::merge(
+        let registry = $crate::utils::Merge::merge(
             $crate::macros_utils::async_impl::build_registry(($scope, $crate::async_registry_internal! { provide($scope, $($entry)+) })),
             $crate::async_registry_internal! { $($rest)+ }
-        )
+        );
+        registry.dfs_detect().unwrap();
+        registry
     }};
     (provide($scope:expr, $($entry:tt)+) $(,)?) => {{
-        $crate::macros_utils::async_impl::build_registry(($scope, $crate::async_registry_internal! { provide($scope, $($entry)+) }))
+        let registry = $crate::macros_utils::async_impl::build_registry(($scope, $crate::async_registry_internal! { provide($scope, $($entry)+) }));
+        registry.dfs_detect().unwrap();
+        registry
     }};
     (extend($($registries:expr),+ $(,)?) $(,)?) => {{
         let mut registry = $crate::async_impl::RegistryWithSync {
@@ -304,6 +319,7 @@ macro_rules! async_registry {
         $(
             registry = $crate::utils::Merge::merge(registry, $registries);
         )+
+        registry.dfs_detect().unwrap();
         registry
     }};
 
@@ -776,28 +792,26 @@ mod tests {
     }
 
     #[test]
+    #[should_panic]
     #[traced_test]
     fn test_registry_dfs_detect_single() {
         struct A;
 
-        let RegistryWithSync { registry, sync } = async_registry! {
+        async_registry! {
             scope(DefaultScope::App) [
                 provide(async |InjectTransient(_): InjectTransient<A>| Ok(A)),
             ],
         };
-        registry.dfs_detect().unwrap_err();
-
-        assert_eq!(registry.entries.len(), 2);
-        assert_eq!(sync.entries.len(), 1);
     }
 
     #[test]
+    #[should_panic]
     #[traced_test]
     fn test_registry_dfs_detect_many() {
         struct A;
         struct B;
 
-        let RegistryWithSync { registry, sync } = async_registry! {
+        async_registry! {
             scope(DefaultScope::App) [
                 provide(async |InjectTransient(_): InjectTransient<B>| Ok(A)),
             ],
@@ -805,10 +819,6 @@ mod tests {
                 provide(async |InjectTransient(_): InjectTransient<A>| Ok(B)),
             ],
         };
-        registry.dfs_detect().unwrap_err();
-
-        assert_eq!(registry.entries.len(), 3);
-        assert_eq!(sync.entries.len(), 1);
     }
 
     #[test]

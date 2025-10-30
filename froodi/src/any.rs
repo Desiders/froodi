@@ -76,6 +76,12 @@ impl TypeInfo {
         }
         self.name
     }
+
+    #[inline]
+    #[must_use]
+    pub(crate) fn short_name_without_path(&self) -> &'static str {
+        self.name.rsplit_once("::").map_or(self.name, |(_, name)| name)
+    }
 }
 
 pub(crate) type Map = BTreeMap<TypeInfo, RcAnyThreadSafety>;
