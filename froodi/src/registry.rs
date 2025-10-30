@@ -75,7 +75,7 @@ impl Registry {
         ScopeDataWithChildScopesData::new_with_sort(self.scopes_data.clone().into_iter().collect())
     }
 
-    pub(crate) fn dfs_detect(&self) -> Result<(), DFSErrorKind> {
+    pub fn dfs_detect(&self) -> Result<(), DFSErrorKind> {
         let mut visited = BTreeSet::new();
         let mut stack = Vec::new();
 
@@ -248,19 +248,25 @@ macro_rules! registry {
         $crate::Registry::new_with_default_entries()
     }};
     (scope($scope:expr $(,)?) [ $($entries:tt)+ ], $($rest:tt)+) => {{
-        $crate::utils::Merge::merge(
+        let registry = $crate::utils::Merge::merge(
             $crate::macros_utils::sync::build_registry(($scope, $crate::registry_internal! { scope($scope) [ $($entries)+ ] })),
             $crate::registry_internal! { $($rest)+ }
-        )
+        );
+        registry.dfs_detect().unwrap();
+        registry
     }};
     (scope($scope:expr $(,)?) [ $($entries:tt)+ ] $(,)?) => {{
-        $crate::macros_utils::sync::build_registry(($scope, $crate::registry_internal! { scope($scope) [ $($entries)+ ] }))
+        let registry = $crate::macros_utils::sync::build_registry(($scope, $crate::registry_internal! { scope($scope) [ $($entries)+ ] }));
+        registry.dfs_detect().unwrap();
+        registry
     }};
     (provide($scope:expr, $($entry:tt)+), $($rest:tt)+) => {{
-        $crate::utils::Merge::merge(
+        let registry = $crate::utils::Merge::merge(
             $crate::macros_utils::sync::build_registry(($scope, $crate::registry_internal! { provide($scope, $($entry)+) })),
             $crate::registry_internal! { $($rest)+ }
-        )
+        );
+        registry.dfs_detect().unwrap();
+        registry
     }};
     (provide($scope:expr, $($entry:tt)+) $(,)?) => {{
         $crate::macros_utils::sync::build_registry(($scope, $crate::registry_internal! { provide($scope, $($entry)+) }))
@@ -274,6 +280,7 @@ macro_rules! registry {
                 registry = $crate::utils::Merge::merge(registry, registry_to_merge);
             )+
         )?
+        registry.dfs_detect().unwrap();
         registry
     }};
 
@@ -760,27 +767,26 @@ mod tests {
     }
 
     #[test]
+    #[should_panic]
     #[traced_test]
     fn test_registry_dfs_detect_single() {
         struct A;
 
-        let registry = registry! {
+        registry! {
             scope(DefaultScope::App) [
                 provide(|InjectTransient(_): InjectTransient<A>| Ok(A)),
             ],
         };
-        registry.dfs_detect().unwrap_err();
-
-        assert_eq!(registry.entries.len(), 2);
     }
 
     #[test]
+    #[should_panic]
     #[traced_test]
     fn test_registry_dfs_detect_many() {
         struct A;
         struct B;
 
-        let registry = registry! {
+        registry! {
             scope(DefaultScope::App) [
                 provide(|InjectTransient(_): InjectTransient<B>| Ok(A)),
             ],
@@ -788,9 +794,6 @@ mod tests {
                 provide(|InjectTransient(_): InjectTransient<A>| Ok(B)),
             ],
         };
-        registry.dfs_detect().unwrap_err();
-
-        assert_eq!(registry.entries.len(), 3);
     }
 
     #[test]
