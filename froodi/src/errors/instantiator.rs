@@ -25,14 +25,14 @@ impl Debug for DFSErrorKind {
 impl Display for DFSErrorKind {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
-            DFSErrorKind::CyclicDependency {
-                graph: (type_info, type_infos),
-            } => {
-                write!(f, "Cyclic dependency detected: {}", type_info.short_name_without_path())?;
-                for type_info in type_infos {
-                    write!(f, " -> {} ({})", type_info.short_name_without_path(), type_info.short_name())?;
+            DFSErrorKind::CyclicDependency { graph } => {
+                let (type_info, rest) = graph;
+                let short_name = type_info.short_name_without_path();
+                write!(f, "Cyclic dependency detected:\n{} ", short_name)?;
+                for type_info in rest.iter() {
+                    write!(f, "\n↳ depends on {} ({})", type_info.short_name_without_path(), type_info.name)?;
                 }
-                write!(f, " -> {} ({})", type_info.short_name_without_path(), type_info.name)
+                writeln!(f, "\n ↳ depends on {} ({})", short_name, type_info.name)
             }
         }
     }
