@@ -247,13 +247,13 @@ macro_rules! registry {
     () => {{
         $crate::Registry::new_with_default_entries()
     }};
-    (scope($scope:expr) [ $($entries:tt)+ ], $($rest:tt)+) => {{
+    (scope($scope:expr $(,)?) [ $($entries:tt)+ ], $($rest:tt)+) => {{
         $crate::utils::Merge::merge(
             $crate::macros_utils::sync::build_registry(($scope, $crate::registry_internal! { scope($scope) [ $($entries)+ ] })),
             $crate::registry_internal! { $($rest)+ }
         )
     }};
-    (scope($scope:expr) [ $($entries:tt)+ ] $(,)?) => {{
+    (scope($scope:expr $(,)?) [ $($entries:tt)+ ] $(,)?) => {{
         $crate::macros_utils::sync::build_registry(($scope, $crate::registry_internal! { scope($scope) [ $($entries)+ ] }))
     }};
     (provide($scope:expr, $($entry:tt)+), $($rest:tt)+) => {{
@@ -276,20 +276,62 @@ macro_rules! registry {
         )?
         registry
     }};
+
+    (scope() $($rest:tt)*) => {
+        compile_error!("`scope` block must have a scope")
+    };
+    (scope($scope:expr) [] $($rest:tt)*) => {
+        compile_error!("`scope` block must contain at least one entry")
+    };
+    (scope($scope:expr $(,)?) [ $($entries:tt)* ] $($rest:tt)+) => {
+        compile_error!("Missing comma after `scope` block")
+    };
+    (provide() $($rest:tt)*) => {
+        compile_error!("`provide` must have a scope and an instantiator")
+    };
+    (provide($scope:expr $(,)?) $($rest:tt)*) => {
+        compile_error!("`provide` must include an instantiator after the scope")
+    };
+    (provide(, $($entity:tt)+) $($rest:tt)*) => {
+        compile_error!("`provide` must include a scope before the instantiator")
+    };
+    (provide($($entry:tt)*) $($rest:tt)+) => {
+        compile_error!("Missing comma after `provide` block")
+    };
+    (extend($($entry:tt)*), $($rest:tt)+) => {
+        compile_error!("`extend` macro must be at the last macro invocation")
+    };
+    (extend() $($rest:tt)*) => {
+        compile_error!("`extend` macro must be called with at least one argument")
+    };
+    (extend($($entry:tt)*) $($rest:tt)+) => {
+        compile_error!("Missing comma after/in `extend` block or unexpected comma in the block")
+    };
+    (,) => {
+        compile_error!("Duplicate or unexpected comma")
+    };
+    ($($rest:tt)*) => {
+        compile_error!(concat!("Unknown syntax: ", stringify!($($rest)*)))
+    };
 }
 
 #[macro_export]
 #[doc(hidden)]
 macro_rules! registry_internal {
-    (scope($scope:expr) [ $($entries:tt)+ ], $($rest:tt)+) => {{
+    (scope($scope:expr $(,)?) [ $($entries:tt)+ ], $($rest:tt)+) => {{
         $crate::macros_utils::aliases::hlist![
             $crate::registry_internal! { @entries_in_scope scope($scope) [ $($entries)+ ] },
             $crate::registry_internal! { $($rest)+ }
         ]
     }};
-    (scope($scope:expr) [ $($entries:tt)+ ] $(,)?) => {{
+    (scope($scope:expr $(,)?) [ $($entries:tt)+ ] $(,)?) => {{
         $crate::registry_internal! { @entries_in_scope scope($scope) [ $($entries)+ ] }
     }};
+
+    (provide($scope:expr,, $($entry:tt)*) $($rest:tt)*) => {
+        compile_error!("Unexpected double comma after scope in `provide` entry")
+    };
+
     (provide($scope:expr, $($entry:tt)+), $($rest:tt)+) => {{
         $crate::macros_utils::aliases::hlist![
             $crate::registry_internal! { @entries_with_scope provide($scope, $($entry)+) },
@@ -336,6 +378,65 @@ macro_rules! registry_internal {
     (@entry scope($scope:expr), $inst:expr, finalizer = $fin:expr, config = $cfg:expr $(,)?) => {{
         $crate::macros_utils::types::RegistryOrEntry::Entry($crate::macros_utils::sync::make_entry($scope, $inst, Some($cfg), Some($fin)))
     }};
+
+    (@entries_in_scope scope($scope:expr) [ $($entry:tt)+ ]) => {
+        compile_error!("`scope` block supports only non empty `provide` entries")
+    };
+    (@entry scope($scope:expr), $inst:expr,, $($rest:tt)*) => {
+        compile_error!("Unexpected double comma in `provide` entry")
+    };
+    (@entry scope($scope:expr), $inst:expr, config = $cfg:expr,, $($rest:tt)*) => {
+        compile_error!("Unexpected double comma after `config` in `provide` entry")
+    };
+    (@entry scope($scope:expr), $inst:expr, finalizer = $fin:expr,, $($rest:tt)*) => {
+        compile_error!("Unexpected double comma after `finalizer` in `provide` entry")
+    };
+    (@entry scope($scope:expr), $inst:expr, config = $cfg:expr, finalizer = $fin:expr,, $($rest:tt)*) => {
+        compile_error!("Unexpected double comma after entry arguments")
+    };
+    (@entry scope($scope:expr), $inst:expr, finalizer = $fin:expr, config = $cfg:expr,, $($rest:tt)*) => {
+        compile_error!("Unexpected double comma after entry arguments")
+    };
+    (@entry scope($scope:expr), $inst:expr, $($rest:tt)*) => {
+        compile_error!(concat!("One of parameter in `provide` entry is unexpected: ", stringify!($($rest)*)))
+    };
+
+    (scope() $($rest:tt)*) => {
+        compile_error!("`scope` block must have a scope")
+    };
+    (scope($scope:expr) [] $($rest:tt)*) => {
+        compile_error!("`scope` block must contain at least one entry")
+    };
+    (scope($scope:expr $(,)?) [ $($entries:tt)* ] $($rest:tt)+) => {
+        compile_error!("Missing comma after `scope` block")
+    };
+    (provide() $($rest:tt)*) => {
+        compile_error!("`provide` must have a scope and an instantiator")
+    };
+    (provide($scope:expr $(,)?) $($rest:tt)*) => {
+        compile_error!("`provide` must include an instantiator after the scope")
+    };
+    (provide(, $($entity:tt)+) $($rest:tt)*) => {
+        compile_error!("`provide` must include a scope before the instantiator")
+    };
+    (provide($($entry:tt)*) $($rest:tt)+) => {
+        compile_error!("Missing comma after `provide` block")
+    };
+    (extend($($entry:tt)*), $($rest:tt)+) => {
+        compile_error!("`extend` macro must be at the last macro invocation")
+    };
+    (extend() $($rest:tt)*) => {
+        compile_error!("`extend` macro must be called with at least one argument")
+    };
+    (extend($($entry:tt)*) $($rest:tt)+) => {
+        compile_error!("Missing comma after/in `extend` block or unexpected comma in the block")
+    };
+    (,) => {
+        compile_error!("Duplicate or unexpected comma")
+    };
+    ($($rest:tt)*) => {
+        compile_error!(concat!("Unknown syntax: ", stringify!($($rest)*)))
+    };
 }
 
 #[cfg(test)]
