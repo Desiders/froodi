@@ -8,11 +8,13 @@ Froodi is a lightweight, ergonomic Inversion of Control (IoC) container for Rust
 
 - **Scoping**: Any object can have a lifespan for the entire app, a single request, or even more fractionally
 - **Finalization**: Some dependencies, like database connections, need not only to be created but also carefully released. Many frameworks lack this essential feature.
+- **Modular registries**: You can register factories in different registries and combine them to avoid one large macros.
+- **Auto-Registration**: There way to use auto registration for factories
 - **Ergonomic**: Simple API
-- **Speed**: Dependency resolving as fast as the speed of light thanks to the Rust
-- **Integration**: The popular frameworks for building applications is supported out of the box (axum, dptree)
 - **Safe**: 100% safe Rust (no unsafe used)
 - **Thread safe**: Thread safety enabled by default (`thread_safe` feature) and can be disabled to use `Rc` instead of `Arc` and off `Send`/`Sync` requirements
+- **Speed**: Dependency resolving as fast as the speed of light thanks to the Rust
+- **Integration**: The popular frameworks for building applications is supported out of the box (axum, dptree)
 
 ## Community
 ### Telegram
