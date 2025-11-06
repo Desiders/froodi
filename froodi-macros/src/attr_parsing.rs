@@ -1,30 +1,31 @@
+use core::any;
 use quote::ToTokens;
 use syn::{
     parse::{Parse, ParseStream},
     Attribute, Token,
 };
 
-pub(crate) fn parse_parenthesized_attribute<K, T>(input: ParseStream<'_>, out: &mut Option<(K, T)>) -> syn::Result<()>
-where
-    K: Parse + ToTokens,
-    T: Parse,
-{
-    let kw = input.parse()?;
+// pub(crate) fn parse_parenthesized_attribute<K, T>(input: ParseStream<'_>, out: &mut Option<(K, T)>) -> syn::Result<()>
+// where
+//     K: Parse + ToTokens,
+//     T: Parse,
+// {
+//     let kw = input.parse()?;
 
-    let content;
-    syn::parenthesized!(content in input);
-    let inner = content.parse()?;
+//     let content;
+//     syn::parenthesized!(content in input);
+//     let inner = content.parse()?;
 
-    if out.is_some() {
-        let kw_name = std::any::type_name::<K>().split("::").last().unwrap();
-        let msg = format!("`{kw_name}` specified more than once");
-        return Err(syn::Error::new_spanned(kw, msg));
-    }
+//     if out.is_some() {
+//         let kw_name = std::any::type_name::<K>().split("::").last().unwrap();
+//         let msg = format!("`{kw_name}` specified more than once");
+//         return Err(syn::Error::new_spanned(kw, msg));
+//     }
 
-    *out = Some((kw, inner));
+//     *out = Some((kw, inner));
 
-    Ok(())
-}
+//     Ok(())
+// }
 
 pub(crate) fn parse_assignment_attribute<K, T>(input: ParseStream<'_>, out: &mut Option<(K, T)>) -> syn::Result<()>
 where
@@ -74,7 +75,7 @@ where
 {
     if let Some((kw, inner)) = b {
         if a.is_some() {
-            let kw_name = std::any::type_name::<K>().split("::").last().unwrap();
+            let kw_name = any::type_name::<K>().split("::").last().unwrap();
             let msg = format!("`{kw_name}` specified more than once");
             return Err(syn::Error::new_spanned(kw, msg));
         }
@@ -83,21 +84,21 @@ where
     Ok(())
 }
 
-pub(crate) fn combine_unary_attribute<K>(a: &mut Option<K>, b: Option<K>) -> syn::Result<()>
-where
-    K: ToTokens,
-{
-    if let Some(kw) = b {
-        if a.is_some() {
-            let kw_name = std::any::type_name::<K>().split("::").last().unwrap();
-            let msg = format!("`{kw_name}` specified more than once");
-            return Err(syn::Error::new_spanned(kw, msg));
-        }
-        *a = Some(kw);
-    }
-    Ok(())
-}
+// pub(crate) fn combine_unary_attribute<K>(a: &mut Option<K>, b: Option<K>) -> syn::Result<()>
+// where
+//     K: ToTokens,
+// {
+//     if let Some(kw) = b {
+//         if a.is_some() {
+//             let kw_name = any::type_name::<K>().split("::").last().unwrap();
+//             let msg = format!("`{kw_name}` specified more than once");
+//             return Err(syn::Error::new_spanned(kw, msg));
+//         }
+//         *a = Some(kw);
+//     }
+//     Ok(())
+// }
 
-pub(crate) fn second<T, K>(tuple: (T, K)) -> K {
-    tuple.1
-}
+// pub(crate) fn second<T, K>(tuple: (T, K)) -> K {
+//     tuple.1
+// }

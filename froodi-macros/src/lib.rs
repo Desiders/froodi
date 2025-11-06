@@ -1,4 +1,5 @@
 use proc_macro::TokenStream;
+use proc_macro_error::proc_macro_error;
 use quote::{quote, ToTokens};
 use std::env::var_os;
 use syn::parse::Parse;
@@ -7,6 +8,7 @@ mod attr_parsing;
 mod injectable;
 
 #[proc_macro_attribute]
+#[proc_macro_error]
 pub fn injectable(_attr: TokenStream, item: TokenStream) -> TokenStream {
     expand_with(item, injectable::expand)
 }
