@@ -6,7 +6,6 @@ use alloc::{
 use crate::{
     any::TypeInfo,
     async_impl::{
-        autowired::__GLOBAL_ASYNC_ENTRY_GETTERS,
         finalizer::BoxedCloneFinalizer,
         instantiator::{boxed_container_instantiator, BoxedCloneInstantiator},
         Container,
@@ -40,11 +39,6 @@ impl Registry {
         T: Scopes<N, Scope = S>,
     {
         const DEPENDENCIES: BTreeSet<Dependency> = BTreeSet::new();
-
-        for getter in __GLOBAL_ASYNC_ENTRY_GETTERS {
-            let (type_info, instantiator_data) = getter();
-            entries.insert(type_info, instantiator_data);
-        }
 
         let mut scopes_data = Vec::with_capacity(N);
         for scope in T::all() {

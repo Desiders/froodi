@@ -465,9 +465,13 @@ where
 mod tests {
     extern crate std;
 
-    use super::{setup_async_default, setup_default, AsyncContainer, Container, Inject, InjectTransient};
+    #[cfg(feature = "async")]
+    use super::{setup_async_default, AsyncContainer};
+    use super::{setup_default, Container, Inject, InjectTransient};
+    #[cfg(feature = "async")]
+    use crate::async_registry;
     use crate::{
-        async_registry, registry,
+        registry,
         DefaultScope::{App, Request, Session},
     };
 
@@ -495,10 +499,20 @@ mod tests {
         }
 
         #[allow(clippy::unused_async)]
-        async fn handler(Extension(container): Extension<Container>, Extension(async_container): Extension<AsyncContainer>) -> Box<str> {
-            (*container.get::<i32>().unwrap() + *async_container.get::<i32>().await.unwrap())
-                .to_string()
-                .into_boxed_str()
+        async fn handler(
+            Extension(container): Extension<Container>,
+            #[cfg(feature = "async")] Extension(async_container): Extension<AsyncContainer>,
+        ) -> Box<str> {
+            #[cfg(feature = "async")]
+            {
+                (*container.get::<i32>().unwrap() + *async_container.get::<i32>().await.unwrap())
+                    .to_string()
+                    .into_boxed_str()
+            }
+            #[cfg(not(feature = "async"))]
+            {
+                (*container.get::<i32>().unwrap()).to_string().into_boxed_str()
+            }
         }
 
         let container = Container::new(registry! {
@@ -509,6 +523,7 @@ mod tests {
                 provide(|Inject(cfg): Inject<Config>| Ok(cfg.num + 1)),
             ],
         });
+        #[cfg(feature = "async")]
         let async_container = AsyncContainer::new(async_registry! {
             scope(Request) [
                 provide(async |Inject(cfg): Inject<Config>| Ok(cfg.num + 1)),
@@ -522,6 +537,7 @@ mod tests {
 
         let router = Router::new().route("/", get(handler));
         let router = setup_default(router, container);
+        #[cfg(feature = "async")]
         let router = setup_async_default(router, async_container);
 
         let server = TestServer::builder().http_transport().build(router).unwrap();
@@ -529,7 +545,10 @@ mod tests {
         let response = server.get("/").await;
 
         response.assert_status_ok();
+        #[cfg(feature = "async")]
         response.assert_text("4");
+        #[cfg(not(feature = "async"))]
+        response.assert_text("2");
     }
 
     #[tokio::test]
@@ -543,22 +562,28 @@ mod tests {
         async fn ws_upgrade(
             ws: WebSocketUpgrade,
             Extension(container): Extension<Container>,
-            Extension(async_container): Extension<AsyncContainer>,
+            #[cfg(feature = "async")] Extension(async_container): Extension<AsyncContainer>,
         ) -> Response {
-            ws.on_upgrade(move |socket| handler(socket, container, async_container))
+            #[cfg(feature = "async")]
+            {
+                ws.on_upgrade(move |socket| handler(socket, container, async_container))
+            }
+            #[cfg(not(feature = "async"))]
+            {
+                ws.on_upgrade(move |socket| handler(socket, container))
+            }
         }
 
-        async fn handler(mut socket: WebSocket, container: Container, async_container: AsyncContainer) {
+        async fn handler(mut socket: WebSocket, container: Container, #[cfg(feature = "async")] async_container: AsyncContainer) {
             while let Some(_) = socket.recv().await {
-                if socket
-                    .send(Message::Text(
-                        (*container.get::<i32>().unwrap() + *async_container.get::<i32>().await.unwrap())
-                            .to_string()
-                            .into(),
-                    ))
-                    .await
-                    .is_err()
-                {
+                #[cfg(feature = "async")]
+                let res = (*container.get::<i32>().unwrap() + *async_container.get::<i32>().await.unwrap())
+                    .to_string()
+                    .into();
+                #[cfg(not(feature = "async"))]
+                let res = (*container.get::<i32>().unwrap()).to_string().into();
+
+                if socket.send(Message::Text(res)).await.is_err() {
                     return;
                 }
             }
@@ -572,6 +597,7 @@ mod tests {
                 provide(|Inject(cfg): Inject<Config>| Ok(cfg.num + 1)),
             ],
         });
+        #[cfg(feature = "async")]
         let async_container = AsyncContainer::new(async_registry! {
             scope(Session) [
                 provide(async |Inject(cfg): Inject<Config>| Ok(cfg.num + 1)),
@@ -585,6 +611,7 @@ mod tests {
 
         let router = Router::new().route("/", any(ws_upgrade));
         let router = setup_default(router, container);
+        #[cfg(feature = "async")]
         let router = setup_async_default(router, async_container);
 
         let server = TestServer::builder().http_transport().build(router).unwrap();
@@ -592,7 +619,10 @@ mod tests {
         let mut ws = server.get_websocket("/").await.into_websocket().await;
 
         ws.send_text("").await;
+        #[cfg(feature = "async")]
         ws.assert_receive_text("4").await;
+        #[cfg(not(feature = "async"))]
+        ws.assert_receive_text("2").await;
     }
 
     #[tokio::test]
