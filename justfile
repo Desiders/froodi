@@ -29,5 +29,16 @@ test-integrations:
 
 test: test-basic test-default test-all-features test-async test-integrations
 
-bench:
-    cargo bench --all-features
+bench-init:
+    cargo bench --profile release --frozen --bench sync_container_init
+    cargo bench --profile release --frozen --bench async_container_init --features async
+
+bench-resolve:
+    cargo bench --profile release --frozen --bench container_resolve --no-default-features
+    cargo bench --profile release --frozen --bench async_container_resolve --no-default-features --features async
+
+bench-resolve-concurrent:
+    cargo bench --profile release --frozen --bench container_resolve_concurrent --no-default-features --features thread_safe
+    cargo bench --profile release --frozen --bench async_container_resolve_concurrent --no-default-features --features async,thread_safe
+
+bench: bench-init bench-resolve

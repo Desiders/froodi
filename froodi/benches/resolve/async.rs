@@ -5,90 +5,7 @@ use froodi::{async_impl::Container, async_registry, utils::thread_safety::RcThre
 use tokio::runtime::Builder;
 
 fn criterion_benchmark(c: &mut Criterion) {
-    c.bench_function("async_container_new", |b| {
-        b.iter(|| {
-            Container::new(async_registry! {
-                scope(Runtime) [
-                    provide(async || Ok(()), finalizer = |_: RcThreadSafety<()>| async {}),
-                ],
-                scope(App) [
-                    provide(async || Ok(((), ())), finalizer = |_: RcThreadSafety<((), ())>| async {}),
-                ],
-                scope(Session) [
-                    provide(async || Ok(((), (), ())), finalizer = |_: RcThreadSafety<((), (), ())>| async {}),
-                ],
-                scope(Request) [
-                    provide(async || Ok(((), (), (), ())), finalizer = |_: RcThreadSafety<((), (), (), ())>| async {}),
-                ],
-                scope(Action) [
-                    provide(async || Ok(((), (), (), (), ())), finalizer = |_: RcThreadSafety<((), (), (), (), ())>| async {}),
-                ],
-                scope(Step) [
-                    provide(async || Ok(((), (), (), (), (), ())), finalizer = |_: RcThreadSafety<((), (), (), (), (), ())>| async {}),
-                ],
-            })
-        });
-    })
-    .bench_function("async_container_child_start_scope", |b| {
-        let runtime_container = Container::new_with_start_scope(
-            async_registry! {
-                scope(Runtime) [
-                    provide(async || Ok(())),
-                ],
-                scope(App) [
-                    provide(async || Ok(((), ()))),
-                ],
-                scope(Session) [
-                    provide(async || Ok(((), (), ()))),
-                ],
-                scope(Request) [
-                    provide(async || Ok(((), (), (), ()))),
-                ],
-                scope(Action) [
-                    provide(async || Ok(((), (), (), (), ()))),
-                ],
-                scope(Step) [
-                    provide(async || Ok(((), (), (), (), (), ()))),
-                ],
-            },
-            Runtime,
-        );
-        b.iter(|| {
-            let app_container = runtime_container.clone().enter().with_scope(App).build().unwrap();
-            let session_container = app_container.enter().with_scope(Session).build().unwrap();
-            let request_container = session_container.enter().with_scope(Request).build().unwrap();
-            let action_container = request_container.enter().with_scope(Action).build().unwrap();
-            let _ = action_container.enter().with_scope(Step).build().unwrap();
-        });
-    })
-    .bench_function("async_container_child_next", |b| {
-        let app_container = Container::new(async_registry! {
-            scope(Runtime) [
-                provide(async || Ok(())),
-            ],
-            scope(App) [
-                provide(async || Ok(((), ()))),
-            ],
-            scope(Session) [
-                provide(async || Ok(((), (), ()))),
-            ],
-            scope(Request) [
-                provide(async || Ok(((), (), (), ()))),
-            ],
-            scope(Action) [
-                provide(async || Ok(((), (), (), (), ()))),
-            ],
-            scope(Step) [
-                provide(async || Ok(((), (), (), (), (), ()))),
-            ],
-        });
-        b.iter(|| {
-            let request_container = app_container.clone().enter_build().unwrap();
-            let action_container = request_container.enter_build().unwrap();
-            let _ = action_container.enter_build().unwrap();
-        });
-    })
-    .bench_function("async_container_get_single", |b| {
+    c.bench_function("async_get_single", |b| {
         struct A;
 
         let container = Container::new(async_registry! {
@@ -101,7 +18,7 @@ fn criterion_benchmark(c: &mut Criterion) {
             async move { container.get::<A>().await.unwrap() }
         });
     })
-    .bench_function("async_container_get_many", |b| {
+    .bench_function("async_get_many", |b| {
         struct A(RcThreadSafety<B>, RcThreadSafety<C>);
         struct B(i32);
         struct C(RcThreadSafety<CA>);
@@ -139,7 +56,7 @@ fn criterion_benchmark(c: &mut Criterion) {
             async move { scope_container.get::<A>().await.unwrap() }
         });
     })
-    .bench_function("async_container_get_transient_single", |b| {
+    .bench_function("async_get_transient_single", |b| {
         struct A;
 
         let container = Container::new(async_registry! {
@@ -152,7 +69,7 @@ fn criterion_benchmark(c: &mut Criterion) {
             async move { container.get_transient::<A>().await.unwrap() }
         });
     })
-    .bench_function("async_container_get_transient_many", |b| {
+    .bench_function("async_get_transient_many", |b| {
         struct A(B, C);
         struct B(i32);
         struct C(CA);
