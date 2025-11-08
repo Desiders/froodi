@@ -1,11 +1,15 @@
+#![no_std]
+
+extern crate alloc;
+
 use froodi::{
-    autowired::__GLOBAL_ENTRY_GETTERS,
-    registry, Config, Container,
+    registry,
+    utils::thread_safety::RcThreadSafety,
+    Config, Container,
     DefaultScope::{App, Request, Session},
     Inject, InstantiateErrorKind,
 };
-use froodi_macros::injectable;
-use std::sync::Arc;
+use froodi_auto::{entry_getters::__ENTRY_GETTERS, injectable, AutoRegistries as _};
 
 #[derive(Debug, Clone)]
 struct D;
@@ -31,12 +35,12 @@ impl B {
         Ok(Self)
     }
 
-    fn fin(_val: Arc<Self>) {}
+    fn fin(_val: RcThreadSafety<Self>) {}
 }
 
 #[derive(Clone)]
 #[allow(dead_code)]
-struct A(Arc<B>, Arc<C>);
+struct A(RcThreadSafety<B>, RcThreadSafety<C>);
 
 #[injectable]
 impl A {
@@ -45,17 +49,17 @@ impl A {
         Ok(Self(b, c))
     }
 
-    fn fin(_val: Arc<Self>) {}
+    fn fin(_val: RcThreadSafety<Self>) {}
 }
 
 #[test]
-fn test_global_entries_count() {
-    assert_eq!(__GLOBAL_ENTRY_GETTERS.len(), 3);
+fn test_entries_count() {
+    assert_eq!(__ENTRY_GETTERS.len(), 3);
 }
 
 #[test]
-fn test_global_entries_resolve() {
-    let container = Container::new_with_start_scope(registry! {}, Request);
+fn test_entries() {
+    let container = Container::new_with_start_scope(registry! {}.provide_auto_registries(), Request);
 
     container.get::<C>().unwrap();
     container.get::<B>().unwrap();
