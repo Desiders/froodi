@@ -54,31 +54,86 @@ tracing-test = { version = "0.2", default-features = false }
 criterion = { version = "0.7", features = ["async_tokio"] }
 axum = { version = "0.8" }
 axum-test = { version = "18", features = ["ws"] }
-tokio = { version = "1", features = ["macros"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 
 froodi-auto = { path = "../froodi-auto", default-features = false }
 
 [[bench]]
-name = "container"
+name = "sync_container_init"
+path = "benches/init/sync.rs"
 harness = false
+test = false
+doctest = false
+doc = false
+required-features = []
 
 [[bench]]
-name = "async_container"
+name = "async_container_init"
+path = "benches/init/async.rs"
 harness = false
+test = false
+doctest = false
+doc = false
+required-features = ["async"]
+
+[[bench]]
+name = "container_resolve"
+path = "benches/resolve/sync.rs"
+harness = false
+test = false
+doctest = false
+doc = false
+required-features = []
+
+[[bench]]
+name = "async_container_resolve"
+path = "benches/resolve/async.rs"
+harness = false
+test = false
+doctest = false
+doc = false
+required-features = ["async"]
+
+[[bench]]
+name = "container_resolve_concurrent"
+path = "benches/resolve/concurrent/sync.rs"
+harness = false
+test = false
+doctest = false
+doc = false
+required-features = ["thread_safe"]
+
+[[bench]]
+name = "async_container_resolve_concurrent"
+path = "benches/resolve/concurrent/async.rs"
+harness = false
+test = false
+doctest = false
+doc = false
+required-features = ["async", "thread_safe"]
 
 [[test]]
 name = "auto_registration_async"
 path = "tests/auto/async.rs"
+bench = false
+doctest = false
+doc = false
 required-features = ["async", "froodi-auto/async", "froodi-auto/macros"]
 
 [[test]]
 name = "auto_registration_mixed"
 path = "tests/auto/mixed.rs"
+bench = false
+doctest = false
+doc = false
 required-features = ["async", "froodi-auto/async", "froodi-auto/macros"]
 
 [[test]]
 name = "auto_registration_sync"
 path = "tests/auto/sync.rs"
+bench = false
+doctest = false
+doc = false
 required-features = ["froodi-auto/macros"]
 
 [package.metadata.docs.rs]
