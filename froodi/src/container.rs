@@ -1,5 +1,5 @@
 use alloc::{boxed::Box, vec::Vec};
-use parking_lot::Mutex;
+use parking_lot::RwLock;
 use tracing::{debug, error, info_span};
 
 use super::cache::Cache;
@@ -142,7 +142,7 @@ impl Container {
         let span = info_span!("get", dependency = type_info.short_name(), scope = self.inner.scope_data.name);
         let _guard = span.enter();
 
-        if let Some(dependency) = self.inner.cache.lock().get(&type_info) {
+        if let Some(dependency) = self.inner.cache.read().get(&type_info) {
             debug!("Found in cache");
             return Ok(dependency);
         }
@@ -167,7 +167,7 @@ impl Container {
                 if parent.inner.scope_data.priority == scope_data.priority {
                     return match parent.get::<Dep>() {
                         Ok(dependency) => {
-                            self.inner.cache.lock().insert_rc(type_info, dependency.clone());
+                            self.inner.cache.write().insert_rc(type_info, dependency.clone());
                             Ok(dependency)
                         }
                         Err(err) => Err(err),
@@ -189,7 +189,7 @@ impl Container {
             Ok(dependency) => match dependency.downcast::<Dep>() {
                 Ok(dependency) => {
                     let dependency = RcThreadSafety::new(*dependency);
-                    let mut guard = self.inner.cache.lock();
+                    let mut guard = self.inner.cache.write();
                     if config.cache_provides {
                         guard.insert_rc(type_info, dependency.clone());
                         debug!("Cached");
@@ -311,13 +311,13 @@ impl Container {
         child_scopes_data: Vec<ScopeData>,
         close_parent: bool,
     ) -> Container {
-        let mut cache = self.inner.cache.lock().child();
+        let mut cache = self.inner.cache.write().child();
         cache.append_context(&mut context.clone());
 
         Container {
             inner: RcThreadSafety::new(ContainerInner {
-                cache: Mutex::new(cache),
-                context: Mutex::new(context),
+                cache: RwLock::new(cache),
+                context: RwLock::new(context),
                 registry,
                 scope_data,
                 child_scopes_data,
@@ -335,14 +335,14 @@ impl Container {
         child_scopes_data: Vec<ScopeData>,
         close_parent: bool,
     ) -> Container {
-        let mut cache = self.inner.cache.lock().child();
-        let context = self.inner.context.lock().clone();
+        let mut cache = self.inner.cache.write().child();
+        let context = self.inner.context.read().clone();
         cache.append_context(&mut context.clone());
 
         Container {
             inner: RcThreadSafety::new(ContainerInner {
-                cache: Mutex::new(cache),
-                context: Mutex::new(context),
+                cache: RwLock::new(cache),
+                context: RwLock::new(context),
                 registry,
                 scope_data,
                 child_scopes_data,
@@ -633,8 +633,8 @@ impl From<BoxedContainerInner> for Container {
     ) -> Self {
         Self {
             inner: RcThreadSafety::new(ContainerInner {
-                cache: Mutex::new(cache),
-                context: Mutex::new(context),
+                cache: RwLock::new(cache),
+                context: RwLock::new(context),
                 registry,
                 scope_data,
                 child_scopes_data,
@@ -646,8 +646,8 @@ impl From<BoxedContainerInner> for Container {
 }
 
 pub(crate) struct ContainerInner {
-    pub(crate) cache: Mutex<Cache>,
-    pub(crate) context: Mutex<Context>,
+    pub(crate) cache: RwLock<Cache>,
+    pub(crate) context: RwLock<Context>,
     pub(crate) registry: RcThreadSafety<Registry>,
     pub(crate) scope_data: ScopeData,
     pub(crate) child_scopes_data: Vec<ScopeData>,
@@ -668,7 +668,7 @@ impl ContainerInner {
     }
 
     pub(crate) fn close_with_parent_flag(&self, close_parent: bool) {
-        let mut resolved_set = self.cache.lock().take_resolved_set();
+        let mut resolved_set = self.cache.write().take_resolved_set();
         while let Some(Resolved { type_info, dependency }) = resolved_set.0.pop_back() {
             let InstantiatorData { finalizer, .. } = self
                 .registry
@@ -684,7 +684,7 @@ impl ContainerInner {
         // We need to clear cache and fill it with the context as in start of the container usage
         #[allow(clippy::assigning_clones)]
         {
-            self.cache.lock().map = self.context.lock().map.clone();
+            self.cache.write().map = self.context.read().map.clone();
         }
 
         if close_parent {
@@ -1107,9 +1107,9 @@ mod tests {
         let _ = request_container.get::<((), (), (), (), ())>().unwrap();
         let _ = request_container.get::<((), (), (), ())>().unwrap();
 
-        let runtime_container_resolved_set_count = app_container.inner.parent.as_ref().unwrap().inner.cache.lock().resolved.0.len();
-        let app_container_resolved_set_count = app_container.inner.cache.lock().resolved.0.len();
-        let request_container_resolved_set_count = request_container.inner.cache.lock().resolved.0.len();
+        let runtime_container_resolved_set_count = app_container.inner.parent.as_ref().unwrap().inner.cache.read().resolved.0.len();
+        let app_container_resolved_set_count = app_container.inner.cache.read().resolved.0.len();
+        let request_container_resolved_set_count = request_container.inner.cache.read().resolved.0.len();
 
         request_container.close();
 

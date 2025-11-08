@@ -1,6 +1,6 @@
 use alloc::{boxed::Box, vec::Vec};
 use core::future::Future;
-use parking_lot::Mutex;
+use parking_lot::RwLock;
 use tracing::{debug, error, info_span, Instrument};
 
 use super::{
@@ -176,7 +176,7 @@ impl Container {
 
         Box::pin(
             async move {
-                if let Some(dependency) = self.inner.cache.lock().get(&type_info) {
+                if let Some(dependency) = self.inner.cache.read().get(&type_info) {
                     debug!("Found in cache");
                     return Ok(dependency);
                 }
@@ -206,7 +206,7 @@ impl Container {
                             .await
                             {
                                 Ok(dependency) => {
-                                    self.inner.cache.lock().insert_rc(type_info, dependency.clone());
+                                    self.inner.cache.write().insert_rc(type_info, dependency.clone());
                                     Ok(dependency)
                                 }
                                 Err(err) => Err(err),
@@ -228,7 +228,7 @@ impl Container {
                     Ok(dependency) => match dependency.downcast::<Dep>() {
                         Ok(dependency) => {
                             let dependency = RcThreadSafety::new(*dependency);
-                            let mut guard = self.inner.cache.lock();
+                            let mut guard = self.inner.cache.write();
                             if config.cache_provides {
                                 guard.insert_rc(type_info, dependency.clone());
                                 debug!("Cached");
@@ -386,16 +386,16 @@ impl Container {
         child_scopes_data: Vec<ScopeData>,
         close_parent: bool,
     ) -> Self {
-        let mut cache = self.inner.cache.lock().child();
+        let mut cache = self.inner.cache.write().child();
         cache.append_context(&mut context.clone());
 
-        let mut sync_cache = self.sync.inner.cache.lock().child();
+        let mut sync_cache = self.sync.inner.cache.write().child();
         sync_cache.append_context(&mut context.clone());
 
         Self {
             inner: RcThreadSafety::new(ContainerInner {
-                cache: Mutex::new(cache),
-                context: Mutex::new(context.clone()),
+                cache: RwLock::new(cache),
+                context: RwLock::new(context.clone()),
                 registry,
                 scope_data,
                 child_scopes_data: child_scopes_data.clone(),
@@ -404,8 +404,8 @@ impl Container {
             }),
             sync: SyncContainer {
                 inner: RcThreadSafety::new(SyncContainerInner {
-                    cache: Mutex::new(sync_cache),
-                    context: Mutex::new(context),
+                    cache: RwLock::new(sync_cache),
+                    context: RwLock::new(context),
                     registry: sync_registry,
                     scope_data,
                     child_scopes_data,
@@ -426,18 +426,18 @@ impl Container {
         child_scopes_data: Vec<ScopeData>,
         close_parent: bool,
     ) -> Self {
-        let mut cache = self.inner.cache.lock().child();
-        let context = self.inner.context.lock().clone();
+        let mut cache = self.inner.cache.write().child();
+        let context = self.inner.context.read().clone();
         cache.append_context(&mut context.clone());
 
-        let mut sync_cache = self.sync.inner.cache.lock().child();
-        let sync_context = self.sync.inner.context.lock().clone();
+        let mut sync_cache = self.sync.inner.cache.write().child();
+        let sync_context = self.sync.inner.context.read().clone();
         sync_cache.append_context(&mut sync_context.clone());
 
         Self {
             inner: RcThreadSafety::new(ContainerInner {
-                cache: Mutex::new(cache),
-                context: Mutex::new(context),
+                cache: RwLock::new(cache),
+                context: RwLock::new(context),
                 registry,
                 scope_data,
                 child_scopes_data: child_scopes_data.clone(),
@@ -446,8 +446,8 @@ impl Container {
             }),
             sync: SyncContainer {
                 inner: RcThreadSafety::new(SyncContainerInner {
-                    cache: Mutex::new(sync_cache),
-                    context: Mutex::new(sync_context),
+                    cache: RwLock::new(sync_cache),
+                    context: RwLock::new(sync_context),
                     registry: sync_registry,
                     scope_data,
                     child_scopes_data,
@@ -769,8 +769,8 @@ impl From<BoxedContainerInner> for ContainerInner {
         }: BoxedContainerInner,
     ) -> Self {
         Self {
-            cache: Mutex::new(cache),
-            context: Mutex::new(context),
+            cache: RwLock::new(cache),
+            context: RwLock::new(context),
             registry,
             scope_data,
             child_scopes_data,
@@ -790,8 +790,8 @@ impl From<(BoxedContainerInner, BoxedSyncContainerInner)> for Container {
 }
 
 struct ContainerInner {
-    cache: Mutex<Cache>,
-    context: Mutex<Context>,
+    cache: RwLock<Cache>,
+    context: RwLock<Context>,
     registry: RcThreadSafety<Registry>,
     scope_data: ScopeData,
     child_scopes_data: Vec<ScopeData>,
@@ -807,7 +807,7 @@ impl ContainerInner {
 
     #[allow(clippy::missing_panics_doc)]
     fn close(&self) -> impl Future<Output = ()> + SendSafety + '_ {
-        let mut resolved_set = self.cache.lock().take_resolved_set();
+        let mut resolved_set = self.cache.write().take_resolved_set();
 
         Box::pin(async move {
             while let Some(Resolved { type_info, dependency }) = resolved_set.0.pop_back() {
@@ -825,7 +825,7 @@ impl ContainerInner {
             // We need to clear cache and fill it with the context as in start of the container usage
             #[allow(clippy::assigning_clones)]
             {
-                self.cache.lock().map = self.context.lock().map.clone();
+                self.cache.write().map = self.context.read().map.clone();
             }
         })
     }
@@ -1372,13 +1372,13 @@ mod tests {
             .unwrap()
             .inner
             .cache
-            .lock()
+            .read()
             .resolved
             .0
             .len();
         let app_container_resolved_set_count =
-            app_container.sync.inner.cache.lock().resolved.0.len() + app_container.inner.cache.lock().resolved.0.len();
-        let request_container_resolved_set_count = request_container.sync.inner.cache.lock().resolved.0.len();
+            app_container.sync.inner.cache.read().resolved.0.len() + app_container.inner.cache.read().resolved.0.len();
+        let request_container_resolved_set_count = request_container.sync.inner.cache.read().resolved.0.len();
 
         request_container.close().await;
 
