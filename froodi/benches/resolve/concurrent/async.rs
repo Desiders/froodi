@@ -10,7 +10,7 @@ use std::{
     },
     time::{Duration, Instant},
 };
-use tokio::runtime::Builder;
+use tokio::{runtime::Builder, sync::Barrier};
 
 const THREADS: usize = 10;
 const SCALING_THREADS: [usize; 4] = [1, 2, 4, 8];
@@ -19,26 +19,32 @@ async fn run_async_bench_threads<W, F, Fut>(threads: usize, mut make_test_fn: W,
 where
     W: FnMut() -> F,
     F: FnMut() -> Fut + Send + 'static,
-    Fut: Future<Output = ()> + Send,
+    Fut: Future<Output = ()> + Send + 'static,
 {
-    use tokio::sync::Barrier;
-
-    let barrier = Arc::new(Barrier::new(threads));
+    let barrier = Arc::new(Barrier::new(threads + 1));
     let elapsed_handles = Arc::new((0..threads).map(|_| AtomicU64::default()).collect::<Box<[_]>>());
+
+    let mut handles = Vec::with_capacity(threads);
 
     for i in 0..threads {
         let barrier = barrier.clone();
         let elapsed_handles = elapsed_handles.clone();
         let mut test_fn = make_test_fn();
 
-        tokio::spawn(async move {
+        handles.push(tokio::spawn(async move {
             barrier.wait().await;
             let start = Instant::now();
             for _ in 0..iters {
                 test_fn().await;
             }
             elapsed_handles[i].store(start.elapsed().as_nanos() as u64, Ordering::Relaxed);
-        });
+        }));
+    }
+
+    barrier.wait().await;
+
+    for handle in handles {
+        handle.await.unwrap();
     }
 
     let mut nanos = Vec::with_capacity(threads);
@@ -52,7 +58,7 @@ fn criterion_benchmark(c: &mut Criterion) {
     let rt = Builder::new_multi_thread().worker_threads(THREADS).enable_all().build().unwrap();
 
     let mut group = c.benchmark_group("async_concurrent");
-    group.sample_size(100);
+    group.sample_size(30);
     group.warm_up_time(Duration::from_secs(3));
 
     group.bench_function(BenchmarkId::new("get_single", THREADS), |b| {
@@ -64,22 +70,19 @@ fn criterion_benchmark(c: &mut Criterion) {
 
         b.to_async(&rt).iter_custom(|iters| {
             let container = container.clone();
-            async move {
-                run_async_bench_threads(
-                    THREADS,
-                    || {
+            run_async_bench_threads(
+                THREADS,
+                move || {
+                    let container = container.clone();
+                    move || {
                         let container = container.clone();
-                        move || {
-                            let container = container.clone();
-                            async move {
-                                container.get::<A>().await.unwrap();
-                            }
+                        async move {
+                            container.get::<A>().await.unwrap();
                         }
-                    },
-                    (iters + THREADS as u64 - 1) / THREADS as u64,
-                )
-                .await
-            }
+                    }
+                },
+                (iters + THREADS as u64 - 1) / THREADS as u64,
+            )
         });
     });
 

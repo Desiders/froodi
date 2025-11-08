@@ -50,7 +50,7 @@ where
 
 fn criterion_benchmark(c: &mut Criterion) {
     let mut group = c.benchmark_group("concurrent");
-    group.sample_size(100);
+    group.sample_size(30);
     group.warm_up_time(Duration::from_secs(3));
 
     group.bench_function(BenchmarkId::new("get_single", THREADS), |b| {
