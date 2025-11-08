@@ -27,14 +27,17 @@ pub mod utils;
 #[cfg(feature = "async")]
 pub mod async_impl;
 
+pub use any::TypeInfo;
 pub use config::Config;
 pub use container::Container;
 pub use context::Context;
+pub use dependency::Dependency;
+pub use dependency_resolver::DependencyResolver;
 pub use errors::{InstantiateErrorKind, InstantiatorResult, ResolveErrorKind, ScopeErrorKind, ScopeWithErrorKind};
 pub use finalizer::Finalizer;
 pub use inject::{Inject, InjectTransient};
-pub use instantiator::instance;
-pub use registry::Registry;
+pub use instantiator::{instance, Instantiator};
+pub use registry::{InstantiatorData, Registry};
 pub use scope::{DefaultScope, Scope, Scopes};
 
 #[cfg(feature = "axum")]

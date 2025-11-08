@@ -798,7 +798,7 @@ mod tests {
 
     #[test]
     #[traced_test]
-    fn registry_extend_entries() {
+    fn test_registry_extend_entries() {
         let registry = registry! {
             provide(DefaultScope::App, inst_a),
             scope(DefaultScope::Session) [provide(inst_b)],

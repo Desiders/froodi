@@ -1,6 +1,9 @@
+#![no_std]
+
+extern crate alloc;
+
 use proc_macro::TokenStream;
 use quote::{quote, ToTokens};
-use std::env::var_os;
 use syn::parse::Parse;
 
 mod attr_parsing;
@@ -27,9 +30,6 @@ where
     match result {
         Ok(tokens) => {
             let tokens = (quote! { #tokens }).into();
-            if var_os("MACROS_DEBUG").is_some() {
-                eprintln!("{tokens}");
-            }
             tokens
         }
         Err(err) => err.into_compile_error().into(),

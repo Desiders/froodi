@@ -45,16 +45,18 @@ axum = [
 ]
 http2-axum = ["dep:h2", "axum/http2"]
 
-dptree = ["dep:dptree"]
+dptree = ["dep:dptree", "thread_safe"]
 
-telers = ["dep:telers"]
+telers = ["dep:telers", "thread_safe"]
 
 [dev-dependencies]
 tracing-test = { version = "0.2", default-features = false }
 criterion = { version = "0.7", features = ["async_tokio"] }
 axum = { version = "0.8" }
-axum-test = { version = "18.1", features = ["ws"] }
-tokio = { version = "1.47", features = ["macros"] }
+axum-test = { version = "18", features = ["ws"] }
+tokio = { version = "1", features = ["macros"] }
+
+froodi-auto = { path = "../froodi-auto", default-features = false }
 
 [[bench]]
 name = "container"
@@ -63,6 +65,21 @@ harness = false
 [[bench]]
 name = "async_container"
 harness = false
+
+[[test]]
+name = "auto_registration_async"
+path = "tests/auto/async.rs"
+required-features = ["async", "froodi-auto/async", "froodi-auto/macros"]
+
+[[test]]
+name = "auto_registration_mixed"
+path = "tests/auto/mixed.rs"
+required-features = ["async", "froodi-auto/async", "froodi-auto/macros"]
+
+[[test]]
+name = "auto_registration_sync"
+path = "tests/auto/sync.rs"
+required-features = ["froodi-auto/macros"]
 
 [package.metadata.docs.rs]
 all-features = true

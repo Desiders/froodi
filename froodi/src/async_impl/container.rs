@@ -143,8 +143,8 @@ impl Container {
     /// Creates child container builder
     #[inline]
     #[must_use]
-    pub fn enter(self) -> ChildContainerBuiler {
-        ChildContainerBuiler { container: self }
+    pub fn enter(self) -> ChildContainerBuilder {
+        ChildContainerBuilder { container: self }
     }
 
     /// Creates child container and builds it with next non-skipped scope
@@ -152,7 +152,7 @@ impl Container {
     /// because the first flagged as skippable, but it will be in container as parent of current.
     ///
     /// # Warning
-    /// This method skips skippable scopes, if you want to use one of them, use [`ChildContainerBuiler::with_scope`].
+    /// This method skips skippable scopes, if you want to use one of them, use [`ChildContainerBuilder::with_scope`].
     ///
     /// # Errors
     /// - Returns [`ScopeErrorKind::NoChildRegistries`] if there are no registries
@@ -459,11 +459,11 @@ impl Container {
     }
 }
 
-pub struct ChildContainerBuiler {
+pub struct ChildContainerBuilder {
     container: Container,
 }
 
-impl ChildContainerBuiler {
+impl ChildContainerBuilder {
     #[inline]
     #[must_use]
     pub fn with_scope<S: Scope>(self, scope: S) -> ChildContainerWithScope<S> {
@@ -491,7 +491,7 @@ impl ChildContainerBuiler {
     /// - Returns [`ScopeErrorKind::NoNonSkippedRegistries`] if there are no non-skipped registries
     ///
     /// # Warning
-    /// This method skips first children skippable scopes, if you want to use one of them, use [`ChildContainerBuiler::with_scope`].
+    /// This method skips first children skippable scopes, if you want to use one of them, use [`ChildContainerBuilder::with_scope`].
     pub fn build(self) -> Result<Container, ScopeErrorKind> {
         use ScopeErrorKind::{NoChildRegistries, NoNonSkippedRegistries};
 
@@ -554,7 +554,7 @@ where
     /// - Returns [`ScopeWithErrorKind::NoChildRegistriesWithScope`] if there are no registries with specified scope
     ///
     /// # Warning
-    /// If you want just to use next non-skipped scope, use [`ChildContainerBuiler::with_scope`]
+    /// If you want just to use next non-skipped scope, use [`ChildContainerBuilder::with_scope`]
     pub fn build(self) -> Result<Container, ScopeWithErrorKind> {
         use ScopeWithErrorKind::{NoChildRegistries, NoChildRegistriesWithScope};
 
@@ -618,7 +618,7 @@ impl ChildContainerWithContext {
     /// - Returns [`ScopeErrorKind::NoNonSkippedRegistries`] if there are no non-skipped registries
     ///
     /// # Warning
-    /// This method skips first children skippable scopes, if you want to use one of them, use [`ChildContainerBuiler::with_scope`]
+    /// This method skips first children skippable scopes, if you want to use one of them, use [`ChildContainerBuilder::with_scope`]
     pub fn build(self) -> Result<Container, ScopeErrorKind> {
         use ScopeErrorKind::{NoChildRegistries, NoNonSkippedRegistries};
 
@@ -676,7 +676,7 @@ where
     /// - Returns [`ScopeWithErrorKind::NoChildRegistriesWithScope`] if there are no registries with specified scope
     ///
     /// # Warning
-    /// If you want just to use next non-skipped scope, use [`ChildContainerBuiler::with_scope`]
+    /// If you want just to use next non-skipped scope, use [`ChildContainerBuilder::with_scope`]
     pub fn build(self) -> Result<Container, ScopeWithErrorKind> {
         use ScopeWithErrorKind::{NoChildRegistries, NoChildRegistriesWithScope};
 
@@ -838,8 +838,10 @@ mod tests {
 
     use super::{Container, ContainerInner};
     use crate::{
-        async_registry, registry, scope::DefaultScope::*, utils::thread_safety::RcThreadSafety, Inject, InjectTransient, ResolveErrorKind,
-        Scope,
+        async_registry, registry,
+        scope::DefaultScope::*,
+        utils::thread_safety::{RcThreadSafety, SendSafety, SyncSafety},
+        Inject, InjectTransient, ResolveErrorKind, Scope,
     };
 
     use alloc::{
@@ -1623,15 +1625,17 @@ mod tests {
             _phantom: core::marker::PhantomData<*const ()>,
         }
 
-        fn impl_bounds<T: Send + Sync + 'static>() {}
+        fn impl_bounds<T: SendSafety + SyncSafety + 'static>() {}
 
         impl_bounds::<(Container, ContainerInner)>();
 
+        #[allow(unused_variables)]
         let app_container = Container::new(async_registry! {
             scope(App) [
                 provide(async || Ok(RequestTransient1)),
             ],
         });
+        #[cfg(feature = "thread_safe")]
         tokio::spawn(async move {
             let request1 = app_container.get_transient::<RequestTransient1>().await;
             let request2 = app_container.get::<Request1>().await;

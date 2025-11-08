@@ -121,32 +121,32 @@ mod async_impl {
         }
     }
 
-    impl Merge<(TypeInfo, async_impl::registry::InstantiatorData)> for Registry {
+    impl Merge<(TypeInfo, async_impl::InstantiatorData)> for Registry {
         type Output = RegistryWithSync;
 
         #[inline]
-        fn merge(self, (key, value): (TypeInfo, async_impl::registry::InstantiatorData)) -> Self::Output {
+        fn merge(self, (key, value): (TypeInfo, async_impl::InstantiatorData)) -> Self::Output {
             let mut registry = async_impl::Registry::default();
             registry.entries.insert(key, value);
             Self::Output { registry, sync: self }
         }
     }
 
-    impl Merge<(TypeInfo, async_impl::registry::InstantiatorData)> for async_impl::Registry {
+    impl Merge<(TypeInfo, async_impl::InstantiatorData)> for async_impl::Registry {
         type Output = Self;
 
         #[inline]
-        fn merge(mut self, (key, value): (TypeInfo, async_impl::registry::InstantiatorData)) -> Self::Output {
+        fn merge(mut self, (key, value): (TypeInfo, async_impl::InstantiatorData)) -> Self::Output {
             self.entries.insert(key, value);
             self
         }
     }
 
-    impl Merge<(TypeInfo, async_impl::registry::InstantiatorData)> for RegistryWithSync {
+    impl Merge<(TypeInfo, async_impl::InstantiatorData)> for RegistryWithSync {
         type Output = Self;
 
         #[inline]
-        fn merge(mut self, (key, value): (TypeInfo, async_impl::registry::InstantiatorData)) -> Self::Output {
+        fn merge(mut self, (key, value): (TypeInfo, async_impl::InstantiatorData)) -> Self::Output {
             self.registry.entries.insert(key, value);
             self
         }

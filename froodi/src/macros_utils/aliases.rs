@@ -6,6 +6,7 @@ mod std {
 
     pub type Vec<T> = std::vec::Vec<T>;
     pub type Box<T> = std::boxed::Box<T>;
+    pub type BTreeSet<T> = std::collections::BTreeSet<T>;
 }
 
 mod alloc {
@@ -13,12 +14,13 @@ mod alloc {
 
     pub type Vec<T> = alloc::vec::Vec<T>;
     pub type Box<T> = alloc::boxed::Box<T>;
+    pub type BTreeSet<T> = alloc::collections::BTreeSet<T>;
 }
 
 #[cfg(feature = "std")]
-pub use std::{Box, Vec};
+pub use std::{BTreeSet, Box, Vec};
 
 #[cfg(not(feature = "std"))]
-pub use alloc::{Box, Vec};
+pub use alloc::{BTreeSet, Box, Vec};
 
 pub use frunk::hlist;

@@ -1,0 +1,23 @@
+[package]
+name = "froodi-auto"
+version = "1.0.0"
+edition = "2021"
+
+[dependencies]
+linkme = "0.3"
+
+froodi = { version = "1.0.0-beta", path = "../froodi", default-features = false }
+froodi-auto-macros = { version = "1", path = "../froodi-auto-macros", default-features = false, optional = true }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt", "macros"] }
+
+[features]
+default = ["macros"]
+
+async = ["froodi/async"]
+macros = ["froodi-auto-macros"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
