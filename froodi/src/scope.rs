@@ -1,3 +1,5 @@
+use core::fmt::{self, Display, Formatter};
+
 use alloc::vec::Vec;
 
 pub trait Scope: Ord + Into<ScopeData> {
@@ -80,6 +82,16 @@ pub struct ScopeData {
     pub priority: u8,
     pub name: &'static str,
     pub is_skipped_by_default: bool,
+}
+
+impl Display for ScopeData {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{} ({}, is_skipped_by_default = {})",
+            self.name, self.priority, self.is_skipped_by_default
+        )
+    }
 }
 
 pub(crate) struct ScopeDataWithChildScopesData {

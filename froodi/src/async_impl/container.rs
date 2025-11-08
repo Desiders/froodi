@@ -814,7 +814,7 @@ impl ContainerInner {
 
                 if let Some(finalizer) = finalizer {
                     let _ = finalizer.clone().call(dependency).await;
-                    debug!(?type_info, "Finalizer called");
+                    debug!(%type_info, "Finalizer called");
                 }
             }
 

@@ -673,7 +673,7 @@ impl ContainerInner {
 
             if let Some(finalizer) = finalizer {
                 let _ = finalizer.clone().call(dependency);
-                debug!(?type_info, "Finalizer called");
+                debug!(%type_info, "Finalizer called");
             }
         }
 
@@ -695,7 +695,7 @@ impl ContainerInner {
 impl Drop for ContainerInner {
     fn drop(&mut self) {
         self.close();
-        debug!("Container with scope {:?} closed on drop", self.scope_data);
+        debug!(scope = %self.scope_data, "Container closed on drop");
     }
 }
 

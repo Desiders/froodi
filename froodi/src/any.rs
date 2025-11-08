@@ -2,6 +2,7 @@ use alloc::collections::BTreeMap;
 use core::{
     any::{type_name, TypeId},
     cmp::Ordering,
+    fmt::{self, Display, Formatter},
 };
 
 use crate::utils::thread_safety::RcAnyThreadSafety;
@@ -29,6 +30,12 @@ impl PartialOrd for TypeInfo {
 impl Ord for TypeInfo {
     fn cmp(&self, other: &Self) -> Ordering {
         self.id.cmp(&other.id)
+    }
+}
+
+impl Display for TypeInfo {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.name)
     }
 }
 
