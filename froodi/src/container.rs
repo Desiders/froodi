@@ -139,7 +139,7 @@ impl Container {
     #[allow(clippy::missing_errors_doc, clippy::missing_panics_doc)]
     pub fn get<Dep: SendSafety + SyncSafety + 'static>(&self) -> Result<RcThreadSafety<Dep>, ResolveErrorKind> {
         let type_info = TypeInfo::of::<Dep>();
-        let span = info_span!("get", dependency = type_info.short_name(), scope = self.inner.scope_data.name);
+        let span = info_span!("get", dependency = type_info.name, scope = self.inner.scope_data.name);
         let _guard = span.enter();
 
         if let Some(dependency) = self.inner.cache.read().get(&type_info) {
@@ -234,11 +234,7 @@ impl Container {
     #[allow(clippy::missing_errors_doc, clippy::missing_panics_doc)]
     pub fn get_transient<Dep: 'static>(&self) -> Result<Dep, ResolveErrorKind> {
         let type_info = TypeInfo::of::<Dep>();
-        let span = info_span!(
-            "get_transient",
-            dependency = type_info.short_name(),
-            scope = self.inner.scope_data.name
-        );
+        let span = info_span!("get_transient", dependency = type_info.name, scope = self.inner.scope_data.name);
         let _guard = span.enter();
 
         let Some(InstantiatorData {
@@ -677,7 +673,7 @@ impl ContainerInner {
 
             if let Some(finalizer) = finalizer {
                 let _ = finalizer.clone().call(dependency);
-                debug!(?type_info, "Finalizer called");
+                debug!(%type_info, "Finalizer called");
             }
         }
 
@@ -699,7 +695,7 @@ impl ContainerInner {
 impl Drop for ContainerInner {
     fn drop(&mut self) {
         self.close();
-        debug!("Container with scope {:?} closed on drop", self.scope_data);
+        debug!(scope = %self.scope_data, "Container closed on drop");
     }
 }
 

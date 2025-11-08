@@ -1,3 +1,5 @@
+use core::fmt::{self, Display, Formatter};
+
 use alloc::vec::Vec;
 
 pub trait Scope: Ord + Into<ScopeData> {
@@ -16,7 +18,7 @@ pub trait Scope: Ord + Into<ScopeData> {
 pub trait Scopes<const N: usize> {
     type Scope;
 
-    fn all() -> [Self::Scope; N];
+    fn all() -> (Self::Scope, [Self::Scope; N]);
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -64,14 +66,14 @@ impl Scope for DefaultScope {
     }
 }
 
-impl Scopes<6> for DefaultScope {
+impl Scopes<5> for DefaultScope {
     type Scope = Self;
 
     #[inline]
-    fn all() -> [Self; 6] {
+    fn all() -> (Self::Scope, [Self::Scope; 5]) {
         use DefaultScope::{Action, App, Request, Runtime, Session, Step};
 
-        [Runtime, App, Session, Request, Action, Step]
+        (Runtime, [App, Session, Request, Action, Step])
     }
 }
 
@@ -80,6 +82,16 @@ pub struct ScopeData {
     pub priority: u8,
     pub name: &'static str,
     pub is_skipped_by_default: bool,
+}
+
+impl Display for ScopeData {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{} ({}, is_skipped_by_default = {})",
+            self.name, self.priority, self.is_skipped_by_default
+        )
+    }
 }
 
 pub(crate) struct ScopeDataWithChildScopesData {

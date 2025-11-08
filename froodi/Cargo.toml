@@ -58,6 +58,9 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 
 froodi-auto = { path = "../froodi-auto", default-features = false }
 
+[build-dependencies]
+version_check = "0.9"
+
 [[bench]]
 name = "sync_container_init"
 path = "benches/init/sync.rs"
