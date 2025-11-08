@@ -35,6 +35,26 @@ impl Ord for TypeInfo {
 impl TypeInfo {
     #[inline]
     #[must_use]
+    #[cfg(const_type_id)]
+    pub(crate) const fn new<T: ?Sized + 'static>(name: &'static str) -> Self {
+        Self {
+            name,
+            id: TypeId::of::<T>(),
+        }
+    }
+
+    #[inline]
+    #[must_use]
+    #[cfg(not(const_type_id))]
+    pub(crate) fn new<T: ?Sized + 'static>(name: &'static str) -> Self {
+        Self {
+            name,
+            id: TypeId::of::<T>(),
+        }
+    }
+
+    #[inline]
+    #[must_use]
     pub(crate) fn of<T>() -> Self
     where
         T: ?Sized + 'static,
@@ -60,26 +80,6 @@ impl TypeInfo {
     #[inline]
     #[must_use]
     pub(crate) fn short_name(&self) -> &'static str {
-        let bytes = self.name.as_bytes();
-        let mut colons = 0;
-        let mut i = bytes.len();
-
-        while i >= 2 {
-            i -= 1;
-            if bytes[i] == b':' && i > 0 && bytes[i - 1] == b':' {
-                colons += 1;
-                if colons == 2 {
-                    return &self.name[i + 1..];
-                }
-                i -= 1;
-            }
-        }
-        self.name
-    }
-
-    #[inline]
-    #[must_use]
-    pub(crate) fn short_name_without_path(&self) -> &'static str {
         self.name.rsplit_once("::").map_or(self.name, |(_, name)| name)
     }
 }

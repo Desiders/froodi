@@ -10,7 +10,7 @@ use crate::{
         instantiator::{boxed_container_instantiator, BoxedCloneInstantiator},
         Container,
     },
-    dependency::Dependency,
+    dependency::{Dependency, EMPTY_DEPENDENCIES},
     errors::DFSErrorKind,
     scope::{ScopeData, ScopeDataWithChildScopesData},
     Config, DefaultScope, InstantiateErrorKind, Registry as SyncRegistry, ResolveErrorKind, Scope, Scopes,
@@ -38,31 +38,43 @@ impl Registry {
         S: Scope,
         T: Scopes<N, Scope = S>,
     {
-        const DEPENDENCIES: BTreeSet<Dependency> = BTreeSet::new();
+        let (scope, child_scopes) = T::all();
 
-        let mut scopes_data = Vec::with_capacity(N);
-        for scope in T::all() {
-            let scope_data = scope.into();
+        let mut scopes_data = Vec::with_capacity(N + 1);
+        let scope_data = scope.into();
 
-            entries.insert(
-                TypeInfo::of::<Container>(),
-                InstantiatorData {
-                    instantiator: boxed_container_instantiator(),
-                    dependencies: DEPENDENCIES,
-                    finalizer: None,
-                    config: Config { cache_provides: true },
-                    scope_data,
-                },
-            );
-            scopes_data.push(scope_data);
+        entries.insert(
+            {
+                #[cfg(const_type_id)]
+                const {
+                    TypeInfo::new::<Container>("async_impl::Container")
+                }
+                #[cfg(not(const_type_id))]
+                {
+                    TypeInfo::new::<Container>("async_impl::Container")
+                }
+            },
+            InstantiatorData {
+                instantiator: boxed_container_instantiator(),
+                dependencies: EMPTY_DEPENDENCIES,
+                finalizer: None,
+                config: Config { cache_provides: true },
+                scope_data,
+            },
+        );
+
+        scopes_data.push(scope_data);
+        for scope in child_scopes {
+            scopes_data.push(scope.into());
         }
+
         Self { entries, scopes_data }
     }
 
     #[inline]
     #[must_use]
     pub fn new_with_default_entries() -> Self {
-        Self::new::<DefaultScope, DefaultScope, 6>(BTreeMap::new())
+        Self::new::<DefaultScope, DefaultScope, 5>(BTreeMap::new())
     }
 }
 

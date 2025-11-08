@@ -139,7 +139,7 @@ impl Container {
     #[allow(clippy::missing_errors_doc, clippy::missing_panics_doc)]
     pub fn get<Dep: SendSafety + SyncSafety + 'static>(&self) -> Result<RcThreadSafety<Dep>, ResolveErrorKind> {
         let type_info = TypeInfo::of::<Dep>();
-        let span = info_span!("get", dependency = type_info.short_name(), scope = self.inner.scope_data.name);
+        let span = info_span!("get", dependency = type_info.name, scope = self.inner.scope_data.name);
         let _guard = span.enter();
 
         if let Some(dependency) = self.inner.cache.read().get(&type_info) {
@@ -234,11 +234,7 @@ impl Container {
     #[allow(clippy::missing_errors_doc, clippy::missing_panics_doc)]
     pub fn get_transient<Dep: 'static>(&self) -> Result<Dep, ResolveErrorKind> {
         let type_info = TypeInfo::of::<Dep>();
-        let span = info_span!(
-            "get_transient",
-            dependency = type_info.short_name(),
-            scope = self.inner.scope_data.name
-        );
+        let span = info_span!("get_transient", dependency = type_info.name, scope = self.inner.scope_data.name);
         let _guard = span.enter();
 
         let Some(InstantiatorData {
