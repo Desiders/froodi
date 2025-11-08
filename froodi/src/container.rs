@@ -714,7 +714,7 @@ mod tests {
         inject::{Inject, InjectTransient},
         registry,
         scope::DefaultScope::*,
-        utils::thread_safety::RcThreadSafety,
+        utils::thread_safety::{RcThreadSafety, SendSafety, SyncSafety},
         ResolveErrorKind, Scope,
     };
 
@@ -1242,15 +1242,17 @@ mod tests {
             _phantom: core::marker::PhantomData<*const ()>,
         }
 
-        fn impl_bounds<T: Send + Sync + 'static>() {}
+        fn impl_bounds<T: SendSafety + SyncSafety + 'static>() {}
 
         impl_bounds::<(Container, ContainerInner)>();
 
+        #[allow(unused_variables)]
         let app_container = Container::new(registry! {
             scope(App) [
                 provide(|| Ok(RequestTransient1)),
             ],
         });
+        #[cfg(feature = "thread_safe")]
         std::thread::spawn(move || {
             let request1 = app_container.get_transient::<Request1>();
             let request2 = app_container.get::<Request1>();

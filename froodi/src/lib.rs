@@ -21,7 +21,6 @@ pub(crate) mod registry;
 pub(crate) mod scope;
 pub(crate) mod service;
 
-pub mod autowired;
 pub mod macros_utils;
 pub mod utils;
 
@@ -40,9 +39,6 @@ pub use inject::{Inject, InjectTransient};
 pub use instantiator::{instance, Instantiator};
 pub use registry::{InstantiatorData, Registry};
 pub use scope::{DefaultScope, Scope, Scopes};
-
-#[cfg(feature = "macros")]
-pub use froodi_macros::injectable;
 
 #[cfg(feature = "axum")]
 pub use integrations::axum;
