@@ -391,7 +391,7 @@ impl Container {
         Self {
             inner: RcThreadSafety::new(ContainerInner {
                 cache: RwLock::new(cache),
-                context: RwLock::new(context.clone()),
+                context: context.clone(),
                 registry,
                 scope_data,
                 child_scopes_data: child_scopes_data.clone(),
@@ -401,7 +401,7 @@ impl Container {
             sync: SyncContainer {
                 inner: RcThreadSafety::new(SyncContainerInner {
                     cache: RwLock::new(sync_cache),
-                    context: RwLock::new(context),
+                    context,
                     registry: sync_registry,
                     scope_data,
                     child_scopes_data,
@@ -423,17 +423,17 @@ impl Container {
         close_parent: bool,
     ) -> Self {
         let mut cache = self.inner.cache.write().child();
-        let context = self.inner.context.read().clone();
+        let context = self.inner.context.clone();
         cache.append_context(&mut context.clone());
 
         let mut sync_cache = self.sync.inner.cache.write().child();
-        let sync_context = self.sync.inner.context.read().clone();
+        let sync_context = self.sync.inner.context.clone();
         sync_cache.append_context(&mut sync_context.clone());
 
         Self {
             inner: RcThreadSafety::new(ContainerInner {
                 cache: RwLock::new(cache),
-                context: RwLock::new(context),
+                context,
                 registry,
                 scope_data,
                 child_scopes_data: child_scopes_data.clone(),
@@ -443,7 +443,7 @@ impl Container {
             sync: SyncContainer {
                 inner: RcThreadSafety::new(SyncContainerInner {
                     cache: RwLock::new(sync_cache),
-                    context: RwLock::new(sync_context),
+                    context: sync_context,
                     registry: sync_registry,
                     scope_data,
                     child_scopes_data,
@@ -766,7 +766,7 @@ impl From<BoxedContainerInner> for ContainerInner {
     ) -> Self {
         Self {
             cache: RwLock::new(cache),
-            context: RwLock::new(context),
+            context,
             registry,
             scope_data,
             child_scopes_data,
@@ -787,7 +787,7 @@ impl From<(BoxedContainerInner, BoxedSyncContainerInner)> for Container {
 
 struct ContainerInner {
     cache: RwLock<Cache>,
-    context: RwLock<Context>,
+    context: Context,
     registry: RcThreadSafety<Registry>,
     scope_data: ScopeData,
     child_scopes_data: Vec<ScopeData>,
@@ -821,7 +821,7 @@ impl ContainerInner {
             // We need to clear cache and fill it with the context as in start of the container usage
             #[allow(clippy::assigning_clones)]
             {
-                self.cache.write().map = self.context.read().map.clone();
+                self.cache.write().map = self.context.map.clone();
             }
         })
     }

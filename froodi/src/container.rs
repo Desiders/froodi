@@ -313,7 +313,7 @@ impl Container {
         Container {
             inner: RcThreadSafety::new(ContainerInner {
                 cache: RwLock::new(cache),
-                context: RwLock::new(context),
+                context,
                 registry,
                 scope_data,
                 child_scopes_data,
@@ -332,13 +332,13 @@ impl Container {
         close_parent: bool,
     ) -> Container {
         let mut cache = self.inner.cache.write().child();
-        let context = self.inner.context.read().clone();
+        let context = self.inner.context.clone();
         cache.append_context(&mut context.clone());
 
         Container {
             inner: RcThreadSafety::new(ContainerInner {
                 cache: RwLock::new(cache),
-                context: RwLock::new(context),
+                context,
                 registry,
                 scope_data,
                 child_scopes_data,
@@ -630,7 +630,7 @@ impl From<BoxedContainerInner> for Container {
         Self {
             inner: RcThreadSafety::new(ContainerInner {
                 cache: RwLock::new(cache),
-                context: RwLock::new(context),
+                context,
                 registry,
                 scope_data,
                 child_scopes_data,
@@ -643,7 +643,7 @@ impl From<BoxedContainerInner> for Container {
 
 pub(crate) struct ContainerInner {
     pub(crate) cache: RwLock<Cache>,
-    pub(crate) context: RwLock<Context>,
+    pub(crate) context: Context,
     pub(crate) registry: RcThreadSafety<Registry>,
     pub(crate) scope_data: ScopeData,
     pub(crate) child_scopes_data: Vec<ScopeData>,
@@ -680,7 +680,7 @@ impl ContainerInner {
         // We need to clear cache and fill it with the context as in start of the container usage
         #[allow(clippy::assigning_clones)]
         {
-            self.cache.write().map = self.context.read().map.clone();
+            self.cache.write().map = self.context.map.clone();
         }
 
         if close_parent {
