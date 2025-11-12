@@ -139,7 +139,7 @@ impl Registry {
         if stack.contains(type_info) {
             return true;
         }
-        stack.push(*type_info);
+        stack.push(type_info.clone());
 
         for Dependency { type_info } in dependencies {
             if let Some(InstantiatorData { dependencies, .. }) = self.entries.get(type_info) {
@@ -150,7 +150,7 @@ impl Registry {
         }
 
         stack.pop();
-        visited.insert(*type_info);
+        visited.insert(type_info.clone());
         false
     }
 }

@@ -142,7 +142,7 @@ impl Container {
         let span = info_span!("get", dependency = type_info.name, scope = self.inner.scope_data.name);
         let _guard = span.enter();
 
-        if let Some(dependency) = self.inner.cache.read().get(&type_info) {
+        if let Some(dependency) = { self.inner.cache.read().get(&type_info) } {
             debug!("Found in cache");
             return Ok(dependency);
         }
@@ -167,7 +167,10 @@ impl Container {
                 if parent.inner.scope_data.priority == scope_data.priority {
                     return match parent.get::<Dep>() {
                         Ok(dependency) => {
-                            self.inner.cache.write().insert_rc(type_info, dependency.clone());
+                            {
+                                let dependency = dependency.clone();
+                                self.inner.cache.write().insert_rc(type_info, dependency);
+                            }
                             Ok(dependency)
                         }
                         Err(err) => Err(err),
@@ -189,16 +192,18 @@ impl Container {
             Ok(dependency) => match dependency.downcast::<Dep>() {
                 Ok(dependency) => {
                     let dependency = RcThreadSafety::new(*dependency);
-                    let mut guard = self.inner.cache.write();
                     if config.cache_provides {
-                        guard.insert_rc(type_info, dependency.clone());
+                        let dependency = dependency.clone();
+                        {
+                            self.inner.cache.write().insert_rc(type_info.clone(), dependency);
+                        }
                         debug!("Cached");
                     }
                     if finalizer.is_some() {
-                        guard.push_resolved(Resolved {
-                            type_info,
-                            dependency: dependency.clone(),
-                        });
+                        let dependency = dependency.clone();
+                        {
+                            self.inner.cache.write().push_resolved(Resolved { type_info, dependency });
+                        }
                         debug!("Pushed to resolved set");
                     }
                     Ok(dependency)
@@ -664,7 +669,7 @@ impl ContainerInner {
     }
 
     pub(crate) fn close_with_parent_flag(&self, close_parent: bool) {
-        let mut resolved_set = self.cache.write().take_resolved_set();
+        let mut resolved_set = { self.cache.write().take_resolved_set() };
         while let Some(Resolved { type_info, dependency }) = resolved_set.0.pop_back() {
             let InstantiatorData { finalizer, .. } = self
                 .registry

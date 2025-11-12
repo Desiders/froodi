@@ -7,7 +7,7 @@ use core::{
 
 use crate::utils::thread_safety::RcAnyThreadSafety;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct TypeInfo {
     pub name: &'static str,
     pub id: TypeId,
