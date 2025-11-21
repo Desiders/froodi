@@ -7,6 +7,8 @@ use super::{
     registry::{InstantiatorData, Registry},
     service::Service as _,
 };
+#[cfg(feature = "thread_safe")]
+use crate::lock::StripedLocks;
 use crate::{
     any::TypeInfo,
     async_impl::registry::RegistryWithSync,
@@ -14,6 +16,7 @@ use crate::{
     container::{BoxedContainerInner as BoxedSyncContainerInner, Container as SyncContainer, ContainerInner as SyncContainerInner},
     context::Context,
     errors::{InstantiatorErrorKind, ResolveErrorKind, ScopeErrorKind, ScopeWithErrorKind},
+    lock::StripedSharedLocks,
     registry::Registry as SyncRegistry,
     scope::{Scope, ScopeData, ScopeDataWithChildScopesData},
     utils::thread_safety::{RcThreadSafety, SendSafety, SyncSafety},
@@ -23,6 +26,7 @@ use crate::{
 pub struct Container {
     inner: RcThreadSafety<ContainerInner>,
     sync: SyncContainer,
+    striped_locks: StripedSharedLocks<16>,
 }
 
 impl Container {
@@ -201,6 +205,7 @@ impl Container {
                         return match (Self {
                             inner: parent.clone(),
                             sync: self.sync.clone(),
+                            striped_locks: StripedSharedLocks::default(),
                         })
                         .get::<Dep>()
                         .await
@@ -225,6 +230,13 @@ impl Container {
                 };
                 error!("{}", err);
                 return Err(err);
+            }
+
+            let _guard = self.striped_locks.get(&type_info).lock().await;
+
+            if let Some(dependency) = { self.inner.cache.read().get(&type_info) } {
+                debug!("Found in cache after acquiring lock");
+                return Ok(dependency);
             }
 
             match instantiator.clone().call(self.clone()).await {
@@ -296,6 +308,7 @@ impl Container {
                         return (Self {
                             inner: parent.clone(),
                             sync: self.sync.clone(),
+                            striped_locks: self.striped_locks.clone(),
                         })
                         .get_transient()
                         .await;
@@ -410,7 +423,10 @@ impl Container {
                     parent: Some(sync_container),
                     close_parent,
                 }),
+                #[cfg(feature = "thread_safe")]
+                striped_locks: StripedLocks::default(),
             },
+            striped_locks: StripedSharedLocks::default(),
         }
     }
 
@@ -452,7 +468,10 @@ impl Container {
                     parent: Some(sync_container),
                     close_parent,
                 }),
+                #[cfg(feature = "thread_safe")]
+                striped_locks: StripedLocks::default(),
             },
+            striped_locks: StripedSharedLocks::default(),
         }
     }
 }
@@ -783,6 +802,7 @@ impl From<(BoxedContainerInner, BoxedSyncContainerInner)> for Container {
         Self {
             inner: RcThreadSafety::new(inner.into()),
             sync: sync.into(),
+            striped_locks: StripedSharedLocks::default(),
         }
     }
 }

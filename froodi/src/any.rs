@@ -3,6 +3,7 @@ use core::{
     any::{type_name, TypeId},
     cmp::Ordering,
     fmt::{self, Display, Formatter},
+    hash::{Hash, Hasher},
 };
 
 use crate::utils::thread_safety::RcAnyThreadSafety;
@@ -30,6 +31,12 @@ impl PartialOrd for TypeInfo {
 impl Ord for TypeInfo {
     fn cmp(&self, other: &Self) -> Ordering {
         self.id.cmp(&other.id)
+    }
+}
+
+impl Hash for TypeInfo {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.id.hash(state);
     }
 }
 
