@@ -41,16 +41,7 @@ impl Registry {
         let scope_data = scope.into();
 
         entries.insert(
-            {
-                #[cfg(const_type_id)]
-                const {
-                    TypeInfo::new::<Container>("Container")
-                }
-                #[cfg(not(const_type_id))]
-                {
-                    TypeInfo::new::<Container>("Container")
-                }
-            },
+            TypeInfo::new::<Container>("Container"),
             InstantiatorData {
                 instantiator: boxed_container_instantiator(),
                 dependencies: EMPTY_DEPENDENCIES,
