@@ -28,7 +28,7 @@ impl Display for DFSErrorKind {
             DFSErrorKind::CyclicDependency { graph } => {
                 let (type_info, rest) = graph;
                 let short_name = type_info.short_name();
-                write!(f, "Cyclic dependency detected:\n{} ", short_name)?;
+                write!(f, "Cyclic dependency detected:\n{short_name} ")?;
                 for type_info in rest.iter() {
                     write!(f, "\n↳ depends on {} ({})", type_info.short_name(), type_info.name)?;
                 }

@@ -3,6 +3,8 @@ use parking_lot::RwLock;
 use tracing::{debug, error, info_span};
 
 use super::cache::Cache;
+#[cfg(feature = "thread_safe")]
+use crate::lock::StripedLocks;
 use crate::{
     any::TypeInfo,
     cache::Resolved,
@@ -17,6 +19,8 @@ use crate::{
 #[derive(Clone)]
 pub struct Container {
     pub(crate) inner: RcThreadSafety<ContainerInner>,
+    #[cfg(feature = "thread_safe")]
+    pub(crate) striped_locks: StripedLocks<16>,
 }
 
 impl Container {
@@ -188,6 +192,15 @@ impl Container {
             return Err(err);
         }
 
+        #[cfg(feature = "thread_safe")]
+        let _guard = self.striped_locks.get(&type_info).lock();
+
+        #[cfg(feature = "thread_safe")]
+        if let Some(dependency) = { self.inner.cache.read().get(&type_info) } {
+            debug!("Found in cache after acquiring lock");
+            return Ok(dependency);
+        }
+
         match instantiator.clone().call(self.clone()) {
             Ok(dependency) => match dependency.downcast::<Dep>() {
                 Ok(dependency) => {
@@ -325,6 +338,8 @@ impl Container {
                 parent: Some(self),
                 close_parent,
             }),
+            #[cfg(feature = "thread_safe")]
+            striped_locks: StripedLocks::default(),
         }
     }
 
@@ -350,6 +365,8 @@ impl Container {
                 parent: Some(self),
                 close_parent,
             }),
+            #[cfg(feature = "thread_safe")]
+            striped_locks: StripedLocks::default(),
         }
     }
 }
@@ -642,6 +659,8 @@ impl From<BoxedContainerInner> for Container {
                 parent: parent.map(|parent| (*parent).into()),
                 close_parent,
             }),
+            #[cfg(feature = "thread_safe")]
+            striped_locks: StripedLocks::default(),
         }
     }
 }

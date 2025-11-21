@@ -10,7 +10,7 @@ description = "An ergonomic Rust IoC container"
 keywords = ["ioc", "di", "dependency-injection"]
 categories = ["no-std", "development-tools", "config"]
 
-rust-version = "1.65.0"
+rust-version = "1.66.0"
 
 [dependencies]
 anyhow = { version = "1.0", default-features = false }
@@ -18,9 +18,11 @@ thiserror = { version = "2.0", default-features = false }
 tracing = { version = "0.1", default-features = false }
 parking_lot = { version = "0.12", default-features = false }
 frunk = { version = "0.4", default-features = false }
+ahash = { version = "0.8", default-features = false }
 
 tower-layer = { version = "0.3", optional = true }
 tower-service = { version = "0.3", optional = true }
+tokio = { version = "1", default-features = false, optional = true }
 h2 = { version = "0.4", optional = true }
 
 axum = { version = ">= 0.6, <= 0.8", default-features = false, optional = true }
@@ -34,7 +36,7 @@ default = ["std", "thread_safe"]
 std = ["anyhow/std", "thiserror/std", "tracing/std"]
 
 thread_safe = []
-async = []
+async = ["tokio", "tokio/sync"]
 
 axum = [
     "dep:axum",

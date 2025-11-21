@@ -17,6 +17,7 @@ pub(crate) mod finalizer;
 pub(crate) mod inject;
 pub(crate) mod instantiator;
 pub(crate) mod integrations;
+pub(crate) mod lock;
 pub(crate) mod registry;
 pub(crate) mod scope;
 pub(crate) mod service;
