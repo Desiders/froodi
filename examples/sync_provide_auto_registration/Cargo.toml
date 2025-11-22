@@ -1,0 +1,8 @@
+[package]
+name = "sync_provide_auto_registration"
+version = "1.0.0"
+edition = "2024"
+
+[dependencies]
+froodi = { path = "../../froodi" }
+froodi-auto = { path = "../../froodi-auto" }
