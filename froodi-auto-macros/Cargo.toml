@@ -2,6 +2,15 @@
 name = "froodi-auto-macros"
 version = "1.0.0"
 edition = "2021"
+authors = ["Desiders"]
+license = "Apache-2.0"
+repository = "https://github.com/Desiders/froodi"
+
+description = "Macros for `froodi-auto`"
+keywords = ["macros", "syn", "ioc", "di", "dependency-injection"]
+categories = ["no-std", "development-tools", "config"]
+
+rust-version = "1.68.2"
 
 [dependencies]
 proc-macro2 = "1.0"

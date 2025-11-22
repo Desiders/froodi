@@ -2,6 +2,15 @@
 name = "froodi-auto"
 version = "1.0.0"
 edition = "2021"
+authors = ["Desiders"]
+license = "Apache-2.0"
+repository = "https://github.com/Desiders/froodi"
+
+description = "Auto registration factories for `froodi`"
+keywords = ["macros", "syn", "ioc", "di", "dependency-injection"]
+categories = ["no-std", "development-tools", "config"]
+
+rust-version = "1.71.1"
 
 [dependencies]
 linkme = "0.3"
@@ -13,7 +22,9 @@ froodi-auto-macros = { version = "1", path = "../froodi-auto-macros", default-fe
 tokio = { version = "1", features = ["rt", "macros"] }
 
 [features]
-default = ["macros"]
+default = ["std", "macros"]
+
+std = ["froodi/std"]
 
 async = ["froodi/async"]
 macros = ["froodi-auto-macros"]
