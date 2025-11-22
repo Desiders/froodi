@@ -65,8 +65,13 @@ fn expand_instantiator_impl_for_method(impl_item_fn: &ImplItemFn, self_ty: &Type
     );
 
     Ok(quote_spanned! { impl_span =>
-        #[derive(Clone)]
         struct #autowired_struct_name<T>(core::marker::PhantomData<T>);
+
+        impl<T> Clone for #autowired_struct_name<T> {
+            fn clone(&self) -> Self {
+                Self(core::marker::PhantomData)
+            }
+        }
 
         #instantiator_impl_quote
 

@@ -12,10 +12,9 @@ use froodi::{
 };
 use froodi_auto::{entry_getters::__ASYNC_ENTRY_GETTERS, injectable, AutoRegistriesWithSync as _};
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 struct D;
 
-#[derive(Clone)]
 struct C;
 
 #[injectable]
@@ -26,7 +25,6 @@ impl C {
     }
 }
 
-#[derive(Clone)]
 struct B;
 
 #[injectable]
@@ -39,7 +37,6 @@ impl B {
     async fn fin(_val: RcThreadSafety<Self>) {}
 }
 
-#[derive(Clone)]
 #[allow(dead_code)]
 struct A(RcThreadSafety<B>, RcThreadSafety<C>);
 
