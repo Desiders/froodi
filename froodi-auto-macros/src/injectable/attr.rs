@@ -10,7 +10,7 @@ pub(crate) mod kw {
     syn::custom_keyword!(config);
 }
 
-pub(super) struct ProvideArgs {
+pub(crate) struct ProvideArgs {
     pub(super) scope: Expr,
     pub(super) finalizer: Option<(kw::finalizer, Expr)>,
     pub(super) config: Option<(kw::config, Expr)>,
