@@ -1,14 +1,14 @@
 use alloc::{boxed::Box, vec::Vec};
 use core::future::Future;
 use parking_lot::RwLock;
-use tracing::{debug, error, info_span, Instrument};
+use tracing::{debug, error, info_span, trace, Instrument};
 
 use super::{
     registry::{InstantiatorData, Registry},
     service::Service as _,
 };
 #[cfg(feature = "thread_safe")]
-use crate::lock::StripedLocks;
+use crate::lock::PerTypeLocks;
 use crate::{
     any::TypeInfo,
     async_impl::registry::RegistryWithSync,
@@ -16,7 +16,7 @@ use crate::{
     container::{BoxedContainerInner as BoxedSyncContainerInner, Container as SyncContainer, ContainerInner as SyncContainerInner},
     context::Context,
     errors::{InstantiatorErrorKind, ResolveErrorKind, ScopeErrorKind, ScopeWithErrorKind},
-    lock::StripedSharedLocks,
+    lock::PerTypeSharedLocks,
     registry::Registry as SyncRegistry,
     scope::{Scope, ScopeData, ScopeDataWithChildScopesData},
     utils::thread_safety::{RcThreadSafety, SendSafety, SyncSafety},
@@ -26,7 +26,7 @@ use crate::{
 pub struct Container {
     inner: RcThreadSafety<ContainerInner>,
     sync: SyncContainer,
-    striped_locks: StripedSharedLocks<16>,
+    per_type_locks: PerTypeSharedLocks,
 }
 
 impl Container {
@@ -57,6 +57,8 @@ impl Container {
             child_scopes_data: scope_with_child_scopes.child_scopes_data.clone(),
             parent: None,
             close_parent: false,
+            #[cfg(feature = "thread_safe")]
+            per_type_locks: PerTypeLocks::default(),
         };
         let mut container = BoxedContainerInner {
             cache: Cache::new(),
@@ -108,6 +110,8 @@ impl Container {
             child_scopes_data: scope_with_child_scopes.child_scopes_data.clone(),
             parent: None,
             close_parent: false,
+            #[cfg(feature = "thread_safe")]
+            per_type_locks: PerTypeLocks::default(),
         };
         let mut container = BoxedContainerInner {
             cache: Cache::new(),
@@ -205,7 +209,7 @@ impl Container {
                         return match (Self {
                             inner: parent.clone(),
                             sync: self.sync.clone(),
-                            striped_locks: StripedSharedLocks::default(),
+                            per_type_locks: self.per_type_locks.clone(),
                         })
                         .get::<Dep>()
                         .await
@@ -232,10 +236,12 @@ impl Container {
                 return Err(err);
             }
 
-            let _guard = self.striped_locks.get(&type_info).lock().await;
+            trace!("Lock instantiator call");
+            let inst_call_lock = self.per_type_locks.get(type_info.id);
+            let _guard = inst_call_lock.lock().await;
 
             if let Some(dependency) = { self.inner.cache.read().get(&type_info) } {
-                debug!("Found in cache after acquiring lock");
+                debug!("Found in cache after lock");
                 return Ok(dependency);
             }
 
@@ -308,7 +314,7 @@ impl Container {
                         return (Self {
                             inner: parent.clone(),
                             sync: self.sync.clone(),
-                            striped_locks: self.striped_locks.clone(),
+                            per_type_locks: self.per_type_locks.clone(),
                         })
                         .get_transient()
                         .await;
@@ -414,6 +420,8 @@ impl Container {
                 close_parent,
             }),
             sync: SyncContainer {
+                #[cfg(feature = "thread_safe")]
+                per_type_locks: self.sync.per_type_locks.clone(),
                 inner: RcThreadSafety::new(SyncContainerInner {
                     cache: RwLock::new(sync_cache),
                     context,
@@ -423,10 +431,8 @@ impl Container {
                     parent: Some(sync_container),
                     close_parent,
                 }),
-                #[cfg(feature = "thread_safe")]
-                striped_locks: StripedLocks::default(),
             },
-            striped_locks: StripedSharedLocks::default(),
+            per_type_locks: self.per_type_locks.clone(),
         }
     }
 
@@ -459,6 +465,8 @@ impl Container {
                 close_parent,
             }),
             sync: SyncContainer {
+                #[cfg(feature = "thread_safe")]
+                per_type_locks: self.sync.per_type_locks.clone(),
                 inner: RcThreadSafety::new(SyncContainerInner {
                     cache: RwLock::new(sync_cache),
                     context: sync_context,
@@ -468,10 +476,8 @@ impl Container {
                     parent: Some(sync_container),
                     close_parent,
                 }),
-                #[cfg(feature = "thread_safe")]
-                striped_locks: StripedLocks::default(),
             },
-            striped_locks: StripedSharedLocks::default(),
+            per_type_locks: self.per_type_locks.clone(),
         }
     }
 }
@@ -762,12 +768,12 @@ impl BoxedContainerInner {
         cache.append_context(&mut context.clone());
 
         Self {
+            parent: Some(Box::new(self)),
             cache,
             context,
             registry,
             scope_data,
             child_scopes_data,
-            parent: Some(Box::new(self)),
             close_parent,
         }
     }
@@ -786,12 +792,12 @@ impl From<BoxedContainerInner> for ContainerInner {
         }: BoxedContainerInner,
     ) -> Self {
         Self {
+            parent: parent.map(|parent| RcThreadSafety::new((*parent).into())),
             cache: RwLock::new(cache),
             context,
             registry,
             scope_data,
             child_scopes_data,
-            parent: parent.map(|parent| RcThreadSafety::new((*parent).into())),
             close_parent,
         }
     }
@@ -802,7 +808,7 @@ impl From<(BoxedContainerInner, BoxedSyncContainerInner)> for Container {
         Self {
             inner: RcThreadSafety::new(inner.into()),
             sync: sync.into(),
-            striped_locks: StripedSharedLocks::default(),
+            per_type_locks: PerTypeSharedLocks::default(),
         }
     }
 }

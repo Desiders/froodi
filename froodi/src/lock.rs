@@ -1,46 +1,48 @@
 #![allow(dead_code)]
 
-use ahash::AHasher;
-use core::{
-    array,
-    hash::{Hash, Hasher as _},
-};
-use parking_lot::Mutex;
+use alloc::collections::BTreeMap;
+use core::any::TypeId;
+use parking_lot::{Mutex, RwLock};
 
 use crate::utils::thread_safety::RcThreadSafety;
 
-#[allow(clippy::cast_possible_truncation)]
-fn stripe_index<const N: usize>(val: impl Hash) -> usize {
-    let mut hasher = AHasher::default();
-    val.hash(&mut hasher);
-
-    hasher.finish() as usize % N
-}
-
 #[derive(Clone)]
-pub(crate) struct StripedLocks<const N: usize> {
-    stripes: RcThreadSafety<[Mutex<()>; N]>,
+pub(crate) struct PerTypeLocks {
+    locks: RcThreadSafety<RwLock<BTreeMap<TypeId, RcThreadSafety<Mutex<()>>>>>,
 }
 
-impl<const N: usize> StripedLocks<N> {
+impl PerTypeLocks {
     #[inline]
     #[must_use]
     fn new() -> Self {
         Self {
-            stripes: RcThreadSafety::new(array::from_fn(|_| Mutex::new(()))),
+            locks: RcThreadSafety::new(RwLock::new(BTreeMap::new())),
         }
     }
 }
 
-impl<const N: usize> StripedLocks<N> {
+impl PerTypeLocks {
     #[inline]
     #[must_use]
-    pub(crate) fn get(&self, val: impl Hash) -> &Mutex<()> {
-        &self.stripes[stripe_index::<N>(val)]
+    pub(crate) fn get(&self, type_id: TypeId) -> RcThreadSafety<Mutex<()>> {
+        if let Some(lock) = self.locks.read().get(&type_id) {
+            return lock.clone();
+        }
+
+        self.locks
+            .write()
+            .entry(type_id)
+            .or_insert_with(|| RcThreadSafety::new(Mutex::new(())))
+            .clone()
+    }
+
+    #[inline]
+    pub(crate) fn cleanup_unused(&self) {
+        self.locks.write().retain(|_, lock| RcThreadSafety::strong_count(lock) > 1);
     }
 }
 
-impl<const N: usize> Default for StripedLocks<N> {
+impl Default for PerTypeLocks {
     #[inline]
     fn default() -> Self {
         Self::new()
@@ -51,32 +53,45 @@ impl<const N: usize> Default for StripedLocks<N> {
 mod async_impl {
     use tokio::sync::Mutex;
 
-    use super::{array, stripe_index, Hash, RcThreadSafety};
+    use super::{BTreeMap, RcThreadSafety, RwLock, TypeId};
 
     #[derive(Clone)]
-    pub(crate) struct StripedSharedLocks<const N: usize> {
-        stripes: RcThreadSafety<[Mutex<()>; N]>,
+    pub(crate) struct PerTypeSharedLocks {
+        locks: RcThreadSafety<RwLock<BTreeMap<TypeId, RcThreadSafety<Mutex<()>>>>>,
     }
 
-    impl<const N: usize> StripedSharedLocks<N> {
+    impl PerTypeSharedLocks {
         #[inline]
         #[must_use]
         fn new() -> Self {
             Self {
-                stripes: RcThreadSafety::new(array::from_fn(|_| Mutex::new(()))),
+                locks: RcThreadSafety::new(RwLock::new(BTreeMap::new())),
             }
         }
     }
 
-    impl<const N: usize> StripedSharedLocks<N> {
+    impl PerTypeSharedLocks {
         #[inline]
         #[must_use]
-        pub(crate) fn get(&self, val: impl Hash) -> &Mutex<()> {
-            &self.stripes[stripe_index::<N>(val)]
+        pub(crate) fn get(&self, type_id: TypeId) -> RcThreadSafety<Mutex<()>> {
+            if let Some(lock) = self.locks.read().get(&type_id) {
+                return lock.clone();
+            }
+
+            self.locks
+                .write()
+                .entry(type_id)
+                .or_insert_with(|| RcThreadSafety::new(Mutex::new(())))
+                .clone()
+        }
+
+        #[inline]
+        pub(crate) fn cleanup_unused(&self) {
+            self.locks.write().retain(|_, lock| RcThreadSafety::strong_count(lock) > 1);
         }
     }
 
-    impl<const N: usize> Default for StripedSharedLocks<N> {
+    impl Default for PerTypeSharedLocks {
         #[inline]
         fn default() -> Self {
             Self::new()
@@ -85,4 +100,4 @@ mod async_impl {
 }
 
 #[cfg(feature = "async")]
-pub(crate) use async_impl::StripedSharedLocks;
+pub(crate) use async_impl::PerTypeSharedLocks;

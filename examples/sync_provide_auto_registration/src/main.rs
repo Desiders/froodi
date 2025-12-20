@@ -23,6 +23,7 @@ struct PostgresUserRepo;
 
 #[injectable]
 impl PostgresUserRepo {
+    #[allow(clippy::unnecessary_wraps)]
     #[provide(Request)]
     fn new(_config: Inject<Config>) -> InstantiatorResult<PostgresUserRepo> {
         Ok(Self)

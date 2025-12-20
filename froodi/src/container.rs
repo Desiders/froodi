@@ -1,10 +1,12 @@
 use alloc::{boxed::Box, vec::Vec};
 use parking_lot::RwLock;
+#[cfg(feature = "thread_safe")]
+use tracing::trace;
 use tracing::{debug, error, info_span};
 
 use super::cache::Cache;
 #[cfg(feature = "thread_safe")]
-use crate::lock::StripedLocks;
+use crate::lock::PerTypeLocks;
 use crate::{
     any::TypeInfo,
     cache::Resolved,
@@ -20,7 +22,7 @@ use crate::{
 pub struct Container {
     pub(crate) inner: RcThreadSafety<ContainerInner>,
     #[cfg(feature = "thread_safe")]
-    pub(crate) striped_locks: StripedLocks<16>,
+    pub(crate) per_type_locks: PerTypeLocks,
 }
 
 impl Container {
@@ -49,6 +51,8 @@ impl Container {
             child_scopes_data: scope_with_child_scopes.child_scopes_data.clone(),
             parent: None,
             close_parent: false,
+            #[cfg(feature = "thread_safe")]
+            per_type_locks: PerTypeLocks::default(),
         };
 
         let mut child = scope_with_child_scopes.child();
@@ -87,6 +91,8 @@ impl Container {
             child_scopes_data: scope_with_child_scopes.child_scopes_data.clone(),
             parent: None,
             close_parent: false,
+            #[cfg(feature = "thread_safe")]
+            per_type_locks: PerTypeLocks::default(),
         };
 
         let priority = scope.priority();
@@ -193,11 +199,15 @@ impl Container {
         }
 
         #[cfg(feature = "thread_safe")]
-        let _guard = self.striped_locks.get(&type_info).lock();
+        trace!("Lock instantiator call");
+        #[cfg(feature = "thread_safe")]
+        let inst_call_lock = self.per_type_locks.get(type_info.id);
+        #[cfg(feature = "thread_safe")]
+        let _guard = inst_call_lock.lock();
 
         #[cfg(feature = "thread_safe")]
         if let Some(dependency) = { self.inner.cache.read().get(&type_info) } {
-            debug!("Found in cache after acquiring lock");
+            debug!("Found in cache after lock");
             return Ok(dependency);
         }
 
@@ -329,6 +339,8 @@ impl Container {
         cache.append_context(&mut context.clone());
 
         Container {
+            #[cfg(feature = "thread_safe")]
+            per_type_locks: self.per_type_locks.clone(),
             inner: RcThreadSafety::new(ContainerInner {
                 cache: RwLock::new(cache),
                 context,
@@ -338,8 +350,6 @@ impl Container {
                 parent: Some(self),
                 close_parent,
             }),
-            #[cfg(feature = "thread_safe")]
-            striped_locks: StripedLocks::default(),
         }
     }
 
@@ -356,6 +366,8 @@ impl Container {
         cache.append_context(&mut context.clone());
 
         Container {
+            #[cfg(feature = "thread_safe")]
+            per_type_locks: self.per_type_locks.clone(),
             inner: RcThreadSafety::new(ContainerInner {
                 cache: RwLock::new(cache),
                 context,
@@ -365,8 +377,6 @@ impl Container {
                 parent: Some(self),
                 close_parent,
             }),
-            #[cfg(feature = "thread_safe")]
-            striped_locks: StripedLocks::default(),
         }
     }
 }
@@ -610,6 +620,8 @@ pub(crate) struct BoxedContainerInner {
     pub(crate) child_scopes_data: Vec<ScopeData>,
     pub(crate) parent: Option<Box<BoxedContainerInner>>,
     pub(crate) close_parent: bool,
+    #[cfg(feature = "thread_safe")]
+    pub(crate) per_type_locks: PerTypeLocks,
 }
 
 impl BoxedContainerInner {
@@ -626,12 +638,14 @@ impl BoxedContainerInner {
         cache.append_context(&mut context.clone());
 
         Self {
+            #[cfg(feature = "thread_safe")]
+            per_type_locks: self.per_type_locks.clone(),
+            parent: Some(Box::new(self)),
             cache,
             context,
             registry,
             scope_data,
             child_scopes_data,
-            parent: Some(Box::new(self)),
             close_parent,
         }
     }
@@ -647,6 +661,8 @@ impl From<BoxedContainerInner> for Container {
             child_scopes_data,
             parent,
             close_parent,
+            #[cfg(feature = "thread_safe")]
+            per_type_locks,
         }: BoxedContainerInner,
     ) -> Self {
         Self {
@@ -660,7 +676,7 @@ impl From<BoxedContainerInner> for Container {
                 close_parent,
             }),
             #[cfg(feature = "thread_safe")]
-            striped_locks: StripedLocks::default(),
+            per_type_locks,
         }
     }
 }
