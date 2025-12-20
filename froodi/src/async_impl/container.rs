@@ -57,6 +57,8 @@ impl Container {
             child_scopes_data: scope_with_child_scopes.child_scopes_data.clone(),
             parent: None,
             close_parent: false,
+            #[cfg(feature = "thread_safe")]
+            per_type_locks: PerTypeLocks::default(),
         };
         let mut container = BoxedContainerInner {
             cache: Cache::new(),
@@ -108,6 +110,8 @@ impl Container {
             child_scopes_data: scope_with_child_scopes.child_scopes_data.clone(),
             parent: None,
             close_parent: false,
+            #[cfg(feature = "thread_safe")]
+            per_type_locks: PerTypeLocks::default(),
         };
         let mut container = BoxedContainerInner {
             cache: Cache::new(),
@@ -205,7 +209,7 @@ impl Container {
                         return match (Self {
                             inner: parent.clone(),
                             sync: self.sync.clone(),
-                            per_type_locks: PerTypeSharedLocks::default(),
+                            per_type_locks: self.per_type_locks.clone(),
                         })
                         .get::<Dep>()
                         .await
@@ -416,6 +420,8 @@ impl Container {
                 close_parent,
             }),
             sync: SyncContainer {
+                #[cfg(feature = "thread_safe")]
+                per_type_locks: self.sync.per_type_locks.clone(),
                 inner: RcThreadSafety::new(SyncContainerInner {
                     cache: RwLock::new(sync_cache),
                     context,
@@ -425,10 +431,8 @@ impl Container {
                     parent: Some(sync_container),
                     close_parent,
                 }),
-                #[cfg(feature = "thread_safe")]
-                per_type_locks: PerTypeLocks::default(),
             },
-            per_type_locks: PerTypeSharedLocks::default(),
+            per_type_locks: self.per_type_locks.clone(),
         }
     }
 
@@ -461,6 +465,8 @@ impl Container {
                 close_parent,
             }),
             sync: SyncContainer {
+                #[cfg(feature = "thread_safe")]
+                per_type_locks: self.sync.per_type_locks.clone(),
                 inner: RcThreadSafety::new(SyncContainerInner {
                     cache: RwLock::new(sync_cache),
                     context: sync_context,
@@ -470,10 +476,8 @@ impl Container {
                     parent: Some(sync_container),
                     close_parent,
                 }),
-                #[cfg(feature = "thread_safe")]
-                per_type_locks: PerTypeLocks::default(),
             },
-            per_type_locks: PerTypeSharedLocks::default(),
+            per_type_locks: self.per_type_locks.clone(),
         }
     }
 }
@@ -764,12 +768,12 @@ impl BoxedContainerInner {
         cache.append_context(&mut context.clone());
 
         Self {
+            parent: Some(Box::new(self)),
             cache,
             context,
             registry,
             scope_data,
             child_scopes_data,
-            parent: Some(Box::new(self)),
             close_parent,
         }
     }
@@ -788,12 +792,12 @@ impl From<BoxedContainerInner> for ContainerInner {
         }: BoxedContainerInner,
     ) -> Self {
         Self {
+            parent: parent.map(|parent| RcThreadSafety::new((*parent).into())),
             cache: RwLock::new(cache),
             context,
             registry,
             scope_data,
             child_scopes_data,
-            parent: parent.map(|parent| RcThreadSafety::new((*parent).into())),
             close_parent,
         }
     }

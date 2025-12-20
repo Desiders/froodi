@@ -51,6 +51,8 @@ impl Container {
             child_scopes_data: scope_with_child_scopes.child_scopes_data.clone(),
             parent: None,
             close_parent: false,
+            #[cfg(feature = "thread_safe")]
+            per_type_locks: PerTypeLocks::default(),
         };
 
         let mut child = scope_with_child_scopes.child();
@@ -89,6 +91,8 @@ impl Container {
             child_scopes_data: scope_with_child_scopes.child_scopes_data.clone(),
             parent: None,
             close_parent: false,
+            #[cfg(feature = "thread_safe")]
+            per_type_locks: PerTypeLocks::default(),
         };
 
         let priority = scope.priority();
@@ -335,6 +339,8 @@ impl Container {
         cache.append_context(&mut context.clone());
 
         Container {
+            #[cfg(feature = "thread_safe")]
+            per_type_locks: self.per_type_locks.clone(),
             inner: RcThreadSafety::new(ContainerInner {
                 cache: RwLock::new(cache),
                 context,
@@ -344,8 +350,6 @@ impl Container {
                 parent: Some(self),
                 close_parent,
             }),
-            #[cfg(feature = "thread_safe")]
-            per_type_locks: PerTypeLocks::default(),
         }
     }
 
@@ -362,6 +366,8 @@ impl Container {
         cache.append_context(&mut context.clone());
 
         Container {
+            #[cfg(feature = "thread_safe")]
+            per_type_locks: self.per_type_locks.clone(),
             inner: RcThreadSafety::new(ContainerInner {
                 cache: RwLock::new(cache),
                 context,
@@ -371,8 +377,6 @@ impl Container {
                 parent: Some(self),
                 close_parent,
             }),
-            #[cfg(feature = "thread_safe")]
-            per_type_locks: PerTypeLocks::default(),
         }
     }
 }
@@ -616,6 +620,8 @@ pub(crate) struct BoxedContainerInner {
     pub(crate) child_scopes_data: Vec<ScopeData>,
     pub(crate) parent: Option<Box<BoxedContainerInner>>,
     pub(crate) close_parent: bool,
+    #[cfg(feature = "thread_safe")]
+    pub(crate) per_type_locks: PerTypeLocks,
 }
 
 impl BoxedContainerInner {
@@ -632,12 +638,14 @@ impl BoxedContainerInner {
         cache.append_context(&mut context.clone());
 
         Self {
+            #[cfg(feature = "thread_safe")]
+            per_type_locks: self.per_type_locks.clone(),
+            parent: Some(Box::new(self)),
             cache,
             context,
             registry,
             scope_data,
             child_scopes_data,
-            parent: Some(Box::new(self)),
             close_parent,
         }
     }
@@ -653,6 +661,8 @@ impl From<BoxedContainerInner> for Container {
             child_scopes_data,
             parent,
             close_parent,
+            #[cfg(feature = "thread_safe")]
+            per_type_locks,
         }: BoxedContainerInner,
     ) -> Self {
         Self {
@@ -666,7 +676,7 @@ impl From<BoxedContainerInner> for Container {
                 close_parent,
             }),
             #[cfg(feature = "thread_safe")]
-            per_type_locks: PerTypeLocks::default(),
+            per_type_locks,
         }
     }
 }
