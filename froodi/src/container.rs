@@ -1,10 +1,12 @@
 use alloc::{boxed::Box, vec::Vec};
 use parking_lot::RwLock;
+#[cfg(feature = "thread_safe")]
+use tracing::trace;
 use tracing::{debug, error, info_span};
 
 use super::cache::Cache;
 #[cfg(feature = "thread_safe")]
-use crate::lock::StripedLocks;
+use crate::lock::PerTypeLocks;
 use crate::{
     any::TypeInfo,
     cache::Resolved,
@@ -20,7 +22,7 @@ use crate::{
 pub struct Container {
     pub(crate) inner: RcThreadSafety<ContainerInner>,
     #[cfg(feature = "thread_safe")]
-    pub(crate) striped_locks: StripedLocks<16>,
+    pub(crate) per_type_locks: PerTypeLocks,
 }
 
 impl Container {
@@ -193,11 +195,15 @@ impl Container {
         }
 
         #[cfg(feature = "thread_safe")]
-        let _guard = self.striped_locks.get(&type_info).lock();
+        trace!("Lock instantiator call");
+        #[cfg(feature = "thread_safe")]
+        let inst_call_lock = self.per_type_locks.get(type_info.id);
+        #[cfg(feature = "thread_safe")]
+        let _guard = inst_call_lock.lock();
 
         #[cfg(feature = "thread_safe")]
         if let Some(dependency) = { self.inner.cache.read().get(&type_info) } {
-            debug!("Found in cache after acquiring lock");
+            debug!("Found in cache after lock");
             return Ok(dependency);
         }
 
@@ -339,7 +345,7 @@ impl Container {
                 close_parent,
             }),
             #[cfg(feature = "thread_safe")]
-            striped_locks: StripedLocks::default(),
+            per_type_locks: PerTypeLocks::default(),
         }
     }
 
@@ -366,7 +372,7 @@ impl Container {
                 close_parent,
             }),
             #[cfg(feature = "thread_safe")]
-            striped_locks: StripedLocks::default(),
+            per_type_locks: PerTypeLocks::default(),
         }
     }
 }
@@ -660,7 +666,7 @@ impl From<BoxedContainerInner> for Container {
                 close_parent,
             }),
             #[cfg(feature = "thread_safe")]
-            striped_locks: StripedLocks::default(),
+            per_type_locks: PerTypeLocks::default(),
         }
     }
 }
