@@ -116,6 +116,15 @@ doctest = false
 doc = false
 required-features = ["async", "thread_safe"]
 
+[[bench]]
+name = "compare_container_resolve"
+path = "benches/compare/sync.rs"
+harness = false
+test = false
+doctest = false
+doc = false
+required-features = []
+
 [[test]]
 name = "auto_registration_async"
 path = "tests/auto/async.rs"
