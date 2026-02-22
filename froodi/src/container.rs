@@ -171,25 +171,28 @@ impl Container {
             return Err(err);
         };
 
-        if self.inner.scope_data.priority > scope_data.priority {
-            let mut parent = self.inner.parent.as_ref().unwrap();
-            loop {
-                if parent.inner.scope_data.priority == scope_data.priority {
-                    return match parent.get::<Dep>() {
-                        Ok(dependency) => {
-                            {
-                                let dependency = dependency.clone();
-                                self.inner.cache.write().insert_rc(type_info, dependency);
-                            }
-                            Ok(dependency)
-                        }
-                        Err(err) => Err(err),
-                    };
-                }
-                parent = parent.inner.parent.as_ref().unwrap();
+        let current_priority = self.inner.scope_data.priority;
+        let dep_priority = scope_data.priority;
+
+        if current_priority > dep_priority {
+            let mut parent = self
+                .inner
+                .parent
+                .as_ref()
+                .expect("parent should exist for lower-priority dependency");
+            while parent.inner.scope_data.priority != dep_priority {
+                parent = parent.inner.parent.as_ref().expect("parent with target priority should exist");
             }
+
+            return match parent.get::<Dep>() {
+                Ok(dependency) => {
+                    self.inner.cache.write().insert_rc(type_info, dependency.clone());
+                    Ok(dependency)
+                }
+                Err(err) => Err(err),
+            };
         }
-        if scope_data.priority > self.inner.scope_data.priority {
+        if dep_priority > current_priority {
             let err = ResolveErrorKind::NoAccessible {
                 expected_scope_data: *scope_data,
                 actual_scope_data: self.inner.scope_data,
@@ -215,19 +218,21 @@ impl Container {
             Ok(dependency) => match dependency.downcast::<Dep>() {
                 Ok(dependency) => {
                     let dependency = RcThreadSafety::new(*dependency);
-                    if config.cache_provides {
-                        let dependency = dependency.clone();
-                        {
-                            self.inner.cache.write().insert_rc(type_info.clone(), dependency);
+                    let cache_provides = config.cache_provides;
+                    let has_finalizer = finalizer.is_some();
+                    if cache_provides || has_finalizer {
+                        let mut cache = self.inner.cache.write();
+                        if cache_provides {
+                            cache.insert_rc(type_info.clone(), dependency.clone());
+                            debug!("Cached");
                         }
-                        debug!("Cached");
-                    }
-                    if finalizer.is_some() {
-                        let dependency = dependency.clone();
-                        {
-                            self.inner.cache.write().push_resolved(Resolved { type_info, dependency });
+                        if has_finalizer {
+                            cache.push_resolved(Resolved {
+                                type_info,
+                                dependency: dependency.clone(),
+                            });
+                            debug!("Pushed to resolved set");
                         }
-                        debug!("Pushed to resolved set");
                     }
                     Ok(dependency)
                 }
@@ -274,16 +279,21 @@ impl Container {
             return Err(err);
         };
 
-        if self.inner.scope_data.priority > scope_data.priority {
-            let mut parent = self.inner.parent.as_ref().unwrap();
-            loop {
-                if parent.inner.scope_data.priority == scope_data.priority {
-                    return parent.get_transient();
-                }
-                parent = parent.inner.parent.as_ref().unwrap();
+        let current_priority = self.inner.scope_data.priority;
+        let dep_priority = scope_data.priority;
+
+        if current_priority > dep_priority {
+            let mut parent = self
+                .inner
+                .parent
+                .as_ref()
+                .expect("parent should exist for lower-priority dependency");
+            while parent.inner.scope_data.priority != dep_priority {
+                parent = parent.inner.parent.as_ref().expect("parent with target priority should exist");
             }
+            return parent.get_transient();
         }
-        if scope_data.priority > self.inner.scope_data.priority {
+        if dep_priority > current_priority {
             let err = ResolveErrorKind::NoAccessible {
                 expected_scope_data: *scope_data,
                 actual_scope_data: self.inner.scope_data,
@@ -336,7 +346,7 @@ impl Container {
         close_parent: bool,
     ) -> Container {
         let mut cache = self.inner.cache.write().child();
-        cache.append_context(&mut context.clone());
+        cache.extend_context(&context);
 
         Container {
             #[cfg(feature = "thread_safe")]
@@ -363,7 +373,7 @@ impl Container {
     ) -> Container {
         let mut cache = self.inner.cache.write().child();
         let context = self.inner.context.clone();
-        cache.append_context(&mut context.clone());
+        cache.extend_context(&context);
 
         Container {
             #[cfg(feature = "thread_safe")]
@@ -635,7 +645,7 @@ impl BoxedContainerInner {
     ) -> Self {
         let mut cache = self.cache.child();
         let context = self.context.clone();
-        cache.append_context(&mut context.clone());
+        cache.extend_context(&context);
 
         Self {
             #[cfg(feature = "thread_safe")]

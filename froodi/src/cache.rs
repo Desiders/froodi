@@ -33,8 +33,9 @@ impl Cache {
     }
 
     #[inline]
-    pub(crate) fn append_context(&mut self, context: &mut Context) {
-        self.map.append(&mut context.map);
+    pub(crate) fn extend_context(&mut self, context: &Context) {
+        self.map
+            .extend(context.map.iter().map(|(type_info, value)| (type_info.clone(), value.clone())));
     }
 
     #[inline]
