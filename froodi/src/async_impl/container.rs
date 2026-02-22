@@ -1,7 +1,7 @@
 use alloc::{boxed::Box, vec::Vec};
 use core::future::Future;
 use parking_lot::RwLock;
-use tracing::{debug, error, info_span, trace, Instrument};
+use tracing::{debug, error, trace};
 
 use super::{
     registry::{InstantiatorData, Registry},
@@ -182,7 +182,8 @@ impl Container {
         &self,
     ) -> impl Future<Output = Result<RcThreadSafety<Dep>, ResolveErrorKind>> + SendSafety + '_ {
         let type_info = TypeInfo::of::<Dep>();
-        let span = info_span!("get", dependency = type_info.name, scope = self.inner.scope_data.name);
+        let dep_name = type_info.name;
+        let scope_name = self.inner.scope_data.name;
         let fut = async move {
             if let Some(dependency) = { self.inner.cache.read().get(&type_info) } {
                 debug!("Found in cache");
@@ -235,7 +236,7 @@ impl Container {
                     expected_scope_data: *scope_data,
                     actual_scope_data: self.inner.scope_data,
                 };
-                error!("{}", err);
+                error!(dependency = dep_name, scope = scope_name, error = %err, "Failed to resolve dependency");
                 return Err(err);
             }
 
@@ -275,21 +276,20 @@ impl Container {
                             expected: type_info,
                             actual: TypeInfo::of_val(&*incorrect_type),
                         };
-                        error!("{}", err);
+                        error!(dependency = dep_name, scope = scope_name, error = %err, "Failed to resolve dependency");
                         Err(err)
                     }
                 },
                 Err(InstantiatorErrorKind::Deps(err)) => {
-                    error!("{}", err);
+                    error!(dependency = dep_name, scope = scope_name, error = %err, "Failed to resolve dependency");
                     Err(ResolveErrorKind::Instantiator(InstantiatorErrorKind::Deps(Box::new(err))))
                 }
                 Err(InstantiatorErrorKind::Factory(err)) => {
-                    error!("{}", err);
+                    error!(dependency = dep_name, scope = scope_name, error = %err, "Failed to resolve dependency");
                     Err(ResolveErrorKind::Instantiator(InstantiatorErrorKind::Factory(err)))
                 }
             }
-        }
-        .instrument(span);
+        };
         Box::pin(fut)
     }
 
@@ -302,7 +302,8 @@ impl Container {
     #[allow(clippy::missing_errors_doc, clippy::multiple_bound_locations, clippy::missing_panics_doc)]
     pub fn get_transient<Dep: 'static>(&self) -> impl Future<Output = Result<Dep, ResolveErrorKind>> + SendSafety + '_ {
         let type_info = TypeInfo::of::<Dep>();
-        let span = info_span!("get_transient", dependency = type_info.name, scope = self.inner.scope_data.name);
+        let dep_name = type_info.name;
+        let scope_name = self.inner.scope_data.name;
         let fut = async move {
             let Some(InstantiatorData {
                 instantiator, scope_data, ..
@@ -337,7 +338,7 @@ impl Container {
                     expected_scope_data: *scope_data,
                     actual_scope_data: self.inner.scope_data,
                 };
-                error!("{}", err);
+                error!(dependency = dep_name, scope = scope_name, error = %err, "Failed to resolve transient dependency");
                 return Err(err);
             }
 
@@ -349,21 +350,20 @@ impl Container {
                             expected: type_info,
                             actual: TypeInfo::of_val(&*incorrect_type),
                         };
-                        error!("{}", err);
+                        error!(dependency = dep_name, scope = scope_name, error = %err, "Failed to resolve transient dependency");
                         Err(err)
                     }
                 },
                 Err(InstantiatorErrorKind::Deps(err)) => {
-                    error!("{}", err);
+                    error!(dependency = dep_name, scope = scope_name, error = %err, "Failed to resolve transient dependency");
                     Err(ResolveErrorKind::Instantiator(InstantiatorErrorKind::Deps(Box::new(err))))
                 }
                 Err(InstantiatorErrorKind::Factory(err)) => {
-                    error!("{}", err);
+                    error!(dependency = dep_name, scope = scope_name, error = %err, "Failed to resolve transient dependency");
                     Err(ResolveErrorKind::Instantiator(InstantiatorErrorKind::Factory(err)))
                 }
             }
-        }
-        .instrument(span);
+        };
         Box::pin(fut)
     }
 
