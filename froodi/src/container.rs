@@ -2,7 +2,7 @@ use alloc::{boxed::Box, vec::Vec};
 use parking_lot::RwLock;
 #[cfg(feature = "thread_safe")]
 use tracing::trace;
-use tracing::{debug, error, info_span};
+use tracing::{debug, error};
 
 use super::cache::Cache;
 #[cfg(feature = "thread_safe")]
@@ -149,8 +149,8 @@ impl Container {
     #[allow(clippy::missing_errors_doc, clippy::missing_panics_doc)]
     pub fn get<Dep: SendSafety + SyncSafety + 'static>(&self) -> Result<RcThreadSafety<Dep>, ResolveErrorKind> {
         let type_info = TypeInfo::of::<Dep>();
-        let span = info_span!("get", dependency = type_info.name, scope = self.inner.scope_data.name);
-        let _guard = span.enter();
+        let dep_name = type_info.name;
+        let scope_name = self.inner.scope_data.name;
 
         if let Some(dependency) = { self.inner.cache.read().get(&type_info) } {
             debug!("Found in cache");
@@ -167,34 +167,37 @@ impl Container {
         }) = self.inner.registry.get(&type_info)
         else {
             let err = ResolveErrorKind::NoInstantiator { type_info };
-            error!("{}", err);
+            error!(dependency = dep_name, scope = scope_name, error = %err, "Failed to resolve dependency");
             return Err(err);
         };
 
-        if self.inner.scope_data.priority > scope_data.priority {
-            let mut parent = self.inner.parent.as_ref().unwrap();
-            loop {
-                if parent.inner.scope_data.priority == scope_data.priority {
-                    return match parent.get::<Dep>() {
-                        Ok(dependency) => {
-                            {
-                                let dependency = dependency.clone();
-                                self.inner.cache.write().insert_rc(type_info, dependency);
-                            }
-                            Ok(dependency)
-                        }
-                        Err(err) => Err(err),
-                    };
-                }
-                parent = parent.inner.parent.as_ref().unwrap();
+        let current_priority = self.inner.scope_data.priority;
+        let dep_priority = scope_data.priority;
+
+        if current_priority > dep_priority {
+            let mut parent = self
+                .inner
+                .parent
+                .as_ref()
+                .expect("parent should exist for lower-priority dependency");
+            while parent.inner.scope_data.priority != dep_priority {
+                parent = parent.inner.parent.as_ref().expect("parent with target priority should exist");
             }
+
+            return match parent.get::<Dep>() {
+                Ok(dependency) => {
+                    self.inner.cache.write().insert_rc(type_info, dependency.clone());
+                    Ok(dependency)
+                }
+                Err(err) => Err(err),
+            };
         }
-        if scope_data.priority > self.inner.scope_data.priority {
+        if dep_priority > current_priority {
             let err = ResolveErrorKind::NoAccessible {
                 expected_scope_data: *scope_data,
                 actual_scope_data: self.inner.scope_data,
             };
-            error!("{}", err);
+            error!(dependency = dep_name, scope = scope_name, error = %err, "Failed to resolve dependency");
             return Err(err);
         }
 
@@ -215,19 +218,21 @@ impl Container {
             Ok(dependency) => match dependency.downcast::<Dep>() {
                 Ok(dependency) => {
                     let dependency = RcThreadSafety::new(*dependency);
-                    if config.cache_provides {
-                        let dependency = dependency.clone();
-                        {
-                            self.inner.cache.write().insert_rc(type_info.clone(), dependency);
+                    let cache_provides = config.cache_provides;
+                    let has_finalizer = finalizer.is_some();
+                    if cache_provides || has_finalizer {
+                        let mut cache = self.inner.cache.write();
+                        if cache_provides {
+                            cache.insert_rc(type_info.clone(), dependency.clone());
+                            debug!("Cached");
                         }
-                        debug!("Cached");
-                    }
-                    if finalizer.is_some() {
-                        let dependency = dependency.clone();
-                        {
-                            self.inner.cache.write().push_resolved(Resolved { type_info, dependency });
+                        if has_finalizer {
+                            cache.push_resolved(Resolved {
+                                type_info,
+                                dependency: dependency.clone(),
+                            });
+                            debug!("Pushed to resolved set");
                         }
-                        debug!("Pushed to resolved set");
                     }
                     Ok(dependency)
                 }
@@ -236,16 +241,16 @@ impl Container {
                         expected: type_info,
                         actual: TypeInfo::of_val(&*incorrect_type),
                     };
-                    error!("{}", err);
+                    error!(dependency = dep_name, scope = scope_name, error = %err, "Failed to resolve dependency");
                     Err(err)
                 }
             },
             Err(InstantiatorErrorKind::Deps(err)) => {
-                error!("{}", err);
+                error!(dependency = dep_name, scope = scope_name, error = %err, "Failed to resolve dependency");
                 Err(ResolveErrorKind::Instantiator(InstantiatorErrorKind::Deps(Box::new(err))))
             }
             Err(InstantiatorErrorKind::Factory(err)) => {
-                error!("{}", err);
+                error!(dependency = dep_name, scope = scope_name, error = %err, "Failed to resolve dependency");
                 Err(ResolveErrorKind::Instantiator(InstantiatorErrorKind::Factory(err)))
             }
         }
@@ -262,33 +267,38 @@ impl Container {
     #[allow(clippy::missing_errors_doc, clippy::missing_panics_doc)]
     pub fn get_transient<Dep: 'static>(&self) -> Result<Dep, ResolveErrorKind> {
         let type_info = TypeInfo::of::<Dep>();
-        let span = info_span!("get_transient", dependency = type_info.name, scope = self.inner.scope_data.name);
-        let _guard = span.enter();
+        let dep_name = type_info.name;
+        let scope_name = self.inner.scope_data.name;
 
         let Some(InstantiatorData {
             instantiator, scope_data, ..
         }) = self.inner.registry.get(&type_info)
         else {
             let err = ResolveErrorKind::NoInstantiator { type_info };
-            error!("{}", err);
+            error!(dependency = dep_name, scope = scope_name, error = %err, "Failed to resolve transient dependency");
             return Err(err);
         };
 
-        if self.inner.scope_data.priority > scope_data.priority {
-            let mut parent = self.inner.parent.as_ref().unwrap();
-            loop {
-                if parent.inner.scope_data.priority == scope_data.priority {
-                    return parent.get_transient();
-                }
-                parent = parent.inner.parent.as_ref().unwrap();
+        let current_priority = self.inner.scope_data.priority;
+        let dep_priority = scope_data.priority;
+
+        if current_priority > dep_priority {
+            let mut parent = self
+                .inner
+                .parent
+                .as_ref()
+                .expect("parent should exist for lower-priority dependency");
+            while parent.inner.scope_data.priority != dep_priority {
+                parent = parent.inner.parent.as_ref().expect("parent with target priority should exist");
             }
+            return parent.get_transient();
         }
-        if scope_data.priority > self.inner.scope_data.priority {
+        if dep_priority > current_priority {
             let err = ResolveErrorKind::NoAccessible {
                 expected_scope_data: *scope_data,
                 actual_scope_data: self.inner.scope_data,
             };
-            error!("{}", err);
+            error!(dependency = dep_name, scope = scope_name, error = %err, "Failed to resolve transient dependency");
             return Err(err);
         }
 
@@ -300,16 +310,16 @@ impl Container {
                         expected: type_info,
                         actual: TypeInfo::of_val(&*incorrect_type),
                     };
-                    error!("{}", err);
+                    error!(dependency = dep_name, scope = scope_name, error = %err, "Failed to resolve transient dependency");
                     Err(err)
                 }
             },
             Err(InstantiatorErrorKind::Deps(err)) => {
-                error!("{}", err);
+                error!(dependency = dep_name, scope = scope_name, error = %err, "Failed to resolve transient dependency");
                 Err(ResolveErrorKind::Instantiator(InstantiatorErrorKind::Deps(Box::new(err))))
             }
             Err(InstantiatorErrorKind::Factory(err)) => {
-                error!("{}", err);
+                error!(dependency = dep_name, scope = scope_name, error = %err, "Failed to resolve transient dependency");
                 Err(ResolveErrorKind::Instantiator(InstantiatorErrorKind::Factory(err)))
             }
         }
@@ -336,7 +346,7 @@ impl Container {
         close_parent: bool,
     ) -> Container {
         let mut cache = self.inner.cache.write().child();
-        cache.append_context(&mut context.clone());
+        cache.extend_context(&context);
 
         Container {
             #[cfg(feature = "thread_safe")]
@@ -363,7 +373,7 @@ impl Container {
     ) -> Container {
         let mut cache = self.inner.cache.write().child();
         let context = self.inner.context.clone();
-        cache.append_context(&mut context.clone());
+        cache.extend_context(&context);
 
         Container {
             #[cfg(feature = "thread_safe")]
@@ -635,7 +645,7 @@ impl BoxedContainerInner {
     ) -> Self {
         let mut cache = self.cache.child();
         let context = self.context.clone();
-        cache.append_context(&mut context.clone());
+        cache.extend_context(&context);
 
         Self {
             #[cfg(feature = "thread_safe")]

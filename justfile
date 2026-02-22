@@ -44,4 +44,7 @@ bench-resolve-concurrent:
 bench-compare:
     cargo bench --profile release --frozen --bench compare_container_resolve --no-default-features
 
+bench-compare-concurrent:
+    cargo bench --profile release --frozen --bench compare_container_resolve --no-default-features --features thread_safe
+
 bench: bench-init bench-resolve bench-resolve-concurrent
