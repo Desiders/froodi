@@ -228,19 +228,14 @@ where
 
 #[inline]
 #[must_use]
-pub fn setup<Client, WithScope>(mut router: Router<Client>, container: Container, scope: WithScope) -> Router<Client>
+pub fn setup<Client, WithScope>(router: Router<Client>, container: Container, scope: WithScope) -> Router<Client>
 where
     WithScope: Scope + Clone + Send + Sync + 'static,
     Client: Send + Sync + 'static,
 {
-    router.telegram_observers_mut().iter_mut().for_each(|observer| {
-        observer.inner_middlewares.register(ContainerInnerMiddleware);
-    });
     router
-        .update
-        .outer_middlewares
-        .register(ContainerOuterMiddleware { container, scope });
-    router
+        .on_all(|observer| observer.register_inner_middleware(ContainerInnerMiddleware))
+        .on_update(|observer| observer.register_outer_middleware(ContainerOuterMiddleware { container, scope }))
 }
 
 #[inline]
@@ -255,19 +250,14 @@ where
 #[inline]
 #[must_use]
 #[cfg(feature = "async")]
-pub fn setup_async<Client, WithScope>(mut router: Router<Client>, container: AsyncContainer, scope: WithScope) -> Router<Client>
+pub fn setup_async<Client, WithScope>(router: Router<Client>, container: AsyncContainer, scope: WithScope) -> Router<Client>
 where
     WithScope: Scope + Clone + Send + Sync + 'static,
     Client: Send + Sync + 'static,
 {
-    router.telegram_observers_mut().iter_mut().for_each(|observer| {
-        observer.inner_middlewares.register(AsyncContainerInnerMiddleware);
-    });
     router
-        .update
-        .outer_middlewares
-        .register(AsyncContainerOuterMiddleware { container, scope });
-    router
+        .on_all(|observer| observer.register_inner_middleware(AsyncContainerInnerMiddleware))
+        .on_update(|observer| observer.register_outer_middleware(AsyncContainerOuterMiddleware { container, scope }))
 }
 
 #[inline]
