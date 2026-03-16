@@ -7,4 +7,4 @@ edition = "2024"
 froodi = { path = "../../froodi", features = ["telers"] }
 
 tokio = { version = "1.36", features = ["rt", "macros"] }
-telers = { version = "1.0.0-alpha.27" }
+telers = { version = "1.0.0-beta.1" }

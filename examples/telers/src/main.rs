@@ -7,7 +7,7 @@ use froodi::{
 use telers::{
     Bot, Dispatcher, Extension, Router,
     enums::UpdateType,
-    event::{EventReturn, telegram::HandlerResult},
+    event::telegram::{Handler, HandlerResult},
 };
 
 // Dependency that will be alive throughout the application
@@ -64,21 +64,18 @@ async fn handler(
     InjectTransient(interactor): InjectTransient<CreateUser<PostgresUserRepo>>,
     // We also can inject container itself using `Extension` or `Inject`/`InjectTransient`
     Extension(_request_container): Extension<Container>,
-) -> HandlerResult {
+) -> HandlerResult<()> {
     interactor.handle();
-
-    Ok(EventReturn::Finish)
+    Ok(())
 }
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
     let app_container = init_container(Config::default());
 
-    let bot = Bot::from_env_by_key("BOT_TOKEN");
+    let bot = Bot::from_env();
 
-    let mut router = Router::new("main");
-    router.message.register(handler);
-
+    let router = Router::new("main").on_message(|observer| observer.register(Handler::new(handler)));
     let router = setup_default(router, app_container.clone());
 
     let dispatcher = Dispatcher::builder()
