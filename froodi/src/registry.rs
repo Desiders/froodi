@@ -467,6 +467,9 @@ mod tests {
     fn inst_b() -> Result<((), ()), InstantiateErrorKind> {
         Ok(((), ()))
     }
+    fn inst_b_with_c(_dependency: InjectTransient<((), (), ())>) -> Result<((), ()), InstantiateErrorKind> {
+        Ok(((), ()))
+    }
     fn inst_c() -> Result<((), (), ()), InstantiateErrorKind> {
         Ok(((), (), ()))
     }
@@ -822,5 +825,177 @@ mod tests {
         };
 
         assert_eq!(registry.entries.len(), 7);
+    }
+
+    #[test]
+    #[traced_test]
+    fn test_registry_extend_keeps_root_and_extended_different_entries() {
+        let registry = registry! {
+            provide(DefaultScope::App, inst_a),
+            extend(
+                registry! {
+                    provide(DefaultScope::Request, inst_b),
+                },
+            ),
+        };
+
+        let entry_a = registry.get(&TypeInfo::of::<()>()).unwrap();
+        let entry_b = registry.get(&TypeInfo::of::<((), ())>()).unwrap();
+
+        assert_eq!(registry.entries.len(), 3);
+        assert_eq!(entry_a.scope_data, DefaultScope::App.into());
+        assert_eq!(entry_b.scope_data, DefaultScope::Request.into());
+    }
+
+    #[test]
+    #[traced_test]
+    fn test_registry_extend_keeps_different_entries_from_multiple_registries() {
+        let registry = registry! {
+            extend(
+                registry! {
+                    provide(DefaultScope::App, inst_a),
+                },
+                registry! {
+                    provide(DefaultScope::Request, inst_b),
+                },
+            ),
+        };
+
+        let entry_a = registry.get(&TypeInfo::of::<()>()).unwrap();
+        let entry_b = registry.get(&TypeInfo::of::<((), ())>()).unwrap();
+
+        assert_eq!(registry.entries.len(), 3);
+        assert_eq!(entry_a.scope_data, DefaultScope::App.into());
+        assert_eq!(entry_b.scope_data, DefaultScope::Request.into());
+    }
+
+    #[test]
+    #[traced_test]
+    fn test_registry_extend_keeps_entries_from_nested_extend() {
+        let registry = registry! {
+            provide(DefaultScope::App, inst_a),
+            extend(
+                registry! {
+                    provide(DefaultScope::Session, inst_b),
+                    extend(
+                        registry! {
+                            provide(DefaultScope::Request, inst_c),
+                        },
+                    ),
+                },
+            ),
+        };
+
+        let entry_a = registry.get(&TypeInfo::of::<()>()).unwrap();
+        let entry_b = registry.get(&TypeInfo::of::<((), ())>()).unwrap();
+        let entry_c = registry.get(&TypeInfo::of::<((), (), ())>()).unwrap();
+
+        assert_eq!(registry.entries.len(), 4);
+        assert_eq!(entry_a.scope_data, DefaultScope::App.into());
+        assert_eq!(entry_b.scope_data, DefaultScope::Session.into());
+        assert_eq!(entry_c.scope_data, DefaultScope::Request.into());
+    }
+
+    #[test]
+    #[traced_test]
+    fn test_registry_extend_entry_can_inject_entry_from_nested_extend() {
+        let registry = registry! {
+            provide(DefaultScope::App, inst_a),
+            extend(
+                registry! {
+                    provide(DefaultScope::Session, inst_b_with_c),
+                    extend(
+                        registry! {
+                            provide(DefaultScope::Request, inst_c),
+                        },
+                    ),
+                },
+            ),
+        };
+
+        let entry_b = registry.get(&TypeInfo::of::<((), ())>()).unwrap();
+
+        assert_eq!(registry.entries.len(), 4);
+        assert!(entry_b
+            .dependencies
+            .iter()
+            .any(|dependency| dependency.type_info == TypeInfo::of::<((), (), ())>()));
+    }
+
+    #[test]
+    #[traced_test]
+    fn test_registry_extend_later_registry_overrides_duplicate_entry() {
+        let registry = registry! {
+            extend(
+                registry! {
+                    provide(
+                        DefaultScope::App,
+                        inst_a,
+                        config = Config { cache_provides: false },
+                    ),
+                },
+                registry! {
+                    provide(DefaultScope::Request, inst_a),
+                },
+            ),
+        };
+
+        let entry = registry.get(&TypeInfo::of::<()>()).unwrap();
+
+        assert!(entry.config.cache_provides);
+        assert_eq!(entry.scope_data, DefaultScope::Request.into());
+    }
+
+    #[test]
+    #[traced_test]
+    fn test_registry_extend_merges_duplicate_entries_left_to_right() {
+        let registry = registry! {
+            extend(
+                registry! {
+                    provide(
+                        DefaultScope::App,
+                        inst_a,
+                        config = Config { cache_provides: false },
+                    ),
+                },
+                registry! {
+                    provide(DefaultScope::Session, inst_a),
+                },
+                registry! {
+                    provide(
+                        DefaultScope::Request,
+                        inst_a,
+                        config = Config { cache_provides: false },
+                    ),
+                },
+            ),
+        };
+
+        let entry = registry.get(&TypeInfo::of::<()>()).unwrap();
+
+        assert!(!entry.config.cache_provides);
+        assert_eq!(entry.scope_data, DefaultScope::Request.into());
+    }
+
+    #[test]
+    #[traced_test]
+    fn test_registry_extend_overrides_duplicate_entry_from_previous_macro_invocation() {
+        let registry = registry! {
+            provide(
+                DefaultScope::App,
+                inst_a,
+                config = Config { cache_provides: false },
+            ),
+            extend(
+                registry! {
+                    provide(DefaultScope::Request, inst_a),
+                },
+            ),
+        };
+
+        let entry = registry.get(&TypeInfo::of::<()>()).unwrap();
+
+        assert!(entry.config.cache_provides);
+        assert_eq!(entry.scope_data, DefaultScope::Request.into());
     }
 }

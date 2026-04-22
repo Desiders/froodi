@@ -511,6 +511,11 @@ mod tests {
     async fn inst_b() -> Result<((), ()), InstantiateErrorKind> {
         Ok(((), ()))
     }
+    async fn inst_b_with_c(
+        _dependency: InjectTransient<((), (), ())>,
+    ) -> Result<((), ()), InstantiateErrorKind> {
+        Ok(((), ()))
+    }
     async fn inst_c() -> Result<((), (), ()), InstantiateErrorKind> {
         Ok(((), (), ()))
     }
@@ -871,5 +876,297 @@ mod tests {
 
         assert_eq!(registry.entries.len(), 7);
         assert_eq!(sync.entries.len(), 3);
+    }
+
+    #[test]
+    #[traced_test]
+    fn test_registry_extend_keeps_root_and_extended_different_entries() {
+        let RegistryWithSync { registry, sync } = async_registry! {
+            provide(DefaultScope::App, inst_a),
+            extend(
+                async_registry! {
+                    provide(DefaultScope::Request, inst_b),
+                },
+            ),
+        };
+
+        let entry_a = registry.get(&TypeInfo::of::<()>()).unwrap();
+        let entry_b = registry.get(&TypeInfo::of::<((), ())>()).unwrap();
+
+        assert_eq!(registry.entries.len(), 3);
+        assert_eq!(sync.entries.len(), 1);
+        assert_eq!(entry_a.scope_data, DefaultScope::App.into());
+        assert_eq!(entry_b.scope_data, DefaultScope::Request.into());
+    }
+
+    #[test]
+    #[traced_test]
+    fn test_registry_extend_keeps_different_entries_from_multiple_registries() {
+        let RegistryWithSync { registry, sync } = async_registry! {
+            extend(
+                async_registry! {
+                    provide(DefaultScope::App, inst_a),
+                },
+                async_registry! {
+                    provide(DefaultScope::Request, inst_b),
+                },
+            ),
+        };
+
+        let entry_a = registry.get(&TypeInfo::of::<()>()).unwrap();
+        let entry_b = registry.get(&TypeInfo::of::<((), ())>()).unwrap();
+
+        assert_eq!(registry.entries.len(), 3);
+        assert_eq!(sync.entries.len(), 1);
+        assert_eq!(entry_a.scope_data, DefaultScope::App.into());
+        assert_eq!(entry_b.scope_data, DefaultScope::Request.into());
+    }
+
+    #[test]
+    #[traced_test]
+    fn test_registry_extend_keeps_entries_from_nested_extend() {
+        let RegistryWithSync { registry, sync } = async_registry! {
+            provide(DefaultScope::App, inst_a),
+            extend(
+                async_registry! {
+                    provide(DefaultScope::Session, inst_b),
+                    extend(
+                        async_registry! {
+                            provide(DefaultScope::Request, inst_c),
+                        },
+                    ),
+                },
+            ),
+        };
+
+        let entry_a = registry.get(&TypeInfo::of::<()>()).unwrap();
+        let entry_b = registry.get(&TypeInfo::of::<((), ())>()).unwrap();
+        let entry_c = registry.get(&TypeInfo::of::<((), (), ())>()).unwrap();
+
+        assert_eq!(registry.entries.len(), 4);
+        assert_eq!(sync.entries.len(), 1);
+        assert_eq!(entry_a.scope_data, DefaultScope::App.into());
+        assert_eq!(entry_b.scope_data, DefaultScope::Session.into());
+        assert_eq!(entry_c.scope_data, DefaultScope::Request.into());
+    }
+
+    #[test]
+    #[traced_test]
+    fn test_registry_extend_entry_can_inject_entry_from_nested_extend() {
+        let RegistryWithSync { registry, sync } = async_registry! {
+            provide(DefaultScope::App, inst_a),
+            extend(
+                async_registry! {
+                    provide(DefaultScope::Session, inst_b_with_c),
+                    extend(
+                        async_registry! {
+                            provide(DefaultScope::Request, inst_c),
+                        },
+                    ),
+                },
+            ),
+        };
+
+        let entry_b = registry.get(&TypeInfo::of::<((), ())>()).unwrap();
+
+        assert_eq!(registry.entries.len(), 4);
+        assert_eq!(sync.entries.len(), 1);
+        assert!(entry_b
+            .dependencies
+            .iter()
+            .any(|dependency| dependency.type_info == TypeInfo::of::<((), (), ())>()));
+    }
+
+    #[test]
+    #[traced_test]
+    fn test_registry_extend_keeps_entries_from_sync_registry() {
+        let RegistryWithSync { registry, sync } = async_registry! {
+            provide(DefaultScope::App, inst_a),
+            extend(
+                registry! {
+                    provide(DefaultScope::Request, || Ok("sync".to_string())),
+                },
+            ),
+        };
+
+        let async_entry = registry.get(&TypeInfo::of::<()>()).unwrap();
+        let sync_entry = sync.get(&TypeInfo::of::<String>()).unwrap();
+
+        assert_eq!(registry.entries.len(), 2);
+        assert_eq!(sync.entries.len(), 2);
+        assert_eq!(async_entry.scope_data, DefaultScope::App.into());
+        assert_eq!(sync_entry.scope_data, DefaultScope::Request.into());
+    }
+
+    #[test]
+    #[traced_test]
+    fn test_registry_extend_keeps_entries_from_nested_sync_registry() {
+        let RegistryWithSync { registry, sync } = async_registry! {
+            provide(DefaultScope::App, inst_a),
+            extend(
+                async_registry! {
+                    provide(DefaultScope::Session, inst_b),
+                    extend(
+                        registry! {
+                            provide(DefaultScope::Request, || Ok("sync".to_string())),
+                        },
+                    ),
+                },
+            ),
+        };
+
+        let entry_a = registry.get(&TypeInfo::of::<()>()).unwrap();
+        let entry_b = registry.get(&TypeInfo::of::<((), ())>()).unwrap();
+        let sync_entry = sync.get(&TypeInfo::of::<String>()).unwrap();
+
+        assert_eq!(registry.entries.len(), 3);
+        assert_eq!(sync.entries.len(), 2);
+        assert_eq!(entry_a.scope_data, DefaultScope::App.into());
+        assert_eq!(entry_b.scope_data, DefaultScope::Session.into());
+        assert_eq!(sync_entry.scope_data, DefaultScope::Request.into());
+    }
+
+    #[test]
+    #[traced_test]
+    fn test_registry_extend_keeps_entries_from_sync_registry_with_nested_extend() {
+        let RegistryWithSync { registry, sync } = async_registry! {
+            provide(DefaultScope::App, inst_a),
+            extend(
+                registry! {
+                    provide(DefaultScope::Session, || Ok("sync".to_string())),
+                    extend(
+                        registry! {
+                            provide(DefaultScope::Request, || Ok(1usize)),
+                        },
+                    ),
+                },
+            ),
+        };
+
+        let async_entry = registry.get(&TypeInfo::of::<()>()).unwrap();
+        let string_entry = sync.get(&TypeInfo::of::<String>()).unwrap();
+        let usize_entry = sync.get(&TypeInfo::of::<usize>()).unwrap();
+
+        assert_eq!(registry.entries.len(), 2);
+        assert_eq!(sync.entries.len(), 3);
+        assert_eq!(async_entry.scope_data, DefaultScope::App.into());
+        assert_eq!(string_entry.scope_data, DefaultScope::Session.into());
+        assert_eq!(usize_entry.scope_data, DefaultScope::Request.into());
+    }
+
+    #[test]
+    #[traced_test]
+    fn test_registry_extend_keeps_entries_from_mixed_async_and_sync_registries() {
+        let RegistryWithSync { registry, sync } = async_registry! {
+            extend(
+                async_registry! {
+                    provide(DefaultScope::App, inst_a),
+                },
+                registry! {
+                    provide(DefaultScope::Session, || Ok("sync".to_string())),
+                },
+                async_registry! {
+                    provide(DefaultScope::Request, inst_b),
+                },
+                registry! {
+                    provide(DefaultScope::Action, || Ok(1usize)),
+                },
+            ),
+        };
+
+        let entry_a = registry.get(&TypeInfo::of::<()>()).unwrap();
+        let entry_b = registry.get(&TypeInfo::of::<((), ())>()).unwrap();
+        let string_entry = sync.get(&TypeInfo::of::<String>()).unwrap();
+        let usize_entry = sync.get(&TypeInfo::of::<usize>()).unwrap();
+
+        assert_eq!(registry.entries.len(), 3);
+        assert_eq!(sync.entries.len(), 3);
+        assert_eq!(entry_a.scope_data, DefaultScope::App.into());
+        assert_eq!(entry_b.scope_data, DefaultScope::Request.into());
+        assert_eq!(string_entry.scope_data, DefaultScope::Session.into());
+        assert_eq!(usize_entry.scope_data, DefaultScope::Action.into());
+    }
+
+    #[test]
+    #[traced_test]
+    fn test_registry_extend_later_registry_overrides_duplicate_entry() {
+        let RegistryWithSync { registry, sync } = async_registry! {
+            extend(
+                async_registry! {
+                    provide(
+                        DefaultScope::App,
+                        inst_a,
+                        config = Config { cache_provides: false },
+                    ),
+                },
+                async_registry! {
+                    provide(DefaultScope::Request, inst_a),
+                },
+            ),
+        };
+
+        let entry = registry.get(&TypeInfo::of::<()>()).unwrap();
+
+        assert_eq!(registry.entries.len(), 2);
+        assert_eq!(sync.entries.len(), 1);
+        assert!(entry.config.cache_provides);
+        assert_eq!(entry.scope_data, DefaultScope::Request.into());
+    }
+
+    #[test]
+    #[traced_test]
+    fn test_registry_extend_merges_duplicate_entries_left_to_right() {
+        let RegistryWithSync { registry, sync } = async_registry! {
+            extend(
+                async_registry! {
+                    provide(
+                        DefaultScope::App,
+                        inst_a,
+                        config = Config { cache_provides: false },
+                    ),
+                },
+                async_registry! {
+                    provide(DefaultScope::Session, inst_a),
+                },
+                async_registry! {
+                    provide(
+                        DefaultScope::Request,
+                        inst_a,
+                        config = Config { cache_provides: false },
+                    ),
+                },
+            ),
+        };
+
+        let entry = registry.get(&TypeInfo::of::<()>()).unwrap();
+
+        assert_eq!(registry.entries.len(), 2);
+        assert_eq!(sync.entries.len(), 1);
+        assert!(!entry.config.cache_provides);
+        assert_eq!(entry.scope_data, DefaultScope::Request.into());
+    }
+
+    #[test]
+    #[traced_test]
+    fn test_registry_extend_overrides_duplicate_entry_from_previous_macro_invocation() {
+        let RegistryWithSync { registry, sync } = async_registry! {
+            provide(
+                DefaultScope::App,
+                inst_a,
+                config = Config { cache_provides: false },
+            ),
+            extend(
+                async_registry! {
+                    provide(DefaultScope::Request, inst_a),
+                },
+            ),
+        };
+
+        let entry = registry.get(&TypeInfo::of::<()>()).unwrap();
+
+        assert_eq!(registry.entries.len(), 2);
+        assert_eq!(sync.entries.len(), 1);
+        assert!(entry.config.cache_provides);
+        assert_eq!(entry.scope_data, DefaultScope::Request.into());
     }
 }
