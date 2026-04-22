@@ -501,8 +501,11 @@ mod tests {
     use tracing_test::traced_test;
 
     use crate::{
-        any::TypeInfo, async_impl::registry::RegistryWithSync, registry, utils::thread_safety::RcThreadSafety, Config, DefaultScope,
-        Inject, InjectTransient, InstantiateErrorKind,
+        any::TypeInfo,
+        async_impl::{registry::RegistryWithSync, Container},
+        registry,
+        utils::thread_safety::RcThreadSafety,
+        Config, DefaultScope, Inject, InjectTransient, InstantiateErrorKind,
     };
 
     async fn inst_a() -> Result<(), InstantiateErrorKind> {
@@ -511,9 +514,7 @@ mod tests {
     async fn inst_b() -> Result<((), ()), InstantiateErrorKind> {
         Ok(((), ()))
     }
-    async fn inst_b_with_c(
-        _dependency: InjectTransient<((), (), ())>,
-    ) -> Result<((), ()), InstantiateErrorKind> {
+    async fn inst_b_with_c(_dependency: InjectTransient<((), (), ())>) -> Result<((), ()), InstantiateErrorKind> {
         Ok(((), ()))
     }
     async fn inst_c() -> Result<((), (), ()), InstantiateErrorKind> {
@@ -1052,6 +1053,53 @@ mod tests {
         assert_eq!(async_entry.scope_data, DefaultScope::App.into());
         assert_eq!(string_entry.scope_data, DefaultScope::Session.into());
         assert_eq!(usize_entry.scope_data, DefaultScope::Request.into());
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_registry_extend_keeps_entries_transitively_from_prebuilt_sync_registry() {
+        let cfg_registry = registry! {
+            provide(DefaultScope::App, || Ok("cfg".to_string())),
+        };
+        let tg_messenger_registry = registry! {
+            provide(DefaultScope::Session, |Inject(cfg): Inject<String>| Ok(cfg.len())),
+            extend(cfg_registry),
+        };
+        let interactors_registry = async_registry! {
+            provide(DefaultScope::Request, |Inject(value): Inject<usize>| async move {
+                Ok(*value == 3)
+            }),
+            extend(tg_messenger_registry),
+        };
+
+        let registry_with_sync = async_registry! {
+            extend(interactors_registry),
+        };
+
+        let cfg_entry = registry_with_sync.sync.get(&TypeInfo::of::<String>()).unwrap();
+        let tg_entry = registry_with_sync.sync.get(&TypeInfo::of::<usize>()).unwrap();
+        let interactor_entry = registry_with_sync.registry.get(&TypeInfo::of::<bool>()).unwrap();
+
+        assert_eq!(registry_with_sync.registry.entries.len(), 2);
+        assert_eq!(registry_with_sync.sync.entries.len(), 3);
+        assert_eq!(cfg_entry.scope_data, DefaultScope::App.into());
+        assert_eq!(tg_entry.scope_data, DefaultScope::Session.into());
+        assert_eq!(interactor_entry.scope_data, DefaultScope::Request.into());
+        assert!(tg_entry
+            .dependencies
+            .iter()
+            .any(|dependency| dependency.type_info == TypeInfo::of::<String>()));
+        assert!(interactor_entry
+            .dependencies
+            .iter()
+            .any(|dependency| dependency.type_info == TypeInfo::of::<usize>()));
+
+        let app_container = Container::new(registry_with_sync);
+        let request_container = app_container.clone().enter().with_scope(DefaultScope::Request).build().unwrap();
+
+        assert_eq!(request_container.get::<String>().await.unwrap().as_str(), "cfg");
+        assert_eq!(*request_container.get::<usize>().await.unwrap(), 3);
+        assert!(*request_container.get::<bool>().await.unwrap());
     }
 
     #[test]
