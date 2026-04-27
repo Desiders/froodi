@@ -1,93 +1,79 @@
 use froodi::{
     DefaultScope::{App, Request},
-    Inject, InstantiatorResult,
+    Inject,
     async_impl::Container,
-    async_registry, instance, registry,
+    async_registry, boxed, instance, registry,
 };
 use std::sync::Arc;
 
-// Dependency that will be alive throughout the application
-#[derive(Default, Clone)]
+trait Greeter: Send + Sync {
+    fn greet(&self, name: &str) -> String;
+}
+
+#[derive(Clone)]
 struct Config {
-    _host: &'static str,
-    _port: i16,
-    _user: &'static str,
-    _password: &'static str,
-    _db: &'static str,
+    greeting: String,
 }
 
-trait UserRepo {
-    fn create_user(&self);
+struct GreetingService {
+    greeting: String,
 }
 
-struct PostgresUserRepo;
-
-impl UserRepo for PostgresUserRepo {
-    fn create_user(&self) {
-        println!("User created");
+impl Greeter for GreetingService {
+    fn greet(&self, name: &str) -> String {
+        format!("{}, {name}!", self.greeting)
     }
 }
 
-struct CreateUser<R> {
-    // Dependency without details about the specific implementation.
-    // It's inside `Arc` because of caching and finalization features.
-    repo: Arc<R>,
+struct WelcomeHandler {
+    greeter: Arc<Box<dyn Greeter>>,
 }
 
-impl<R: UserRepo> CreateUser<R> {
-    fn handle(&self) {
-        self.repo.create_user();
+impl WelcomeHandler {
+    fn handle(&self, name: &str) {
+        println!("{}", self.greeter.greet(name));
     }
 }
 
-fn init_container(config: Config) -> Container {
-    // We can use functions as instance creators instead of closures
-    async fn create_user<R>(Inject(repo): Inject<R>) -> InstantiatorResult<CreateUser<R>> {
-        Ok(CreateUser { repo })
-    }
-
-    // We can use functions as instance finalizer instead of closures
-    async fn finalize_create_user<R>(_dep: Arc<CreateUser<R>>) {
-        println!("Create user interactor finalized");
-    }
-
+fn build_container(cfg: Config) -> Container {
     Container::new(async_registry! {
-        provide(Request, create_user::<PostgresUserRepo>, finalizer = finalize_create_user::<PostgresUserRepo>),
+        scope(Request) [
+            provide(
+                |Inject(cfg): Inject<Config>| async move {
+                    Ok(boxed!(GreetingService { greeting: cfg.greeting.clone() }; Greeter))
+                },
+                finalizer = |_dep| async { println!("Greeter finalized") }
+            ),
+            provide(
+                |Inject(greeter)| async move { Ok(WelcomeHandler { greeter }) },
+                finalizer = |_dep| async { println!("WelcomeHandler finalized") }
+            ),
+        ],
         extend(registry! {
-            provide(App, instance(config), finalizer = |_dep| println!("Config finalized")),
-            provide(Request, |_config: Inject<Config>| Ok(PostgresUserRepo), finalizer = |_dep| println!("Postgres repository finalized"))
-        })
+            provide(App, instance(cfg), finalizer = |_dep| println!("Config finalized")),
+        }),
     })
 }
 
-// Output:
-// User created
-// Create user interactor finalized
-// Postgres repository finalized
-// Request container finalized
-// Config finalized
-// App container finalized
-#[tokio::main(flavor = "current_thread")]
+#[tokio::main]
 async fn main() {
-    let app_container = init_container(Config::default());
-    // Enter the container with next non-skipped scope (APP -> REQUEST -> ..., check default scope variants).
-    // Don't worry about cloning because it's free.
-    let request_container = app_container.clone().enter_build().unwrap();
+    let cfg = Config {
+        greeting: "Hello".to_owned(),
+    };
 
-    // Get REQUEST-scoped dependency from REQUEST-scoped container
-    let interactor = request_container.get::<CreateUser<PostgresUserRepo>>().await.unwrap();
-    interactor.handle();
+    let app_container = build_container(cfg);
+    let request_container = app_container.clone().enter_build().expect("Failed to enter request scope");
 
-    // Get APP-scoped dependency from REQUEST-scoped container.
-    // We can use dependencies from previous containers.
-    let _config = request_container.get::<Config>().await.unwrap();
+    let handler = request_container
+        .get::<WelcomeHandler>()
+        .await
+        .expect("WelcomeHandler not registered");
 
-    // We need to close containers after usage of them to call finalizers of cached dependencies.
-    // It will close only REQUEST-scoped and SESSION-scoped dependencies.
+    handler.handle("froodi");
+
     request_container.close().await;
     println!("Request container finalized");
 
-    // It will close only APP-scoped and RUNTIME-scoped dependencies.
     app_container.close().await;
     println!("App container finalized");
 }

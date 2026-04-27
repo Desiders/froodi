@@ -91,9 +91,10 @@ fn main() {
 ## Examples
  - [Sync provide][examples/sync_provide]. This example shows how to provide sync dependencies.
  - [Async provide][examples/async_provide]. This example shows how to provide async sync dependencies.
+ - [Sync auto provide][examples/sync_auto_provide]. This example shows how to auto-register sync providers with `froodi-auto`.
+ - [Async auto provide][examples/async_auto_provide]. This example shows how to auto-register async providers with `froodi-auto`.
  - [Sync finalizer][examples/sync_finalizer]. This example shows how to add sync finalizers.
  - [Async finalizer][examples/async_finalizer]. This example shows how to add async finalizers.
- - [Boxed dyn provide][examples/box_dyn_provide]. This example shows how to provide boxed dyn dependencies.
  - [Axum][examples/axum]. This example shows how to integrate the framework with Axum library.
  - [Dptree][examples/dptree]. This example shows how to integrate the framework with Dptree library.
  - [Telers][examples/telers]. This example shows how to integrate the framework with Telers framework.
@@ -110,9 +111,10 @@ Contributions are welcome!
 [examples]: https://github.com/Desiders/froodi/tree/master/examples
 [examples/sync_provide]: https://github.com/Desiders/froodi/tree/master/examples/sync_provide
 [examples/async_provide]: https://github.com/Desiders/froodi/tree/master/examples/async_provide
+[examples/sync_auto_provide]: https://github.com/Desiders/froodi/tree/master/examples/sync_auto_provide
+[examples/async_auto_provide]: https://github.com/Desiders/froodi/tree/master/examples/async_auto_provide
 [examples/sync_finalizer]: https://github.com/Desiders/froodi/tree/master/examples/sync_finalizer
 [examples/async_finalizer]: https://github.com/Desiders/froodi/tree/master/examples/async_finalizer
-[examples/box_dyn_provide]: https://github.com/Desiders/froodi/tree/master/examples/box_dyn_provide
 [examples/axum]: https://github.com/Desiders/froodi/tree/master/examples/axum
 [examples/dptree]: https://github.com/Desiders/froodi/tree/master/examples/dptree
 [examples/telers]: https://github.com/Desiders/froodi/tree/master/examples/telers
