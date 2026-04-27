@@ -1,82 +1,69 @@
 use froodi::{
     Container,
     DefaultScope::{App, Request},
-    Inject, InjectTransient, InstantiatorResult, instance, registry,
+    Inject, boxed, instance, registry,
     telers::setup_default,
 };
+use std::sync::Arc;
 use telers::{
-    Bot, Dispatcher, Extension, Router,
+    Bot, Dispatcher, Router,
     enums::UpdateType,
     event::telegram::{Handler, HandlerResult},
 };
 
-// Dependency that will be alive throughout the application
-#[derive(Default, Clone)]
+trait Greeter: Send + Sync {
+    fn greet(&self, name: &str) -> String;
+}
+
+#[derive(Clone)]
 struct Config {
-    _host: &'static str,
-    _port: i16,
-    _user: &'static str,
-    _password: &'static str,
-    _db: &'static str,
+    greeting: String,
 }
 
-trait UserRepo {
-    fn create_user(&self);
+struct GreetingService {
+    greeting: String,
 }
 
-struct PostgresUserRepo;
-
-impl UserRepo for PostgresUserRepo {
-    fn create_user(&self) {
-        todo!()
+impl Greeter for GreetingService {
+    fn greet(&self, name: &str) -> String {
+        format!("{}, {name}!", self.greeting)
     }
 }
 
-struct CreateUser<R> {
-    // Dependency without details about the specific implementation
-    repo: R,
+struct WelcomeHandler {
+    greeter: Arc<Box<dyn Greeter>>,
 }
 
-impl<R: UserRepo> CreateUser<R> {
-    fn handle(&self) {
-        self.repo.create_user();
+impl WelcomeHandler {
+    fn handle(&self, name: &str) -> String {
+        self.greeter.greet(name)
     }
 }
 
-fn init_container(config: Config) -> Container {
-    // We can use functions as instance creators instead of closures
-    #[allow(clippy::unnecessary_wraps)]
-    fn create_user<R>(InjectTransient(repo): InjectTransient<R>) -> InstantiatorResult<CreateUser<R>> {
-        Ok(CreateUser { repo })
-    }
-
+fn build_container(cfg: Config) -> Container {
     Container::new(registry! {
-        provide(App, instance(config)),
+        provide(App, instance(cfg)),
         scope(Request) [
-            provide(|_config: Inject<Config>| Ok(PostgresUserRepo)),
-            provide(create_user::<PostgresUserRepo>),
+            provide(|Inject(cfg): Inject<Config>| Ok(boxed!(GreetingService { greeting: cfg.greeting.clone() }; Greeter))),
+            provide(|Inject(greeter)| Ok(WelcomeHandler { greeter })),
         ],
     })
 }
 
-async fn handler(
-    // Get REQUEST-scoped dependency from REQUEST-scoped container
-    InjectTransient(interactor): InjectTransient<CreateUser<PostgresUserRepo>>,
-    // We also can inject container itself using `Extension` or `Inject`/`InjectTransient`
-    Extension(_request_container): Extension<Container>,
-) -> HandlerResult<()> {
-    interactor.handle();
+async fn handler(Inject(handler): Inject<WelcomeHandler>) -> HandlerResult<()> {
+    println!("{}", handler.handle("telers"));
     Ok(())
 }
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
-    let app_container = init_container(Config::default());
+    let app_container = build_container(Config {
+        greeting: "Hello".to_owned(),
+    });
 
     let bot = Bot::from_env();
 
-    let router = Router::new("main").on_message(|observer| observer.register(Handler::new(handler)));
-    let router = setup_default(router, app_container.clone());
+    let router = setup_default(Router::new("main"), app_container.clone()).on_message(|observer| observer.register(Handler::new(handler)));
 
     let dispatcher = Dispatcher::builder()
         .main_router(router.configure_default())
