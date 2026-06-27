@@ -41,36 +41,7 @@ impl Container {
     /// - Panics if all scopes except the first one are skipped by default.
     #[must_use]
     pub fn new(registry: Registry) -> Self {
-        let scope_with_child_scopes = registry.get_scope_with_child_scopes();
-        let registry = RcThreadSafety::new(registry);
-        let mut container = BoxedContainerInner {
-            cache: Cache::new(),
-            context: Context::new(),
-            registry: registry.clone(),
-            scope_data: scope_with_child_scopes.scope_data.expect("scopes len (is 0) should be > 0"),
-            child_scopes_data: scope_with_child_scopes.child_scopes_data.clone(),
-            parent: None,
-            close_parent: false,
-            #[cfg(feature = "thread_safe")]
-            per_type_locks: PerTypeLocks::default(),
-        };
-
-        let mut child = scope_with_child_scopes.child();
-        let mut scope_data = child.scope_data.expect("scopes len (is 1) should be > 1");
-
-        let mut search_next = container.scope_data.is_skipped_by_default;
-        while search_next {
-            search_next = scope_data.is_skipped_by_default;
-            container = container.init_child(registry.clone(), scope_data, child.child_scopes_data.clone(), true);
-            if search_next {
-                child = child.child();
-                scope_data = child.scope_data.expect("last scope can't be skipped by default");
-            } else {
-                break;
-            }
-        }
-
-        container.into()
+        Self::build_root(registry, |scope_data| !scope_data.is_skipped_by_default)
     }
 
     /// Creates container with start scope
@@ -81,40 +52,37 @@ impl Container {
     #[must_use]
     #[allow(clippy::needless_pass_by_value)]
     pub fn new_with_start_scope<S: Scope>(registry: Registry, scope: S) -> Self {
-        let scope_with_child_scopes = registry.get_scope_with_child_scopes();
+        let priority = scope.priority();
+        Self::build_root(registry, move |scope_data| scope_data.priority == priority)
+    }
+
+    /// Builds the root container chain: starts at the registry's lowest-priority scope and descends
+    /// (keeping each level as a parent with `close_parent = true`) until `is_target` accepts a scope.
+    /// Shared by [`Self::new`] (target = first non-skipped scope) and [`Self::new_with_start_scope`]
+    /// (target = the scope with the requested priority).
+    ///
+    /// # Panics
+    /// Panics if the scopes are exhausted before `is_target` accepts one (e.g. no scopes at all, or
+    /// every scope is skipped / none matches the requested priority).
+    fn build_root(registry: Registry, is_target: impl Fn(&ScopeData) -> bool) -> Self {
+        let mut scopes = registry.get_scope_with_child_scopes();
         let registry = RcThreadSafety::new(registry);
         let mut container = BoxedContainerInner {
             cache: Cache::new(),
             context: Context::new(),
             registry: registry.clone(),
-            scope_data: scope_with_child_scopes.scope_data.expect("scopes len (is 0) should be > 0"),
-            child_scopes_data: scope_with_child_scopes.child_scopes_data.clone(),
+            scope_data: scopes.scope_data.expect("scopes len (is 0) should be > 0"),
+            child_scopes_data: scopes.child_scopes_data.clone(),
             parent: None,
             close_parent: false,
             #[cfg(feature = "thread_safe")]
             per_type_locks: PerTypeLocks::default(),
         };
-
-        let priority = scope.priority();
-        if container.scope_data.priority == priority {
-            return container.into();
+        while !is_target(&container.scope_data) {
+            scopes = scopes.child();
+            let scope_data = scopes.scope_data.expect("scope chain ended before reaching a target scope");
+            container = container.init_child(registry.clone(), scope_data, scopes.child_scopes_data.clone(), true);
         }
-
-        let mut child = scope_with_child_scopes.child();
-        let mut scope_data = child.scope_data.expect("last scope can't be with another priority");
-
-        let mut search_next = container.scope_data.priority != priority;
-        while search_next {
-            search_next = scope_data.priority != priority;
-            container = container.init_child(registry.clone(), scope_data, child.child_scopes_data.clone(), true);
-            if search_next {
-                child = child.child();
-                scope_data = child.scope_data.expect("last scope can't be with another priority");
-            } else {
-                break;
-            }
-        }
-
         container.into()
     }
 
@@ -390,6 +358,45 @@ impl Container {
             }),
         }
     }
+
+    /// Shared loop behind the four `*::build()` entry points. Starting from the next child scope, it
+    /// initializes one child container per scope until `is_target` accepts one. The first child keeps
+    /// its parent open (`close_parent = false`); intermediate skipped levels are created with
+    /// `close_parent = true`. A `context`, when present, is threaded into every level.
+    fn build_descendant<E>(
+        self,
+        context: Option<Context>,
+        is_target: impl Fn(&ScopeData) -> bool,
+        no_child: E,
+        no_target: impl Fn() -> E,
+    ) -> Result<Container, E> {
+        let scopes = self.inner.get_scope_with_child_scopes().child();
+        let mut child = self.init_descendant(context.clone(), scopes.scope_data.ok_or(no_child)?, scopes.child_scopes_data, false);
+        while !is_target(&child.inner.scope_data) {
+            let scopes = child.inner.get_scope_with_child_scopes().child();
+            child = child.init_descendant(
+                context.clone(),
+                scopes.scope_data.ok_or_else(&no_target)?,
+                scopes.child_scopes_data,
+                true,
+            );
+        }
+        Ok(child)
+    }
+
+    fn init_descendant(
+        self,
+        context: Option<Context>,
+        scope_data: ScopeData,
+        child_scopes_data: Vec<ScopeData>,
+        close_parent: bool,
+    ) -> Container {
+        let registry = self.inner.registry.clone();
+        match context {
+            Some(context) => self.init_child_with_context(context, registry, scope_data, child_scopes_data, close_parent),
+            None => self.init_child(registry, scope_data, child_scopes_data, close_parent),
+        }
+    }
 }
 
 pub struct ChildContainerBuilder {
@@ -428,28 +435,12 @@ impl ChildContainerBuilder {
     pub fn build(self) -> Result<Container, ScopeErrorKind> {
         use ScopeErrorKind::{NoChildRegistries, NoNonSkippedRegistries};
 
-        let scope_with_child_scopes = self.container.inner.get_scope_with_child_scopes().child();
-        let registry = self.container.inner.registry.clone();
-
-        let mut child = self.container.init_child(
-            registry,
-            scope_with_child_scopes.scope_data.ok_or(NoChildRegistries)?,
-            scope_with_child_scopes.child_scopes_data,
-            false,
-        );
-        while child.inner.scope_data.is_skipped_by_default {
-            let scope_with_child_scopes = child.inner.get_scope_with_child_scopes().child();
-            let registry = child.inner.registry.clone();
-
-            child = child.init_child(
-                registry,
-                scope_with_child_scopes.scope_data.ok_or(NoNonSkippedRegistries)?,
-                scope_with_child_scopes.child_scopes_data,
-                true,
-            );
-        }
-
-        Ok(child)
+        self.container.build_descendant(
+            None,
+            |scope_data| !scope_data.is_skipped_by_default,
+            NoChildRegistries,
+            || NoNonSkippedRegistries,
+        )
     }
 }
 
@@ -483,32 +474,14 @@ where
     pub fn build(self) -> Result<Container, ScopeWithErrorKind> {
         use ScopeWithErrorKind::{NoChildRegistries, NoChildRegistriesWithScope};
 
-        let scope_with_child_scopes = self.container.inner.get_scope_with_child_scopes().child();
-        let registry = self.container.inner.registry.clone();
         let priority = self.scope.priority();
-
-        let mut child = self.container.init_child(
-            registry,
-            scope_with_child_scopes.scope_data.ok_or(NoChildRegistries)?,
-            scope_with_child_scopes.child_scopes_data,
-            false,
-        );
-        while child.inner.scope_data.priority != priority {
-            let scope_with_child_scopes = child.inner.get_scope_with_child_scopes().child();
-            let registry = child.inner.registry.clone();
-
-            child = child.init_child(
-                registry,
-                scope_with_child_scopes.scope_data.ok_or(NoChildRegistriesWithScope {
-                    name: self.scope.name(),
-                    priority,
-                })?,
-                scope_with_child_scopes.child_scopes_data,
-                true,
-            );
-        }
-
-        Ok(child)
+        let name = self.scope.name();
+        self.container.build_descendant(
+            None,
+            move |scope_data| scope_data.priority == priority,
+            NoChildRegistries,
+            move || NoChildRegistriesWithScope { name, priority },
+        )
     }
 }
 
@@ -539,32 +512,12 @@ impl ChildContainerWithContext {
     pub fn build(self) -> Result<Container, ScopeErrorKind> {
         use ScopeErrorKind::{NoChildRegistries, NoNonSkippedRegistries};
 
-        let scope_with_child_scopes = self.container.inner.get_scope_with_child_scopes().child();
-        let context = self.context.clone();
-        let registry = self.container.inner.registry.clone();
-
-        let mut child = self.container.init_child_with_context(
-            context,
-            registry,
-            scope_with_child_scopes.scope_data.ok_or(NoChildRegistries)?,
-            scope_with_child_scopes.child_scopes_data,
-            false,
-        );
-        while child.inner.scope_data.is_skipped_by_default {
-            let scope_with_child_scopes = child.inner.get_scope_with_child_scopes().child();
-            let context = self.context.clone();
-            let registry = child.inner.registry.clone();
-
-            child = child.init_child_with_context(
-                context,
-                registry,
-                scope_with_child_scopes.scope_data.ok_or(NoNonSkippedRegistries)?,
-                scope_with_child_scopes.child_scopes_data,
-                true,
-            );
-        }
-
-        Ok(child)
+        self.container.build_descendant(
+            Some(self.context),
+            |scope_data| !scope_data.is_skipped_by_default,
+            NoChildRegistries,
+            || NoNonSkippedRegistries,
+        )
     }
 }
 
@@ -589,36 +542,14 @@ where
     pub fn build(self) -> Result<Container, ScopeWithErrorKind> {
         use ScopeWithErrorKind::{NoChildRegistries, NoChildRegistriesWithScope};
 
-        let scope_with_child_scopes = self.container.inner.get_scope_with_child_scopes().child();
-        let context = self.context.clone();
-        let registry = self.container.inner.registry.clone();
         let priority = self.scope.priority();
-
-        let mut child = self.container.init_child_with_context(
-            context,
-            registry,
-            scope_with_child_scopes.scope_data.ok_or(NoChildRegistries)?,
-            scope_with_child_scopes.child_scopes_data,
-            false,
-        );
-        while child.inner.scope_data.priority != priority {
-            let scope_with_child_scopes = child.inner.get_scope_with_child_scopes().child();
-            let context = self.context.clone();
-            let registry = child.inner.registry.clone();
-
-            child = child.init_child_with_context(
-                context,
-                registry,
-                scope_with_child_scopes.scope_data.ok_or(NoChildRegistriesWithScope {
-                    name: self.scope.name(),
-                    priority,
-                })?,
-                scope_with_child_scopes.child_scopes_data,
-                true,
-            );
-        }
-
-        Ok(child)
+        let name = self.scope.name();
+        self.container.build_descendant(
+            Some(self.context),
+            move |scope_data| scope_data.priority == priority,
+            NoChildRegistries,
+            move || NoChildRegistriesWithScope { name, priority },
+        )
     }
 }
 
