@@ -6,7 +6,7 @@ use alloc::{
 use crate::{
     any::TypeInfo,
     dependency::{Dependency, EMPTY_DEPENDENCIES},
-    errors::DFSErrorKind,
+    errors::ValidationErrorKind,
     finalizer::BoxedCloneFinalizer,
     instantiator::{boxed_container_instantiator, BoxedCloneInstantiator},
     scope::{ScopeData, ScopeDataWithChildScopesData},
@@ -80,15 +80,48 @@ impl Registry {
         ScopeDataWithChildScopesData::new_with_sort(self.scopes_data.clone())
     }
 
-    pub fn dfs_detect(&self) -> Result<(), DFSErrorKind> {
+    pub fn validate(&self) -> Result<(), ValidationErrorKind> {
+        self.detect_cyclic_dependencies()?;
+        self.detect_unreachable_scopes()
+    }
+
+    fn detect_cyclic_dependencies(&self) -> Result<(), ValidationErrorKind> {
         let mut visited = BTreeSet::new();
         let mut stack = Vec::new();
 
         for (type_info, InstantiatorData { dependencies, .. }) in &self.entries {
             if self.dfs_visit(type_info, dependencies, &mut visited, &mut stack) {
-                return Err(DFSErrorKind::CyclicDependency {
+                return Err(ValidationErrorKind::CyclicDependency {
                     graph: (stack.remove(0), stack.into_boxed_slice()),
                 });
+            }
+        }
+        Ok(())
+    }
+
+    fn detect_unreachable_scopes(&self) -> Result<(), ValidationErrorKind> {
+        for (
+            type_info,
+            InstantiatorData {
+                dependencies, scope_data, ..
+            },
+        ) in &self.entries
+        {
+            for Dependency { type_info: dependency } in dependencies {
+                if let Some(InstantiatorData {
+                    scope_data: dependency_scope,
+                    ..
+                }) = self.entries.get(dependency)
+                {
+                    if dependency_scope.priority > scope_data.priority {
+                        return Err(ValidationErrorKind::UnreachableDependency {
+                            dependent: type_info.clone(),
+                            dependent_scope: *scope_data,
+                            dependency: dependency.clone(),
+                            dependency_scope: *dependency_scope,
+                        });
+                    }
+                }
             }
         }
         Ok(())
@@ -257,12 +290,12 @@ macro_rules! registry {
             $crate::macros_utils::sync::build_registry(($scope, $crate::registry_internal! { scope($scope) [ $($entries)+ ] })),
             $crate::registry_internal! { $($rest)+ }
         );
-        registry.dfs_detect().unwrap();
+        registry.validate().unwrap();
         registry
     }};
     (scope($scope:expr $(,)?) [ $($entries:tt)+ ] $(,)?) => {{
         let registry = $crate::macros_utils::sync::build_registry(($scope, $crate::registry_internal! { scope($scope) [ $($entries)+ ] }));
-        registry.dfs_detect().unwrap();
+        registry.validate().unwrap();
         registry
     }};
     (provide($scope:expr, $($entry:tt)+), $($rest:tt)+) => {{
@@ -270,7 +303,7 @@ macro_rules! registry {
             $crate::macros_utils::sync::build_registry(($scope, $crate::registry_internal! { provide($scope, $($entry)+) })),
             $crate::registry_internal! { $($rest)+ }
         );
-        registry.dfs_detect().unwrap();
+        registry.validate().unwrap();
         registry
     }};
     (provide($scope:expr, $($entry:tt)+) $(,)?) => {{
@@ -285,7 +318,7 @@ macro_rules! registry {
                 registry = $crate::utils::Merge::merge(registry, registry_to_merge);
             )+
         )?
-        registry.dfs_detect().unwrap();
+        registry.validate().unwrap();
         registry
     }};
 
@@ -497,7 +530,7 @@ mod tests {
     fn test_registry_mixed_entries() {
         assert_eq!(
             registry! {
-                provide(DefaultScope::Request, inst_a),
+                provide(DefaultScope::Runtime, inst_a),
                 scope(DefaultScope::App) [
                     provide(|| Ok(())),
                     provide(|Inject(_): Inject<()>| Ok(((), ()))),
@@ -521,7 +554,7 @@ mod tests {
                     provide(inst_e, config = Config::default(), finalizer = fin_e),
                     provide(inst_f, finalizer = fin_f, config = Config::default()),
                 ],
-                provide(DefaultScope::Request, inst_a),
+                provide(DefaultScope::Runtime, inst_a),
             }
             .entries
             .len(),
@@ -769,7 +802,7 @@ mod tests {
                 provide(|InjectTransient(b): InjectTransient<B>, InjectTransient(a): InjectTransient<A>| Ok(C(b, a))),
             ],
         };
-        registry.dfs_detect().unwrap();
+        registry.validate().unwrap();
 
         assert_eq!(registry.entries.len(), 4);
     }
@@ -800,6 +833,23 @@ mod tests {
             ],
             scope(DefaultScope::Session) [
                 provide(|InjectTransient(_): InjectTransient<A>| Ok(B)),
+            ],
+        };
+    }
+
+    #[test]
+    #[should_panic]
+    #[traced_test]
+    fn test_registry_rejects_narrower_scope_dependency() {
+        struct WideThing;
+        struct NarrowThing;
+
+        registry! {
+            scope(DefaultScope::App) [
+                provide(|InjectTransient(_): InjectTransient<NarrowThing>| Ok(WideThing)),
+            ],
+            scope(DefaultScope::Request) [
+                provide(|| Ok(NarrowThing)),
             ],
         };
     }
@@ -908,7 +958,7 @@ mod tests {
                     provide(DefaultScope::Session, inst_b_with_c),
                     extend(
                         registry! {
-                            provide(DefaultScope::Request, inst_c),
+                            provide(DefaultScope::Runtime, inst_c),
                         },
                     ),
                 },
