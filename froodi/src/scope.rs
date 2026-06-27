@@ -112,32 +112,39 @@ impl ScopeDataWithChildScopesData {
     #[must_use]
     pub(crate) fn new_with_sort(mut scopes: Vec<ScopeData>) -> Self {
         scopes.sort_by_key(|scope| scope.priority);
-        let mut iter = scopes.into_iter();
-        match iter.next() {
-            Some(scope_data) => Self {
-                scope_data: Some(scope_data),
-                child_scopes_data: iter.collect(),
-            },
-            None => Self {
+        Self::from_sorted(scopes)
+    }
+
+    #[must_use]
+    pub(crate) fn from_sorted(mut scopes: Vec<ScopeData>) -> Self {
+        if scopes.is_empty() {
+            Self {
                 scope_data: None,
                 child_scopes_data: Vec::new(),
-            },
+            }
+        } else {
+            let scope_data = scopes.remove(0);
+            Self {
+                scope_data: Some(scope_data),
+                child_scopes_data: scopes,
+            }
         }
     }
 
     #[inline]
     #[must_use]
-    pub(crate) fn child(self) -> Self {
-        let mut iter = self.child_scopes_data.into_iter();
-        match iter.next() {
-            Some(scope_data) => Self {
-                scope_data: Some(scope_data),
-                child_scopes_data: iter.collect(),
-            },
-            None => Self {
+    pub(crate) fn child(mut self) -> Self {
+        if self.child_scopes_data.is_empty() {
+            Self {
                 scope_data: None,
                 child_scopes_data: Vec::new(),
-            },
+            }
+        } else {
+            let scope_data = self.child_scopes_data.remove(0);
+            Self {
+                scope_data: Some(scope_data),
+                child_scopes_data: self.child_scopes_data,
+            }
         }
     }
 }
