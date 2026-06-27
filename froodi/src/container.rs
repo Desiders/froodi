@@ -186,7 +186,9 @@ impl Container {
 
             return match parent.get::<Dep>() {
                 Ok(dependency) => {
-                    self.inner.cache.write().insert_rc(type_info, dependency.clone());
+                    if config.cache_provides {
+                        self.inner.cache.write().insert_rc(type_info, dependency.clone());
+                    }
                     Ok(dependency)
                 }
                 Err(err) => Err(err),
@@ -371,9 +373,8 @@ impl Container {
         child_scopes_data: Vec<ScopeData>,
         close_parent: bool,
     ) -> Container {
-        let mut cache = self.inner.cache.write().child();
+        let cache = self.inner.cache.write().child();
         let context = self.inner.context.clone();
-        cache.extend_context(&context);
 
         Container {
             #[cfg(feature = "thread_safe")]
@@ -643,9 +644,8 @@ impl BoxedContainerInner {
         child_scopes_data: Vec<ScopeData>,
         close_parent: bool,
     ) -> Self {
-        let mut cache = self.cache.child();
+        let cache = self.cache.child();
         let context = self.context.clone();
-        cache.extend_context(&context);
 
         Self {
             #[cfg(feature = "thread_safe")]
@@ -1282,6 +1282,29 @@ mod tests {
 
     #[test]
     #[traced_test]
+    fn audit_container_self_cache_cycle_blocks_drop() {
+        // Hold the lowest-priority container (where `Container` is registered) directly.
+        let root = Container::new_with_start_scope(
+            registry! {
+                scope(Runtime) [ provide(|| Ok(())) ],
+                scope(App) [ provide(|| Ok(((), ()))) ],
+            },
+            Runtime,
+        );
+        // Resolve the injected `Container` at its own scope -> caches Arc<Container> into its OWN cache.
+        let _ = root.get::<Container>().unwrap();
+
+        let weak = RcThreadSafety::downgrade(&root.inner);
+        drop(root);
+        // If there were no cycle, all strong refs are gone and upgrade() == None.
+        assert!(
+            weak.upgrade().is_none(),
+            "ContainerInner LEAKED: self-cache cycle keeps strong_count >= 1, Drop/finalizers never run"
+        );
+    }
+
+    #[test]
+    #[traced_test]
     fn test_thread_safe() {
         struct Request1 {
             #[cfg(not(feature = "thread_safe"))]
@@ -1306,5 +1329,35 @@ mod tests {
             assert!(request1.is_ok());
             assert!(request2.is_ok());
         });
+    }
+
+    /// Regression: resolving a `cache_provides = false` dependency from a deeper scope must NOT
+    /// pin the first value in the child cache. The owning scope keeps producing fresh instances,
+    /// so the child walk-up must do the same instead of caching unconditionally.
+    #[test]
+    #[traced_test]
+    fn test_walkup_respects_cache_provides_false() {
+        let counter = RcThreadSafety::new(AtomicU8::new(0));
+        let for_factory = counter.clone();
+
+        let app = Container::new(registry! {
+            scope(App) [
+                provide(
+                    move || Ok::<_, crate::InstantiateErrorKind>(for_factory.fetch_add(1, Ordering::SeqCst)),
+                    config = crate::Config { cache_provides: false },
+                ),
+            ],
+        });
+        let request = app.clone().enter().with_scope(Request).build().unwrap();
+
+        let first = request.get::<u8>().unwrap();
+        let second = request.get::<u8>().unwrap();
+
+        assert_ne!(*first, *second, "walk-up cached a cache_provides=false dependency in the child");
+        assert_eq!(
+            counter.load(Ordering::SeqCst),
+            2,
+            "each get must re-instantiate at the owning scope"
+        );
     }
 }

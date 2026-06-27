@@ -1,7 +1,7 @@
 use alloc::{boxed::Box, vec::Vec};
 use core::future::Future;
 use parking_lot::RwLock;
-use tracing::{debug, error, trace};
+use tracing::{debug, error, trace, warn};
 
 use super::{
     registry::{InstantiatorData, Registry},
@@ -225,7 +225,9 @@ impl Container {
                 .await
                 {
                     Ok(dependency) => {
-                        self.inner.cache.write().insert_rc(type_info, dependency.clone());
+                        if config.cache_provides {
+                            self.inner.cache.write().insert_rc(type_info, dependency.clone());
+                        }
                         Ok(dependency)
                     }
                     Err(err) => Err(err),
@@ -457,13 +459,11 @@ impl Container {
         child_scopes_data: Vec<ScopeData>,
         close_parent: bool,
     ) -> Self {
-        let mut cache = self.inner.cache.write().child();
+        let cache = self.inner.cache.write().child();
         let context = self.inner.context.clone();
-        cache.extend_context(&context);
 
-        let mut sync_cache = self.sync.inner.cache.write().child();
+        let sync_cache = self.sync.inner.cache.write().child();
         let sync_context = self.sync.inner.context.clone();
-        sync_cache.extend_context(&sync_context);
 
         Self {
             inner: RcThreadSafety::new(ContainerInner {
@@ -774,9 +774,8 @@ impl BoxedContainerInner {
         child_scopes_data: Vec<ScopeData>,
         close_parent: bool,
     ) -> Self {
-        let mut cache = self.cache.child();
+        let cache = self.cache.child();
         let context = self.context.clone();
-        cache.extend_context(&context);
 
         Self {
             parent: Some(Box::new(self)),
@@ -862,6 +861,19 @@ impl ContainerInner {
                 self.cache.write().map = self.context.map.clone();
             }
         })
+    }
+}
+
+impl Drop for ContainerInner {
+    fn drop(&mut self) {
+        let pending = self.cache.get_mut().resolved.0.len();
+        if pending > 0 {
+            warn!(
+                scope = %self.scope_data,
+                pending,
+                "async Container dropped without close().await; {pending} finalizer(s) will not run",
+            );
+        }
     }
 }
 
@@ -1677,5 +1689,82 @@ mod tests {
             assert!(request1.is_ok());
             assert!(request2.is_ok());
         });
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_async_drop_without_close_warns() {
+        struct Thing;
+
+        let container = Container::new(async_registry! {
+            scope(App) [
+                provide(
+                    || async { Ok::<_, crate::InstantiateErrorKind>(Thing) },
+                    finalizer = |_dep: RcThreadSafety<Thing>| async {}
+                ),
+            ],
+        });
+
+        let _ = container.get::<Thing>().await.unwrap();
+        drop(container);
+
+        assert!(
+            logs_contain("dropped without close().await"),
+            "expected a warning when an async container with pending finalizers is dropped",
+        );
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_async_close_then_drop_does_not_warn() {
+        struct Thing;
+
+        let container = Container::new(async_registry! {
+            scope(App) [
+                provide(
+                    || async { Ok::<_, crate::InstantiateErrorKind>(Thing) },
+                    finalizer = |_dep: RcThreadSafety<Thing>| async {}
+                ),
+            ],
+        });
+
+        let _ = container.get::<Thing>().await.unwrap();
+        container.close().await;
+        drop(container);
+
+        assert!(
+            !logs_contain("dropped without close().await"),
+            "no warning expected after close().await drained the finalizers",
+        );
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_walkup_respects_cache_provides_false() {
+        let counter = RcThreadSafety::new(AtomicU8::new(0));
+        let for_factory = counter.clone();
+
+        let app = Container::new(async_registry! {
+            scope(App) [
+                provide(
+                    move || {
+                        let for_factory = for_factory.clone();
+                        async move { Ok::<_, crate::InstantiateErrorKind>(for_factory.fetch_add(1, Ordering::SeqCst)) }
+                    },
+                    config = crate::Config { cache_provides: false },
+                ),
+            ],
+        });
+        let request = app.clone().enter().with_scope(Request).build().unwrap();
+
+        let first = request.get::<u8>().await.unwrap();
+        let second = request.get::<u8>().await.unwrap();
+
+        assert_ne!(*first, *second, "walk-up cached a cache_provides=false dependency in the child");
+        assert_eq!(
+            counter.load(Ordering::SeqCst),
+            2,
+            "each get must re-instantiate at the owning scope"
+        );
     }
 }

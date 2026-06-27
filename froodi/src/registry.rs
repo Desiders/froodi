@@ -46,7 +46,9 @@ impl Registry {
                 instantiator: boxed_container_instantiator(),
                 dependencies: EMPTY_DEPENDENCIES,
                 finalizer: None,
-                config: Config { cache_provides: true },
+                // Caching the container in its own cache creates an cycle
+                // that prevents `Drop`/`close` from ever running
+                config: Config { cache_provides: false },
                 scope_data,
             },
         );
@@ -75,7 +77,7 @@ impl Registry {
     #[inline]
     #[must_use]
     pub(crate) fn get_scope_with_child_scopes(&self) -> ScopeDataWithChildScopesData {
-        ScopeDataWithChildScopesData::new_with_sort(self.scopes_data.clone().into_iter().collect())
+        ScopeDataWithChildScopesData::new_with_sort(self.scopes_data.clone())
     }
 
     pub fn dfs_detect(&self) -> Result<(), DFSErrorKind> {
