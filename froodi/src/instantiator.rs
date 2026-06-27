@@ -123,13 +123,13 @@ pub const fn instance<T: Clone + 'static>(val: T) -> impl Instantiator<(), Provi
 /// let repo1: Box<dyn UserRepo> = boxed!(PostgresUserRepo; UserRepo);
 ///
 /// // Trait with supertraits
-/// let repo2: Box<dyn UserRepo > = boxed!(PostgresUserRepo; UserRepo );
+/// let repo2: Box<dyn UserRepo + Send + Sync> = boxed!(PostgresUserRepo; UserRepo + Send + Sync);
 /// ```
 #[macro_export]
 macro_rules! boxed {
-    ($val:expr ; $trait:tt $($super_traits:tt)*) => {{
+    ($val:expr ; $tr:tt $($super_traits:tt)*) => {{
         use $crate::macros_utils::aliases::Box;
-        Box::new($val) as Box<dyn $r#trait $($super_traits)*>
+        Box::new($val) as Box<dyn $tr $($super_traits)*>
     }};
 }
 
