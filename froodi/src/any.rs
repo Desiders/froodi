@@ -50,6 +50,9 @@ impl TypeInfo {
     #[inline]
     #[must_use]
     #[cfg(const_type_id)]
+    // `const_type_id` is only set by build.rs on rustc >= 1.91, where const `TypeId::of` is stable,
+    // so this is never compiled below that version — clippy can't see the cfg/version link.
+    #[allow(clippy::incompatible_msrv)]
     pub(crate) const fn new<T: ?Sized + 'static>(name: &'static str) -> Self {
         Self {
             name,
