@@ -6,4 +6,3 @@ resolver = "2"
 [patch.crates-io]
 froodi = { path = "froodi" }
 froodi-auto = { path = "froodi-auto" }
-froodi-auto-macros = { path = "froodi-auto-macros" }
