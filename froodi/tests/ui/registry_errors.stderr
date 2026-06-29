@@ -1,0 +1,191 @@
+error: `scope` block must have a scope
+  --> tests/ui/registry_errors.rs:15:5
+   |
+15 |     registry! { scope() [ provide(inst) ] };
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: this error originates in the macro `registry` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: `scope` block must contain at least one entry
+  --> tests/ui/registry_errors.rs:19:5
+   |
+19 |     registry! { scope(App) [] };
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: this error originates in the macro `registry` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: Missing comma after `scope` block
+  --> tests/ui/registry_errors.rs:23:5
+   |
+23 |     registry! { scope(App) [ provide(inst) ] provide(App, inst) };
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: this error originates in the macro `registry` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: `scope(...)` entries must be wrapped in square brackets `[ ... ]`, found `( ... )`
+  --> tests/ui/registry_errors.rs:27:5
+   |
+27 |     registry! { scope(App) ( provide(inst) ) };
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: this error originates in the macro `registry` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: `scope(...)` entries must be wrapped in square brackets `[ ... ]`, found `{ ... }`
+  --> tests/ui/registry_errors.rs:31:5
+   |
+31 |     registry! { scope(App) { provide(inst) } };
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: this error originates in the macro `registry` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: `scope(...)` accepts exactly one scope
+  --> tests/ui/registry_errors.rs:35:5
+   |
+35 |     registry! { scope(App, Session) [ provide(inst) ] };
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: this error originates in the macro `registry` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: `provide` must have a scope and an instantiator
+  --> tests/ui/registry_errors.rs:39:5
+   |
+39 |     registry! { provide() };
+   |     ^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: this error originates in the macro `registry` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: `provide` must include an instantiator after the scope
+  --> tests/ui/registry_errors.rs:43:5
+   |
+43 |     registry! { provide(App) };
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: this error originates in the macro `registry` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: `provide` must include a scope before the instantiator
+  --> tests/ui/registry_errors.rs:47:5
+   |
+47 |     registry! { provide(, inst) };
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: this error originates in the macro `registry` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: Missing comma after `provide` block
+  --> tests/ui/registry_errors.rs:51:5
+   |
+51 |     registry! { provide(App, inst) provide(Session, inst) };
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: this error originates in the macro `registry` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: `extend` macro must be at the last macro invocation
+  --> tests/ui/registry_errors.rs:55:5
+   |
+55 |     registry! { extend(registry!()), provide(App, inst) };
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: this error originates in the macro `registry` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: `extend` macro must be called with at least one argument
+  --> tests/ui/registry_errors.rs:59:5
+   |
+59 |     registry! { extend() };
+   |     ^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: this error originates in the macro `registry` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: Missing comma after/in `extend` block or unexpected comma in the block
+  --> tests/ui/registry_errors.rs:63:5
+   |
+63 |     registry! { extend(registry!()) provide(App, inst) };
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: this error originates in the macro `registry` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: Unexpected leading or double comma
+  --> tests/ui/registry_errors.rs:67:5
+   |
+67 |     registry! { , provide(App, inst) };
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: this error originates in the macro `registry` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: Duplicate or unexpected comma
+  --> tests/ui/registry_errors.rs:71:5
+   |
+71 |     registry! { , };
+   |     ^^^^^^^^^^^^^^^
+   |
+   = note: this error originates in the macro `registry` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: Unknown syntax: totally bogus
+  --> tests/ui/registry_errors.rs:75:5
+   |
+75 |     registry! { totally bogus };
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: this error originates in the macro `registry` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: Unexpected double comma after scope in `provide` entry
+  --> tests/ui/registry_errors.rs:79:5
+   |
+79 |     registry! { provide(App,, inst) };
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: this error originates in the macro `$crate::registry_internal` which comes from the expansion of the macro `registry` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: Malformed entries in `scope(...)` block: `provide(inst) provide(inst)`. Entries must be a comma-separated list of `provide(...)` items (e.g. `scope(App) [ provide(a), provide(b) ]`); check for a missing or extra comma, a wrong separator, or an empty `provide()`.
+  --> tests/ui/registry_errors.rs:83:5
+   |
+83 |     registry! { scope(App) [ provide(inst) provide(inst) ] };
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: this error originates in the macro `$crate::registry_internal` which comes from the expansion of the macro `registry` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: Unexpected double comma in `provide` entry
+  --> tests/ui/registry_errors.rs:87:5
+   |
+87 |     registry! { scope(App) [ provide(inst,, config = Config::default()) ] };
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: this error originates in the macro `$crate::registry_internal` which comes from the expansion of the macro `registry` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: Unexpected double comma after `config` in `provide` entry
+  --> tests/ui/registry_errors.rs:91:5
+   |
+91 |     registry! { scope(App) [ provide(inst, config = Config::default(),, finalizer = ()) ] };
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: this error originates in the macro `$crate::registry_internal` which comes from the expansion of the macro `registry` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: Unexpected double comma after `finalizer` in `provide` entry
+  --> tests/ui/registry_errors.rs:95:5
+   |
+95 |     registry! { scope(App) [ provide(inst, finalizer = (),, config = Config::default()) ] };
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: this error originates in the macro `$crate::registry_internal` which comes from the expansion of the macro `registry` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: Unexpected double comma after entry arguments
+  --> tests/ui/registry_errors.rs:99:5
+   |
+99 |     registry! { scope(App) [ provide(inst, config = Config::default(), finalizer = (),, x) ] };
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: this error originates in the macro `$crate::registry_internal` which comes from the expansion of the macro `registry` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: Unexpected double comma after entry arguments
+   --> tests/ui/registry_errors.rs:103:5
+    |
+103 |     registry! { scope(App) [ provide(inst, finalizer = (), config = Config::default(),, x) ] };
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: this error originates in the macro `$crate::registry_internal` which comes from the expansion of the macro `registry` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: Unexpected tokens after the instantiator in a `provide` entry: `garbage`. Expected `provide(instantiator [, config = ...] [, finalizer = ...])`; inside a `scope(...)` block do not pass a scope to `provide`.
+   --> tests/ui/registry_errors.rs:107:5
+    |
+107 |     registry! { scope(App) [ provide(inst, garbage) ] };
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: this error originates in the macro `$crate::registry_internal` which comes from the expansion of the macro `registry` (in Nightly builds, run with -Z macro-backtrace for more info)

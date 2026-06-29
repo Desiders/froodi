@@ -55,6 +55,7 @@ criterion = { version = "0.7", features = ["async_tokio"] }
 froodi-auto = { path = "../froodi-auto", default-features = false }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 tracing-test = { version = "0.2", default-features = false }
+trybuild = "1"
 
 [[bench]]
 name = "sync_container_init"
