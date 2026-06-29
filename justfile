@@ -29,6 +29,11 @@ test-integrations:
 
 test: test-basic test-default test-all-features test-async test-integrations
 
+# Regenerate trybuild UI snapshots (tests/ui/*.stderr) after changing a macro error message/branch.
+overwrite-ui-tests:
+    TRYBUILD=overwrite cargo test -p froodi --test compile_fail
+    TRYBUILD=overwrite cargo test -p froodi --features async --test compile_fail
+
 bench-init:
     cargo bench --profile release --frozen --bench sync_container_init
     cargo bench --profile release --frozen --bench async_container_init --features async
