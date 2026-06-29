@@ -78,7 +78,7 @@ error: Missing comma after `provide` block
    |
    = note: this error originates in the macro `async_registry` (in Nightly builds, run with -Z macro-backtrace for more info)
 
-error: Missing comma after/in `extend` block or unexpected comma in the block
+error: `extend` macro must be at the last macro invocation
   --> tests/ui/async_registry_errors.rs:55:5
    |
 55 |     async_registry! { extend(async_registry!()), provide(App, inst) };

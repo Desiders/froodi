@@ -401,6 +401,9 @@ macro_rules! async_registry {
     (provide($($entry:tt)*) $($rest:tt)+) => {
         compile_error!("Missing comma after `provide` block")
     };
+    (extend($($entry:tt)*), $($rest:tt)+) => {
+        compile_error!("`extend` macro must be at the last macro invocation")
+    };
     (extend() $($rest:tt)*) => {
         compile_error!("`extend` macro must be called with at least one argument")
     };
