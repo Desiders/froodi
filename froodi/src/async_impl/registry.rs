@@ -380,6 +380,15 @@ macro_rules! async_registry {
     (scope($scope:expr $(,)?) [ $($entries:tt)* ] $($rest:tt)+) => {
         compile_error!("Missing comma after `scope` block")
     };
+    (scope($scope:expr $(,)?) ( $($entries:tt)* ) $($rest:tt)*) => {
+        compile_error!("`scope(...)` entries must be wrapped in square brackets `[ ... ]`, found `( ... )`")
+    };
+    (scope($scope:expr $(,)?) { $($entries:tt)* } $($rest:tt)*) => {
+        compile_error!("`scope(...)` entries must be wrapped in square brackets `[ ... ]`, found `{ ... }`")
+    };
+    (scope($scope:expr, $($more:tt)+) $($rest:tt)*) => {
+        compile_error!("`scope(...)` accepts exactly one scope")
+    };
     (provide() $($rest:tt)*) => {
         compile_error!("`provide` must have a scope and an instantiator")
     };
@@ -397,6 +406,9 @@ macro_rules! async_registry {
     };
     (extend($($entry:tt)*) $($rest:tt)+) => {
         compile_error!("Missing comma after/in `extend` block or unexpected comma in the block")
+    };
+    (, $($rest:tt)+) => {
+        compile_error!("Unexpected leading or double comma")
     };
     (,) => {
         compile_error!("Duplicate or unexpected comma")
@@ -467,7 +479,12 @@ macro_rules! async_registry_internal {
     }};
 
     (@entries_in_scope scope($scope:expr) [ $($entry:tt)+ ]) => {
-        compile_error!("`scope` block supports only non empty `provide` entries")
+        compile_error!(concat!(
+            "Malformed entries in `scope(...)` block: `", stringify!($($entry)+),
+            "`. Entries must be a comma-separated list of `provide(...)` items (e.g. \
+             `scope(App) [ provide(a), provide(b) ]`); check for a missing or extra comma, a wrong \
+             separator, or an empty `provide()`."
+        ))
     };
     (@entry scope($scope:expr), $inst:expr,, $($rest:tt)*) => {
         compile_error!("Unexpected double comma in `provide` entry")
@@ -485,7 +502,11 @@ macro_rules! async_registry_internal {
         compile_error!("Unexpected double comma after entry arguments")
     };
     (@entry scope($scope:expr), $inst:expr, $($rest:tt)*) => {
-        compile_error!(concat!("One of parameter in `provide` entry is unexpected: ", stringify!($($rest)*)))
+        compile_error!(concat!(
+            "Unexpected tokens after the instantiator in a `provide` entry: `", stringify!($($rest)*),
+            "`. Expected `provide(instantiator [, config = ...] [, finalizer = ...])`; inside a \
+             `scope(...)` block do not pass a scope to `provide`."
+        ))
     };
 
     (scope() $($rest:tt)*) => {
@@ -496,6 +517,15 @@ macro_rules! async_registry_internal {
     };
     (scope($scope:expr $(,)?) [ $($entries:tt)* ] $($rest:tt)+) => {
         compile_error!("Missing comma after `scope` block")
+    };
+    (scope($scope:expr $(,)?) ( $($entries:tt)* ) $($rest:tt)*) => {
+        compile_error!("`scope(...)` entries must be wrapped in square brackets `[ ... ]`, found `( ... )`")
+    };
+    (scope($scope:expr $(,)?) { $($entries:tt)* } $($rest:tt)*) => {
+        compile_error!("`scope(...)` entries must be wrapped in square brackets `[ ... ]`, found `{ ... }`")
+    };
+    (scope($scope:expr, $($more:tt)+) $($rest:tt)*) => {
+        compile_error!("`scope(...)` accepts exactly one scope")
     };
     (provide() $($rest:tt)*) => {
         compile_error!("`provide` must have a scope and an instantiator")
@@ -517,6 +547,9 @@ macro_rules! async_registry_internal {
     };
     (extend($($entry:tt)*) $($rest:tt)+) => {
         compile_error!("Missing comma after/in `extend` block or unexpected comma in the block")
+    };
+    (, $($rest:tt)+) => {
+        compile_error!("Unexpected leading or double comma")
     };
     (,) => {
         compile_error!("Duplicate or unexpected comma")
