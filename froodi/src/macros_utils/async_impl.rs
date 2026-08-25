@@ -1,5 +1,5 @@
 use alloc::collections::btree_map::BTreeMap;
-use core::{future::Future, pin::Pin};
+use core::{future::Future, marker::PhantomData, pin::Pin};
 
 use crate::{
     any::TypeInfo,
@@ -12,43 +12,121 @@ use crate::{
     },
     dependency_resolver::DependencyResolver,
     macros_utils::types::{RegistryKind, RegistryKindOrEntry},
-    utils::{
-        hlist,
-        thread_safety::{SendSafety, SyncSafety},
-    },
+    registry::InstantiatorData as SyncInstantiatorData,
+    utils::thread_safety::{SendSafety, SyncSafety},
     Config, InstantiateErrorKind, Registry, ResolveErrorKind, Scope, Scopes,
 };
 
-#[inline]
-#[must_use]
+type AsyncEntries = BTreeMap<TypeInfo, InstantiatorData>;
+type SyncEntries = BTreeMap<TypeInfo, SyncInstantiatorData>;
+
+/// Flat accumulator behind the `async_registry!` macro; see
+/// [`crate::macros_utils::sync::RegistryBuilder`].
 #[doc(hidden)]
-pub fn build_registry<H, S, const N: usize>((_, iterable): (S, H)) -> RegistryWithSync
+pub struct RegistryBuilder<S, const N: usize> {
+    entries: AsyncEntries,
+    sync_entries: SyncEntries,
+    scope: PhantomData<S>,
+}
+
+impl<S, const N: usize> Default for RegistryBuilder<S, N>
 where
     S: Scope + Scopes<N, Scope = S>,
-    H: hlist::IntoIterator<RegistryKindOrEntry>,
 {
-    let mut entries = BTreeMap::new();
-    let mut sync_entries = BTreeMap::new();
-    for registry_kind_or_entry in iterable.into_iter() {
+    #[inline]
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<S, const N: usize> RegistryBuilder<S, N>
+where
+    S: Scope + Scopes<N, Scope = S>,
+{
+    #[inline]
+    #[must_use]
+    #[doc(hidden)]
+    pub fn new() -> Self {
+        Self {
+            entries: BTreeMap::new(),
+            sync_entries: BTreeMap::new(),
+            scope: PhantomData,
+        }
+    }
+
+    /// Anchors `S`, the scope type whose `Scopes::all()` fills `scopes_data`. Every clause calls
+    /// this, so all of a registry's scopes must share one type.
+    #[inline]
+    #[doc(hidden)]
+    pub fn set_scope(&mut self, _scope: S) {}
+
+    #[inline]
+    #[doc(hidden)]
+    pub fn push(&mut self, registry_kind_or_entry: RegistryKindOrEntry) {
         match registry_kind_or_entry {
-            RegistryKindOrEntry::Kind(RegistryKind::Sync(registry)) => {
-                sync_entries.extend(registry.entries);
-            }
-            RegistryKindOrEntry::Kind(RegistryKind::Async(registry)) => {
-                entries.extend(registry.entries);
-            }
-            RegistryKindOrEntry::Kind(RegistryKind::AsyncWithSync(RegistryWithSync { registry, sync })) => {
-                entries.extend(registry.entries);
-                sync_entries.extend(sync.entries);
-            }
+            RegistryKindOrEntry::Kind(kind) => self.push_kind(kind),
             RegistryKindOrEntry::Entry((key, value)) => {
-                entries.insert(key, value);
+                self.entries.insert(key, value);
             }
         }
     }
-    RegistryWithSync {
-        registry: async_impl::Registry::new::<S, S, N>(entries),
-        sync: Registry::new::<S, S, N>(sync_entries),
+
+    #[inline]
+    fn push_kind(&mut self, kind: RegistryKind) {
+        match kind {
+            RegistryKind::Sync(registry) => self.sync_entries.extend(registry.entries),
+            RegistryKind::Async(registry) => self.entries.extend(registry.entries),
+            RegistryKind::AsyncWithSync(RegistryWithSync { registry, sync }) => {
+                self.entries.extend(registry.entries);
+                self.sync_entries.extend(sync.entries);
+            }
+        }
+    }
+
+    #[inline]
+    #[doc(hidden)]
+    pub fn push_registry<R>(&mut self, registry: R)
+    where
+        R: IntoRegistryKind,
+    {
+        self.push_kind(registry.into_registry_kind());
+    }
+
+    #[inline]
+    #[must_use]
+    #[doc(hidden)]
+    pub fn build(self) -> RegistryWithSync {
+        RegistryWithSync {
+            registry: async_impl::Registry::new::<S, S, N>(self.entries),
+            sync: Registry::new::<S, S, N>(self.sync_entries),
+        }
+    }
+}
+
+/// Lets `extend(...)` take a sync, an async or a mixed registry without the macro knowing which.
+#[doc(hidden)]
+pub trait IntoRegistryKind {
+    fn into_registry_kind(self) -> RegistryKind;
+}
+
+impl IntoRegistryKind for Registry {
+    #[inline]
+    fn into_registry_kind(self) -> RegistryKind {
+        RegistryKind::Sync(self)
+    }
+}
+
+impl IntoRegistryKind for async_impl::Registry {
+    #[inline]
+    fn into_registry_kind(self) -> RegistryKind {
+        RegistryKind::Async(self)
+    }
+}
+
+impl IntoRegistryKind for RegistryWithSync {
+    #[inline]
+    fn into_registry_kind(self) -> RegistryKind {
+        RegistryKind::AsyncWithSync(self)
     }
 }
 
