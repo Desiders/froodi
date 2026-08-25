@@ -189,3 +189,123 @@ error: Unexpected tokens after the instantiator in a `provide` entry: `garbage`.
     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
     |
     = note: this error originates in the macro `$crate::registry_internal` which comes from the expansion of the macro `registry` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: `extend` macro must be at the last macro invocation
+   --> tests/ui/registry_errors.rs:111:5
+    |
+111 |     registry! { provide(App, inst), extend(registry!()), provide(Session, inst) };
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: this error originates in the macro `$crate::registry_internal` which comes from the expansion of the macro `registry` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: `extend` macro must be called with at least one argument
+   --> tests/ui/registry_errors.rs:115:5
+    |
+115 |     registry! { provide(App, inst), extend() };
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: this error originates in the macro `$crate::registry_internal` which comes from the expansion of the macro `registry` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: Missing comma after/in `extend` block or unexpected comma in the block
+   --> tests/ui/registry_errors.rs:119:5
+    |
+119 |     registry! { extend(registry!()) [ x ] };
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: this error originates in the macro `$crate::registry_internal` which comes from the expansion of the macro `registry` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: `scope` block must have a scope
+   --> tests/ui/registry_errors.rs:123:5
+    |
+123 |     registry! { provide(App, inst), scope() [ provide(inst) ] };
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: this error originates in the macro `$crate::registry_internal` which comes from the expansion of the macro `registry` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: `scope` block must contain at least one entry
+   --> tests/ui/registry_errors.rs:127:5
+    |
+127 |     registry! { provide(App, inst), scope(Session) [] };
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: this error originates in the macro `$crate::registry_internal` which comes from the expansion of the macro `registry` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: `scope(...)` accepts exactly one scope
+   --> tests/ui/registry_errors.rs:131:5
+    |
+131 |     registry! { provide(App, inst), scope(Session, Request) [ provide(inst) ] };
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: this error originates in the macro `$crate::registry_internal` which comes from the expansion of the macro `registry` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: `provide` must have a scope and an instantiator
+   --> tests/ui/registry_errors.rs:135:5
+    |
+135 |     registry! { provide(App, inst), provide() };
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: this error originates in the macro `$crate::registry_internal` which comes from the expansion of the macro `registry` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: `provide` must include an instantiator after the scope
+   --> tests/ui/registry_errors.rs:139:5
+    |
+139 |     registry! { provide(App, inst), provide(Session) };
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: this error originates in the macro `$crate::registry_internal` which comes from the expansion of the macro `registry` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: `provide` must include a scope before the instantiator
+   --> tests/ui/registry_errors.rs:143:5
+    |
+143 |     registry! { provide(App, inst), provide(, inst) };
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: this error originates in the macro `$crate::registry_internal` which comes from the expansion of the macro `registry` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: Missing comma after `provide` block
+   --> tests/ui/registry_errors.rs:147:5
+    |
+147 |     registry! { provide(App, inst) [ x ] };
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: this error originates in the macro `$crate::registry_internal` which comes from the expansion of the macro `registry` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: `scope(...)` must be followed by its entries in square brackets `[ ... ]`
+   --> tests/ui/registry_errors.rs:151:5
+    |
+151 |     registry! { scope(App) };
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: this error originates in the macro `$crate::registry_internal` which comes from the expansion of the macro `registry` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: Unknown syntax: frobnicate (x)
+   --> tests/ui/registry_errors.rs:155:5
+    |
+155 |     registry! { frobnicate(x) };
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: this error originates in the macro `$crate::registry_internal` which comes from the expansion of the macro `registry` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: `scope(...)` entries must be wrapped in square brackets `[ ... ]`, found `( ... )`
+   --> tests/ui/registry_errors.rs:159:5
+    |
+159 |     registry! { scope(App) [ provide(inst) ], scope(Session) ( provide(inst) ) };
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: this error originates in the macro `$crate::registry` which comes from the expansion of the macro `registry` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: Unexpected leading or double comma
+   --> tests/ui/registry_errors.rs:163:5
+    |
+163 |     registry! { provide(App, inst),, provide(Session, inst) };
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: this error originates in the macro `$crate::registry` which comes from the expansion of the macro `registry` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: Unknown syntax: bogus
+   --> tests/ui/registry_errors.rs:167:5
+    |
+167 |     registry_internal! { bogus };
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: this error originates in the macro `registry_internal` (in Nightly builds, run with -Z macro-backtrace for more info)

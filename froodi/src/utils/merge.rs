@@ -1,4 +1,4 @@
-use crate::{any::TypeInfo, macros_utils::types::RegistryOrEntry, registry::InstantiatorData, utils::hlist, Registry};
+use crate::{any::TypeInfo, macros_utils::types::RegistryOrEntry, registry::InstantiatorData, Registry};
 
 pub trait Merge<T> {
     type Output;
@@ -39,21 +39,9 @@ impl Merge<RegistryOrEntry> for Registry {
     }
 }
 
-impl<H> Merge<H> for Registry
-where
-    H: hlist::IntoIterator<RegistryOrEntry>,
-{
-    type Output = Self;
-
-    #[inline]
-    fn merge(self, other: H) -> Self::Output {
-        other.into_iter().fold(self, Merge::merge)
-    }
-}
-
 #[cfg(feature = "async")]
 mod async_impl {
-    use super::{hlist, Merge, Registry, TypeInfo};
+    use super::{Merge, Registry, TypeInfo};
     use crate::{
         async_impl::{self, RegistryWithSync},
         macros_utils::types::{
@@ -238,17 +226,6 @@ mod async_impl {
                 (Async(registry), Kind(AsyncWithSync(other))) => AsyncWithSync(other.merge(registry)),
                 (AsyncWithSync(registry), Kind(Async(other))) => AsyncWithSync(registry.merge(other)),
             }
-        }
-    }
-
-    impl<H> Merge<H> for RegistryWithSync
-    where
-        H: hlist::IntoIterator<RegistryKindOrEntry>,
-    {
-        type Output = Self;
-
-        fn merge(self, other: H) -> Self::Output {
-            other.into_iter().fold(self, Merge::merge)
         }
     }
 }

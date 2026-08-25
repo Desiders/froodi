@@ -39,7 +39,7 @@ pub use finalizer::Finalizer;
 pub use inject::{Inject, InjectTransient};
 pub use instantiator::{instance, Instantiator};
 pub use registry::{InstantiatorData, Registry};
-pub use scope::{DefaultScope, Scope, Scopes};
+pub use scope::{DefaultScope, Scope, ScopeData, Scopes};
 
 #[cfg(feature = "axum")]
 pub use integrations::axum;
