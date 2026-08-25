@@ -2,7 +2,7 @@
 //! test target (cargo does not auto-discover files under `tests/ui/`).
 #![allow(unused)]
 
-use froodi::{registry, Config, DefaultScope::*, InstantiateErrorKind};
+use froodi::{registry, registry_internal, Config, DefaultScope::*, InstantiateErrorKind};
 
 fn inst() -> Result<(), InstantiateErrorKind> {
     Ok(())
@@ -105,4 +105,64 @@ fn e23() {
 // 24. Unexpected tokens after the instantiator in an entry
 fn e24() {
     registry! { scope(App) [ provide(inst, garbage) ] };
+}
+// 25. `extend` not last, in the middle of the list
+fn e25() {
+    registry! { provide(App, inst), extend(registry!()), provide(Session, inst) };
+}
+// 26. `extend` with no arguments, not first
+fn e26() {
+    registry! { provide(App, inst), extend() };
+}
+// 27. `extend` block followed by a bracket group
+fn e27() {
+    registry! { extend(registry!()) [ x ] };
+}
+// 28. `scope` with no scope, not first
+fn e28() {
+    registry! { provide(App, inst), scope() [ provide(inst) ] };
+}
+// 29. empty `scope` block, not first
+fn e29() {
+    registry! { provide(App, inst), scope(Session) [] };
+}
+// 30. multiple scopes in `scope(...)`, not first
+fn e30() {
+    registry! { provide(App, inst), scope(Session, Request) [ provide(inst) ] };
+}
+// 31. `provide` with no arguments, not first
+fn e31() {
+    registry! { provide(App, inst), provide() };
+}
+// 32. `provide` with a scope but no instantiator, not first
+fn e32() {
+    registry! { provide(App, inst), provide(Session) };
+}
+// 33. `provide` with no scope, not first
+fn e33() {
+    registry! { provide(App, inst), provide(, inst) };
+}
+// 34. `provide` block followed by a bracket group
+fn e34() {
+    registry! { provide(App, inst) [ x ] };
+}
+// 35. `scope(...)` with no entry list
+fn e35() {
+    registry! { scope(App) };
+}
+// 36. unknown clause kind
+fn e36() {
+    registry! { frobnicate(x) };
+}
+// 37. wrong delimiter on a non-leading clause
+fn e37() {
+    registry! { scope(App) [ provide(inst) ], scope(Session) ( provide(inst) ) };
+}
+// 38. double comma between clauses
+fn e38() {
+    registry! { provide(App, inst),, provide(Session, inst) };
+}
+// 39. garbage passed straight to the internal macro
+fn e39() {
+    registry_internal! { bogus };
 }
