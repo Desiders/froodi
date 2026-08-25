@@ -22,5 +22,3 @@ pub use std::{BTreeSet, Box, Vec};
 
 #[cfg(not(feature = "std"))]
 pub use alloc::{BTreeSet, Box, Vec};
-
-pub use frunk::hlist;
