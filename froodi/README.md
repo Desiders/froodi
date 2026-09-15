@@ -31,7 +31,7 @@ It focuses on a small set of DI problems:
 - **Sync and async support**. The crate supports both sync and async factories and containers.
 - **Modular registries**. Registries can be split and extended instead of building one large registration block.
 - **Auto-registration**. `froodi-auto` can collect providers declared with macros.
-- **Framework integrations**. `axum`, `dptree`, and `telers` are supported out of the box.
+- **Framework integrations**. `axum`, `dptree`, `telers`, and `ruststream` are supported out of the box.
 
 ## Quickstart
 
@@ -217,7 +217,7 @@ fn main() {
 
 - For async containers and factories, see [async provide][examples/async_provide]
 - For `froodi-auto`, see [sync auto provide][examples/sync_auto_provide] and [async auto provide][examples/async_auto_provide]
-- For framework integration, see [axum][examples/axum], [dptree][examples/dptree], and [telers][examples/telers]
+- For framework integration, see [axum][examples/axum], [dptree][examples/dptree], [telers][examples/telers], and [ruststream][examples/ruststream]
 
 ## Concepts
 
@@ -359,6 +359,7 @@ Important feature flags:
 - `http2-axum`
 - `dptree`
 - `telers`
+- `ruststream`
 
 Disable default features if you want to turn off `thread_safe`.
 
@@ -373,6 +374,7 @@ Disable default features if you want to turn off `thread_safe`.
 - [Axum][examples/axum]. Request injection in `axum`
 - [Dptree][examples/dptree]. Endpoint injection in `dptree`
 - [Telers][examples/telers]. Handler injection in `telers`
+- [RustStream][examples/ruststream]. Handler injection in `ruststream`
 
 Browse the full [examples directory][examples].
 
@@ -398,6 +400,7 @@ Contributions are welcome.
 [examples/axum]: https://github.com/Desiders/froodi/tree/master/examples/axum
 [examples/dptree]: https://github.com/Desiders/froodi/tree/master/examples/dptree
 [examples/telers]: https://github.com/Desiders/froodi/tree/master/examples/telers
+[examples/ruststream]: https://github.com/Desiders/froodi/tree/master/examples/ruststream
 
 [docs-badge]: https://docs.rs/froodi/badge.svg
 [docs-url]: https://docs.rs/froodi

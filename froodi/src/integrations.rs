@@ -6,3 +6,6 @@ pub mod dptree;
 
 #[cfg(feature = "telers")]
 pub mod telers;
+
+#[cfg(feature = "ruststream")]
+pub mod ruststream;

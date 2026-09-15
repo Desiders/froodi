@@ -27,6 +27,9 @@ test-integrations:
     
     cargo test --no-default-features --features telers
 
+    cargo test --no-default-features --features ruststream
+    cargo test --no-default-features --features ruststream,async
+
 test: test-basic test-default test-all-features test-async test-integrations
 
 # Regenerate trybuild UI snapshots (tests/ui/*.stderr) after changing a macro error message/branch.
