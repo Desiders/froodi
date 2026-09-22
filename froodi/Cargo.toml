@@ -31,12 +31,15 @@ dptree = ["dep:dptree", "thread_safe"]
 
 telers = ["dep:telers", "thread_safe"]
 
+ruststream = ["dep:ruststream", "thread_safe", "tokio/rt"]
+
 [dependencies]
 anyhow = { version = "1.0", default-features = false }
 axum = { version = ">= 0.6, <= 0.8", default-features = false, optional = true }
 dptree = { version = "0.5", optional = true }
 h2 = { version = "0.4", optional = true }
 parking_lot = { version = "0.12", default-features = false }
+ruststream = { version = "0.7.0-rc.7", default-features = false, optional = true }
 telers = { version = ">= 1.0.0-beta.1, < 1.0.0", default-features = false, optional = true }
 thiserror = { version = "2.0", default-features = false }
 tokio = { version = "1", default-features = false, optional = true }
@@ -52,6 +55,7 @@ axum = { version = "0.8" }
 axum-test = { version = "18", features = ["ws"] }
 criterion = { version = "0.7", features = ["async_tokio"] }
 froodi-auto = { path = "../froodi-auto", default-features = false }
+ruststream = { version = "0.7.0-rc.7", features = ["testing", "memory", "macros", "json"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 tracing-test = { version = "0.2", default-features = false }
 trybuild = "1"

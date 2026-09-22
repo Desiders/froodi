@@ -49,3 +49,6 @@ pub use integrations::dptree;
 
 #[cfg(feature = "telers")]
 pub use integrations::telers;
+
+#[cfg(feature = "ruststream")]
+pub use integrations::ruststream;
