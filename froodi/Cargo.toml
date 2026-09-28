@@ -19,26 +19,30 @@ rustdoc-args = ["--cfg", "docsrs"]
 [features]
 default = ["std", "thread_safe"]
 
-std = ["anyhow/std", "thiserror/std", "tracing/std"]
+std = ["anyhow/std", "thiserror/std", "tracing/std", "telers?/std"]
 
 thread_safe = []
-async = ["tokio", "tokio/sync"]
+lock-parking-lot = ["thread_safe", "std", "dep:parking_lot"]
+lock-spin = ["thread_safe", "dep:spin"]
 
-axum = ["dep:axum", "axum/ws", "dep:tower-layer", "dep:tower-service", "thread_safe"]
-http2-axum = ["dep:h2", "axum/http2"]
+async = ["tokio", "tokio/sync", "std"]
 
-dptree = ["dep:dptree", "thread_safe"]
+axum = ["dep:axum", "axum/ws", "dep:tower-layer", "dep:tower-service", "thread_safe", "std"]
+http2-axum = ["dep:h2", "axum", "axum/http2"]
 
-telers = ["dep:telers", "thread_safe"]
+dptree = ["dep:dptree", "thread_safe", "std"]
 
-ruststream = ["dep:ruststream", "thread_safe", "tokio/rt"]
+telers = ["dep:telers", "thread_safe", "std"]
+
+ruststream = ["dep:ruststream", "thread_safe", "tokio/rt", "std"]
 
 [dependencies]
 anyhow = { version = "1.0", default-features = false }
 axum = { version = ">= 0.6, <= 0.8", default-features = false, optional = true }
 dptree = { version = "0.5", optional = true }
 h2 = { version = "0.4", optional = true }
-parking_lot = { version = "0.12", default-features = false }
+parking_lot = { version = "0.12", default-features = false, optional = true }
+spin = { version = "0.12", features = ["mutex", "rwlock", "spin_mutex"], default-features = false, optional = true }
 ruststream = { version = "0.7.0-rc.7", default-features = false, optional = true }
 telers = { version = ">= 1.0.0-beta.1, < 1.0.0", default-features = false, optional = true }
 thiserror = { version = "2.0", default-features = false }
