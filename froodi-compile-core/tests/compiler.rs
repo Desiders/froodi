@@ -1,5 +1,6 @@
 use froodi_compile_core::{
-    compile, DependencyRequest, Diagnostic, Origin, ExecutionKind, Graph, Registration, RegistrationId, RequestMode, ScopeKey, Target, ValueSource,
+    compile, DependencyRequest, Diagnostic, ExecutionKind, Graph, Origin, Registration, RegistrationId, RequestMode, ScopeKey, Target,
+    ValueSource,
 };
 
 const APP: ScopeKey = ScopeKey {
@@ -135,7 +136,13 @@ fn renders_missing_binding_as_dependency_tree() {
 
 #[test]
 fn reports_each_duplicated_binding_once() {
-    let err = compile(graph(vec![reg("A", APP, &[]), reg("B", APP, &[]), reg("A", REQUEST, &[]), reg("A", APP, &[])])).unwrap_err();
+    let err = compile(graph(vec![
+        reg("A", APP, &[]),
+        reg("B", APP, &[]),
+        reg("A", REQUEST, &[]),
+        reg("A", APP, &[]),
+    ]))
+    .unwrap_err();
 
     match err.0.as_slice() {
         [Diagnostic::Duplicate { type_name, origins }] => {
@@ -190,7 +197,12 @@ fn reports_one_cycle_per_loop_through_any_request_mode() {
 
 #[test]
 fn renders_cycle_as_dependency_tree() {
-    let err = compile(graph(vec![reg("A", APP, &[("B", Shared)]), reg("B", APP, &[("C", Shared)]), reg("C", APP, &[("A", Shared)])])).unwrap_err();
+    let err = compile(graph(vec![
+        reg("A", APP, &[("B", Shared)]),
+        reg("B", APP, &[("C", Shared)]),
+        reg("C", APP, &[("A", Shared)]),
+    ]))
+    .unwrap_err();
 
     assert_eq!(err.to_string(), "error: dependency cycle\n\nA\n└── B\n    └── C\n        └── A");
 }
@@ -216,7 +228,12 @@ fn reports_dependency_on_narrower_scope() {
 
 #[test]
 fn allows_dependency_on_wider_or_equal_scope() {
-    assert!(compile(graph(vec![reg("Narrow", REQUEST, &[("Wide", Shared), ("Peer", Shared)]), reg("Wide", APP, &[]), reg("Peer", REQUEST, &[])])).is_ok());
+    assert!(compile(graph(vec![
+        reg("Narrow", REQUEST, &[("Wide", Shared), ("Peer", Shared)]),
+        reg("Wide", APP, &[]),
+        reg("Peer", REQUEST, &[])
+    ]))
+    .is_ok());
 }
 
 #[test]

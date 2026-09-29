@@ -41,39 +41,26 @@ genuinely dynamic registrations
 
 ## 2. Experimental crate boundary
 
-The new engine should initially be isolated in new crates.
-
-Working split:
+The new engine lives in its own crates, next to the current ones in the same workspace:
 
 ```text
-froodi-compile
-    public experimental facade
-
-froodi-compile-core
-    registration IR
-    graph IR
-    graph validation
-    diagnostics
-    compilation transforms
-
-froodi-compile-runtime
-    Container
-    scope/cache state
-    factory-value slots
-    Context
-    finalizer state
-    compiled-plan execution
-    future runtime fallback
-
-froodi-compile-macros
-    registry!/async_registry! frontend experiments
-    generated glue
-
-froodi-compile-build
-    optional build-time compiler experiments
+froodi-compile            public facade: re-exports the runtime and `registry!`;
+                          examples and compatibility tests import this crate
+froodi-compile-core       registration IR, graph compiler, diagnostics;
+                          `no_std + alloc`, no `Any`, no containers
+froodi-compile-runtime    Container, typed registration tree, linking and execution,
+                          scopes, Context, errors; follows Froodi's `std`/`thread_safe` features
+froodi-compile-macros     `registry!` proc macro: Froodi syntax in, typed tree out
+froodi-compile-build      home of `build.rs` staging experiments
 ```
 
-Only the separation between current Froodi and the experimental implementation is intentional. The internal crate split may change.
+Dependencies point one way: `froodi-compile` depends on the runtime and the macros, the runtime
+depends on the core. None of them depends on `froodi`; only the compatibility test of
+`froodi-compile` uses `froodi`, to run each scenario against both engines
+(`froodi-compile/tests/compat.rs`).
+
+The boundary between current Froodi and the experiment is intentional. The split inside the
+experiment may change.
 
 ## 3. Registration is the core graph unit
 

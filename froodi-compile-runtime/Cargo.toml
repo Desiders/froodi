@@ -1,0 +1,30 @@
+[package]
+name = "froodi-compile-runtime"
+version = "0.0.0"
+edition = "2021"
+authors = ["Desiders"]
+license = "Apache-2.0"
+repository = "https://github.com/Desiders/froodi"
+publish = false
+
+description = "Runtime of the experimental compile-time Froodi engine: container, scopes, caches and compiled-plan execution"
+
+rust-version = "1.85"
+
+[features]
+default = ["std", "thread_safe"]
+
+std = ["anyhow/std", "thiserror/std"]
+
+thread_safe = []
+lock-parking-lot = ["thread_safe", "std", "dep:parking_lot"]
+lock-spin = ["thread_safe", "dep:spin"]
+
+async = ["std"]
+
+[dependencies]
+anyhow = { version = "1.0", default-features = false }
+froodi-compile-core = { path = "../froodi-compile-core" }
+parking_lot = { version = "0.12", default-features = false, optional = true }
+spin = { version = "0.12", features = ["mutex", "rwlock", "spin_mutex"], default-features = false, optional = true }
+thiserror = { version = "2.0", default-features = false }

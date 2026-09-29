@@ -19,7 +19,10 @@ pub enum Diagnostic {
     /// the registration whose request is unresolved.
     MissingBinding { missing: &'static str, path: Vec<PathStep> },
     /// Two or more registrations provide the same binding.
-    Duplicate { type_name: &'static str, origins: Vec<Option<Origin>> },
+    Duplicate {
+        type_name: &'static str,
+        origins: Vec<Option<Origin>>,
+    },
     /// A dependency cycle. The first step is repeated at the end.
     Cycle { path: Vec<PathStep> },
     /// A registration depends on a registration in a narrower scope, which it can never reach.

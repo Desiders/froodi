@@ -83,9 +83,7 @@ impl<K: Ord> CompiledGraph<K> {
 
     /// Direct and transitive dependencies of `from`, in id order.
     pub fn reachable(&self, from: RegistrationId) -> impl Iterator<Item = RegistrationId> + '_ {
-        (0..self.nodes.len())
-            .map(id)
-            .filter(move |&to| self.reaches(from, to))
+        (0..self.nodes.len()).map(id).filter(move |&to| self.reaches(from, to))
     }
 
     #[must_use]
@@ -215,11 +213,7 @@ fn index_keys<K: Ord + Clone>(registrations: &[Registration<K>], diagnostics: &m
 
 /// Resolved edges per registration, and the `(registration, request)` pairs nothing provides.
 fn resolve_edges<K: Ord>(registrations: &[Registration<K>], keys: &[(K, RegistrationId)]) -> (Vec<Vec<CompiledEdge>>, Vec<(usize, usize)>) {
-    let lookup = |key: &K| {
-        keys.binary_search_by(|(probe, _)| probe.cmp(key))
-            .ok()
-            .map(|index| keys[index].1)
-    };
+    let lookup = |key: &K| keys.binary_search_by(|(probe, _)| probe.cmp(key)).ok().map(|index| keys[index].1);
     let mut missing = Vec::new();
     let mut edges = Vec::with_capacity(registrations.len());
     for (index, registration) in registrations.iter().enumerate() {

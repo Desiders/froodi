@@ -15,6 +15,4 @@ pub mod ir;
 
 pub use compiler::{compile, CompiledEdge, CompiledGraph, CompiledNode, ScopeId};
 pub use diagnostic::{Diagnostic, Diagnostics, PathStep};
-pub use ir::{
-    DependencyRequest, ExecutionKind, Graph, Origin, Registration, RegistrationId, RequestMode, ScopeKey, Target, ValueSource,
-};
+pub use ir::{DependencyRequest, ExecutionKind, Graph, Origin, Registration, RegistrationId, RequestMode, ScopeKey, Target, ValueSource};
