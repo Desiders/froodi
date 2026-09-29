@@ -23,207 +23,110 @@ The phase logs use `RUSTC_BOOTSTRAP=1 cargo rustc -- -Ztime-passes` for measurem
 only. Normal builds use stable Cargo settings. Record the toolchain and host, and
 run without competing builds or benchmarks.
 
-## Materialization experiment
+## Native Froodi integration
 
-Baseline: `db88e540`, with stage instrumentation. Measurements use rustc 1.98.1
-(LLVM 22.1.8), AMD Ryzen 5 7500F (6 cores/12 threads), x86_64 Linux, default `std`/`thread_safe`, incremental compilation
-enabled, dev `debug = "line-tables-only"`, and release optimization level 3.
-Times are medians of three app builds; dependency compilation is excluded.
-Release sizes include symbol tables but omit debug information.
+Baseline `6e6ab97`; rustc 1.98.1 / LLVM 22.1.8, Ryzen 5 7500F, x86_64 Linux.
+Dependencies were warm, dev incremental compilation enabled, `debug =
+"line-tables-only"`, default `std`/`thread_safe`. No other task builds ran during
+measurements. Host scheduling still produced outliers; clean builds were repeated
+with five samples. Shape edits use three-sample medians. Do not read small timing
+differences as precise speedups.
 
-### Stage breakdown before refactoring
+| App / measurement | Native before | Experimental before | Integrated final |
+|---|---:|---:|---:|
+| Chain 100 clean | 1.28 s | 1.10 s | 1.63 s |
+| Chain 100 shape edit | 0.47 s | 1.08 s | 2.02 s |
+| Flat 500 clean | 1.70 s | 4.11 s | 3.69 s |
+| Flat 500 shape edit | 1.37 s | 4.59 s | 3.86 s |
 
-Stages C and D independently extend B; these are cumulative timings, not additive
-costs. A black-box consumer keeps each selected stage instantiated.
+Final flat-500 clean samples were 3.48–5.71 s; shape-edit samples were
+3.43–6.18 s. Tables report medians; host variability limits precision.
 
-| Stage | What gets compiled | Chain 100 | Flat 500 |
-|---|---|---:|---:|
-| typed | Macro expansion and typed tree only | 0.18 s | 0.46 s |
-| linking | A + linking | 0.53 s | 2.59 s |
-| metadata | B + linked metadata | 1.32 s | 4.27 s |
-| executors | B + executor collection | 2.28 s | 10.96 s |
-| full | Full container construction and get | 2.67 s | 12.50 s |
+Reproduce against an untouched baseline checkout and the integration checkout:
 
-The flat registry has no dependency depth, yet executor generation accounts for
-much of its build cost. A separate rustc phase run of the full flat app spent
-1.60 s type-checking, 4.70 s collecting monomorphizations and 2.35 s generating LLVM
-IR. These phase timings overlap with other compiler work and should not be summed
-as a complete wall-clock breakdown. Macro expansion was small relative to these
-stages.
+```sh
+rustc --edition=2021 tools/compile_bench.rs -o /tmp/compile-bench
+/tmp/compile-bench "$baseline_repo" /tmp/native-before 3 full froodi
+/tmp/compile-bench "$baseline_repo" /tmp/experimental-before 3 full experimental
+/tmp/compile-bench "$PWD" /tmp/native-integrated 3 full integrated
+# Optional last argument selects one measurement, e.g. repeat noisy clean samples:
+/tmp/compile-bench "$PWD" /tmp/native-confirm 5 full integrated clean-app
+```
 
-### Materialization without a lightweight index
+### Runtime
 
-This variant removes `Root` from execution and `Links` from linked registrations,
-merges provider lookup/indexing, and materializes IDs in linking. Lookup still uses
-the full instantiator-value tree.
+Criterion median point estimates, 40 samples, 0.5 s warm-up and 1.5 s measurement.
+The native before column uses the untouched baseline. The after columns use the
+integrated revision and shared graph types, with the `compiled` feature enabled.
+The retained-container case was measured separately after adding its instrumentation.
 
-| Measurement | Chain before | Chain materialized | Flat before | Flat materialized |
+| Scenario | Native before | Native dynamic after | Experimental after | Integrated after |
 |---|---:|---:|---:|---:|
-| clean-app | 2.67 s | 1.06 s | 12.50 s | 4.40 s |
-| body | 0.27 s | 0.27 s | 0.95 s | 0.49 s |
-| topology | 2.74 s | 1.07 s | 13.49 s | 4.49 s |
-| release | 3.95 s | 2.40 s | 14.80 s | 7.91 s |
+| Container creation, chain 100 | 15.01 µs | 16.22 µs | 24.21 µs | 46.14 µs |
+| Cached get | 22.72 ns | 25.50 ns | 23.74 ns | 26.36 ns |
+| First get, chain 100, including teardown | 21.80 µs | 22.90 µs | 7.92 µs | 25.93 µs |
+| First get, chain 100, retained container | 18.88 µs | 17.56 µs | 4.58 µs | 15.03 µs |
+| Enter/resolve Request chain 100 | 15.23 µs | 15.31 µs | 6.15 µs | 12.63 µs |
+| Scope transition | 131.02 ns | 124.55 ns | 103.64 ns | 124.80 ns |
+| Transient chain 100 | 7.03 µs | 7.82 µs | 4.10 µs | 6.79 µs |
+| First get, wide 16, including teardown | 498.30 ns | 595.98 ns | 456.55 ns | 823.22 ns |
+| Enter/resolve captured closure | 178.51 ns | 194.00 ns | 139.01 ns | 182.05 ns |
 
-The flat case falls to 4.40 s, but linking alone still costs 2.61 s. This motivated
-the separate lightweight provider-index experiment.
+The existing `first_get` cases consume their container inside the timed closure.
+The added `first_get_chain_100_retained` uses `iter_batched_ref` to exclude input
+and plan destruction. It was added to baseline benchmark instrumentation too;
+baseline runtime code was unchanged. This separates construction from the larger
+integrated plan's teardown cost. The experimental retained-container baseline
+was 4.45 µs.
 
-### Lightweight provider index
+Static parameters now select providers by ID, including static edges into runtime
+registrations. Public get, native caches/locks, custom resolvers and dependencies
+inside ordinary dynamic adapters still do type-based work. Startup remapping is
+also type-based. The integration improves some dependency-heavy cases but does
+**not** inherit the experimental executor's overall speed: native lifecycle work
+remains, and construction/teardown costs are higher. These are remaining tuning
+costs before enabling the frontend by default, not evidence of a fallback to
+provider lookup on static edges.
 
-This experiment changed only provider lookup: `RegistryIndex::Index` contains
-`Provider<Out>` / `AsyncProvider<Out>` leaves and preserves tree positions.
-The table compares three-sample medians with the materialized value-tree variant.
+```sh
+cargo bench -p froodi-compile --bench compare -- '(froodi|static|integrated)$' \
+  --warm-up-time 0.5 --measurement-time 1.5 --sample-size 40 --noplot
+```
 
-| Clean app stage | Chain value tree | Chain index | Flat value tree | Flat index |
-|---|---:|---:|---:|---:|
-| linking | 0.66 s | 0.46 s | 2.61 s | 1.83 s |
-| metadata | 0.72 s | 0.51 s | 3.03 s | 2.22 s |
-| executors | 0.94 s | 0.74 s | 3.97 s | 3.25 s |
-| full | 1.06 s | 0.86 s | 4.40 s | 3.45 s |
+## Static-validation cost
 
-The projection overhead was outweighed by reduced proof types and specialization.
-The index is retained. Execution compatibility was subsequently separated from
-provider inference to restore specific sync-to-async diagnostics; the final
-measurements below include that check, removal of unused value-tree lookup impls,
-and the runtime-path adjustments described below.
-
-### Final before/after
-
-| Measurement | Chain before | Chain final | Flat before | Flat final |
-|---|---:|---:|---:|---:|
-| clean-app | 2.67 s | 1.32 s | 12.50 s | 3.63 s |
-| body | 0.27 s | 0.23 s | 0.95 s | 0.52 s |
-| topology | 2.74 s | 0.92 s | 13.49 s | 3.91 s |
-| release | 3.95 s | 2.23 s | 14.80 s | 7.50 s |
-| Release executable | 2.56 MB | 1.09 MB | 11.77 MB | 1.96 MB |
-
-| Final stage | Chain 100 | Flat 500 |
-|---|---:|---:|
-| typed | 0.18 s | 0.49 s |
-| linking | 0.59 s | 2.08 s |
-| metadata | 0.65 s | 2.27 s |
-| executors | 0.88 s | 3.17 s |
-| full | 1.32 s | 3.63 s |
-
-Linking now includes ID materialization and execution validation; metadata generation
-moves the stored request vectors into the IR. Flat-500 clean builds improved by 71%, and topology
-edits by 71%, reaching the requested 3–4 s range without fragment interface erasure.
-The final flat-app rustc phase run spent 0.52 s type-checking, 1.41 s collecting
-monomorphizations and 0.73 s generating LLVM IR (3.82 s total). Macro expansion
-remained about 0.03 s.
-
-The last run had visible wall-clock variation: chain clean-build samples ranged
-from 1.18–1.42 s, and flat topology edits from 3.70–6.21 s. Tables report the medians
-without discarding samples; treat small differences between variants as noise.
-
-## Bounded static validation and construction fixes
-
-Baseline: `7f6881d`, measured before this change on the same rustc 1.98.1,
-Ryzen 5 7500F host and settings above. Three-sample medians, warm dependencies,
-app-only builds; before/after output directories were `froodi-static-before` and
-`froodi-static-after`. The final revision also fixes cache publication locking and
-registration-pointer ownership, so full-engine differences include those changes.
-
-| Measurement | Chain before | Chain after | Flat before | Flat after |
-|---|---:|---:|---:|---:|
-| clean-app | 0.961 s | 1.002 s | 3.537 s | 3.795 s |
-| provider body edit | 0.201 s | 0.206 s | 0.491 s | 0.491 s |
-| registry shape edit | 0.929 s | 1.002 s | 3.586 s | 3.664 s |
-| release build | 2.108 s | 2.204 s | 7.240 s | 7.123 s |
-| release executable bytes | 1,094,672 | 1,099,520 | 1,964,512 | 1,983,528 |
-
-To isolate validation, `validated` performs the same linking work as `linking`
-plus mandatory evaluation of `Link::VALIDATE`, with no container or executor
-generation. It uses the same inferred provider witnesses.
+The experimental stage fixture isolates linking from mandatory const validation
+without creating a container or executors. On rustc 1.98.1 / Ryzen 5 7500F, with
+warm dependencies and three-sample medians:
 
 | Stage | Chain 100 | Flat 500 |
 |---|---:|---:|
-| linking | 0.549 s | 1.913 s |
-| linking + const validation | 0.594 s | 2.213 s |
-| additional time | 0.045 s | 0.300 s |
+| Linking | 0.549 s | 1.913 s |
+| Linking + const validation | 0.594 s | 2.213 s |
+| Additional time | 0.045 s | 0.300 s |
 
-Both stage pairs produced identical executable sizes. Full flat clean builds
-increase about 7%; topology-edit medians increase about 2%, with overlapping
-ranges (before 3.47–3.62 s, after 3.45–3.81 s). The result stays below 4 seconds
-without restoring root/path specialization in runtime executors.
+These measurements predate native integration; they isolate the shared validation
+mechanism, not total integrated build cost. Both pairs produced identical executable
+sizes. Use the helper's `stages` mode to repeat this comparison when changing the
+validation limit or algorithm.
 
-Runtime checks used the existing `compare` fixtures with 1-second warmup,
-3-second measurement, 60 samples and Criterion baseline `before-static-validation`.
-Median point estimates:
+## Runtime fixtures
 
-| Static backend case | Before | After |
-|---|---:|---:|
-| cached get | 22.42 ns | 22.10 ns |
-| first get, chain 100 | 7.70 µs | 7.68 µs |
-| transient, chain 100 | 4.02 µs | 4.15 µs |
+The checked-in [graphs.rs](../../froodi-compile/benches/support/graphs.rs) compares
+native Froodi (`froodi`), experimental static registrations (`static`), experimental
+runtime registrations (`indexed`) and the integrated native container
+(`integrated`). Both experimental variants use indexed execution. Cases cover
+construction, cached and first access, deep transient resolution, scopes, captured
+instantiators and runtime boundaries. Default `thread_safe` features keep all
+engines on `Arc`.
 
-Criterion detected no significant cached/first-get change and about a 3%
-transient regression. This remains a measured trade-off of the resulting build;
-the experiment does not attribute it to const validation or tune unrelated runtime
-code to compensate. Reproduce with:
-
-```sh
-cargo bench -p froodi-compile --bench compare -- \
-  'compile_time_engine/(get_cached|first_get_chain_100|get_transient_chain_100)/static' \
-  --warm-up-time 1 --measurement-time 3 --sample-size 60 \
-  --save-baseline before-static-validation
-# On the changed revision, replace --save-baseline with --baseline.
-```
-
-## Runtime comparisons
+To compare a future change:
 
 ```sh
 cargo bench -p froodi-compile --bench compare -- --save-baseline before
 # Apply the change, then:
 cargo bench -p froodi-compile --bench compare -- --baseline before
 ```
-
-The checked-in Rust fixtures in
-[graphs.rs](../../froodi-compile/benches/support/graphs.rs) compare Froodi, statically
-linked registrations (`static`) and runtime-linked registrations (`indexed`).
-Both compile-time engine variants use the same indexed execution backend. Cases
-cover construction, cached and first access, deep transient resolution, scopes,
-captured instantiators and runtime boundaries. Default `thread_safe` features keep
-all engines on `Arc`.
-
-### Runtime-path adjustments
-
-The first materialized version retained copies of request vectors and looked up
-compiled edges again inside each executor. Its static cold-chain and transient
-benchmarks regressed. The final implementation moves request vectors into the IR
-and passes the selected compiled edge slice directly to construction. Static
-parameter resolution uses the proven edge count to avoid a repeated iterator
-bounds check; that unsafe precondition is documented beside the executor. Runtime
-registrations retain checked resolution. None of these changes restores root/path
-types to execution or adds a type lookup to static edges.
-
-### Before/after runtime results
-
-Criterion, 1 s warm-up, 3 s measurement, 60 samples per case; median point estimates
-from the final full run. These runs used the same fixtures and default features.
-
-| Static registration scenario | Before | Final | Change |
-|---|---:|---:|---:|
-| container_new_chain_100 | 23.53 µs | 24.12 µs | 2.5% |
-| get_cached | 22.13 ns | 22.15 ns | 0.1% |
-| first_get_chain_100 | 7.55 µs | 7.83 µs | 3.6% |
-| enter_and_resolve_request_chain_100 | 5.91 µs | 6.16 µs | 4.1% |
-| enter_build_scope_transition | 79.72 ns | 88.57 ns | 11.1% |
-| get_transient_chain_100 | 3.93 µs | 4.08 µs | 3.8% |
-| first_get_wide_16 | 433.13 ns | 466.65 ns | 7.7% |
-| enter_and_resolve_captured_closure | 126.84 ns | 136.56 ns | 7.7% |
-| first_get_mixed_boundary | 278.74 ns | 301.92 ns | 8.3% |
-
-Cached access is unchanged within measurement noise. Static construction now loads
-numeric targets from compiled metadata instead of embedding them as constants in
-root-specialized functions. This adds runtime work, but the measurements alone do
-not attribute every difference to it, particularly the scope-only case. The
-compile-time improvement is therefore not a claim of identical runtime timings.
-The larger first-version regressions were removed; the remaining measured trade-off
-is recorded above, including scope transitions and mixed-boundary cases. An earlier
-focused cold-chain confirmation measured 7.44 µs, so small run-to-run changes should
-not be overinterpreted. Static edges still avoid type lookup and remain faster than
-Froodi on these deep-chain fixtures: Froodi's final cold-chain and transient medians
-were 22.00 µs and 7.07 µs, respectively.
 
 ## Prior execution experiment
 
