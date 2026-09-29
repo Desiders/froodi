@@ -14,7 +14,7 @@ const REQUEST: ScopeKey = ScopeKey {
     skipped_by_default: false,
 };
 
-use RequestMode::{Shared, Transient};
+use RequestMode::{Inject, InjectTransient};
 
 fn reg(key: &'static str, scope: ScopeKey, deps: &[(&'static str, RequestMode)]) -> Registration<&'static str> {
     Registration {
@@ -53,9 +53,9 @@ fn ids(raw: &[u32]) -> Vec<RegistrationId> {
 #[test]
 fn orders_dependencies_before_dependents() {
     let compiled = compile(graph(vec![
-        reg("Service", REQUEST, &[("Repository", Shared)]),
-        reg("Repository", REQUEST, &[("Database", Shared)]),
-        reg("Database", APP, &[("Config", Shared)]),
+        reg("Service", REQUEST, &[("Repository", Inject)]),
+        reg("Repository", REQUEST, &[("Database", Inject)]),
+        reg("Database", APP, &[("Config", Inject)]),
         reg("Config", APP, &[]),
     ]))
     .unwrap();
@@ -74,7 +74,11 @@ fn assigns_owning_scope_from_sorted_hierarchy() {
 
 #[test]
 fn keeps_inject_and_inject_transient_edges_distinct() {
-    let compiled = compile(graph(vec![reg("A", APP, &[("B", Shared), ("B", Transient)]), reg("B", APP, &[])])).unwrap();
+    let compiled = compile(graph(vec![
+        reg("A", APP, &[("B", Inject), ("B", InjectTransient)]),
+        reg("B", APP, &[]),
+    ]))
+    .unwrap();
 
     let edges: Vec<_> = compiled
         .node(RegistrationId(0))
@@ -82,7 +86,7 @@ fn keeps_inject_and_inject_transient_edges_distinct() {
         .iter()
         .map(|edge| (edge.target, edge.mode))
         .collect();
-    assert_eq!(edges, vec![(RegistrationId(1), Shared), (RegistrationId(1), Transient)]);
+    assert_eq!(edges, vec![(RegistrationId(1), Inject), (RegistrationId(1), InjectTransient)]);
 }
 
 #[test]
@@ -100,9 +104,9 @@ fn steps(path: &[froodi_compile_core::PathStep]) -> Vec<&'static str> {
 #[test]
 fn reports_missing_binding_with_path_from_root() {
     let err = compile(graph(vec![
-        reg("Service", REQUEST, &[("Repository", Shared)]),
-        reg("Repository", REQUEST, &[("Database", Shared)]),
-        reg("Database", APP, &[("Config", Shared)]),
+        reg("Service", REQUEST, &[("Repository", Inject)]),
+        reg("Repository", REQUEST, &[("Database", Inject)]),
+        reg("Database", APP, &[("Config", Inject)]),
     ]))
     .unwrap_err();
 
@@ -118,9 +122,9 @@ fn reports_missing_binding_with_path_from_root() {
 #[test]
 fn renders_missing_binding_as_dependency_tree() {
     let err = compile(graph(vec![
-        reg("Service", REQUEST, &[("Repository", Shared)]),
-        reg("Repository", REQUEST, &[("Database", Shared)]),
-        reg("Database", APP, &[("Config", Shared)]),
+        reg("Service", REQUEST, &[("Repository", Inject)]),
+        reg("Repository", REQUEST, &[("Database", Inject)]),
+        reg("Database", APP, &[("Config", Inject)]),
     ]))
     .unwrap_err();
 
@@ -183,10 +187,10 @@ fn renders_duplicate_with_registration_origins() {
 fn reports_one_cycle_per_loop_through_any_request_mode() {
     // Froodi rejects cycles over every dependency, transient ones included (`Registry::detect_cyclic_dependencies`).
     let err = compile(graph(vec![
-        reg("A", APP, &[("B", Shared)]),
-        reg("B", APP, &[("C", Transient)]),
-        reg("C", APP, &[("A", Shared)]),
-        reg("D", APP, &[("A", Shared)]),
+        reg("A", APP, &[("B", Inject)]),
+        reg("B", APP, &[("C", InjectTransient)]),
+        reg("C", APP, &[("A", Inject)]),
+        reg("D", APP, &[("A", Inject)]),
     ]))
     .unwrap_err();
 
@@ -199,9 +203,9 @@ fn reports_one_cycle_per_loop_through_any_request_mode() {
 #[test]
 fn renders_cycle_as_dependency_tree() {
     let err = compile(graph(vec![
-        reg("A", APP, &[("B", Shared)]),
-        reg("B", APP, &[("C", Shared)]),
-        reg("C", APP, &[("A", Shared)]),
+        reg("A", APP, &[("B", Inject)]),
+        reg("B", APP, &[("C", Inject)]),
+        reg("C", APP, &[("A", Inject)]),
     ]))
     .unwrap_err();
 
@@ -211,7 +215,7 @@ fn renders_cycle_as_dependency_tree() {
 #[test]
 fn reports_dependency_on_narrower_scope() {
     // Froodi: a dependency must live in an equal or wider scope (`Registry::detect_unreachable_scopes`).
-    let err = compile(graph(vec![reg("Wide", APP, &[("Narrow", Shared)]), reg("Narrow", REQUEST, &[])])).unwrap_err();
+    let err = compile(graph(vec![reg("Wide", APP, &[("Narrow", Inject)]), reg("Narrow", REQUEST, &[])])).unwrap_err();
 
     match err.0.as_slice() {
         [Diagnostic::ScopeViolation {
@@ -230,7 +234,7 @@ fn reports_dependency_on_narrower_scope() {
 #[test]
 fn allows_dependency_on_wider_or_equal_scope() {
     assert!(compile(graph(vec![
-        reg("Narrow", REQUEST, &[("Wide", Shared), ("Peer", Shared)]),
+        reg("Narrow", REQUEST, &[("Wide", Inject), ("Peer", Inject)]),
         reg("Wide", APP, &[]),
         reg("Peer", REQUEST, &[])
     ]))
@@ -239,7 +243,7 @@ fn allows_dependency_on_wider_or_equal_scope() {
 
 #[test]
 fn renders_scope_violation_with_both_scopes() {
-    let err = compile(graph(vec![reg("Wide", APP, &[("Narrow", Shared)]), reg("Narrow", REQUEST, &[])])).unwrap_err();
+    let err = compile(graph(vec![reg("Wide", APP, &[("Narrow", Inject)]), reg("Narrow", REQUEST, &[])])).unwrap_err();
 
     assert_eq!(
         err.to_string(),
@@ -266,8 +270,8 @@ fn reports_scope_outside_hierarchy() {
 #[test]
 fn computes_transitive_reachability() {
     let compiled = compile(graph(vec![
-        reg("A", APP, &[("B", Shared)]),
-        reg("B", APP, &[("C", Transient)]),
+        reg("A", APP, &[("B", Inject)]),
+        reg("B", APP, &[("C", InjectTransient)]),
         reg("C", APP, &[]),
         reg("D", APP, &[]),
     ]))
@@ -302,7 +306,7 @@ fn carries_registration_metadata_independent_of_scope() {
 fn with_id_request(mut registration: Registration<&'static str>, target: u32) -> Registration<&'static str> {
     registration.requests.push(DependencyRequest {
         target: Target::Id(RegistrationId(target)),
-        mode: Shared,
+        mode: Inject,
         type_name: "B",
     });
     registration
@@ -324,9 +328,9 @@ fn rejects_frontend_edge_outside_the_graph() {
 #[test]
 fn collects_every_diagnostic_in_a_stable_order() {
     let err = compile(graph(vec![
-        reg("A", APP, &[("Missing", Shared)]),
-        reg("B", APP, &[("C", Shared)]),
-        reg("C", APP, &[("B", Shared)]),
+        reg("A", APP, &[("Missing", Inject)]),
+        reg("B", APP, &[("C", Inject)]),
+        reg("C", APP, &[("B", Inject)]),
         reg("A", APP, &[]),
     ]))
     .unwrap_err();
@@ -348,9 +352,9 @@ fn collects_every_diagnostic_in_a_stable_order() {
 fn compiles_the_same_graph_to_the_same_output() {
     let make = || {
         graph(vec![
-            reg("A", APP, &[("B", Shared), ("C", Shared)]),
-            reg("B", APP, &[("D", Shared)]),
-            reg("C", APP, &[("D", Shared)]),
+            reg("A", APP, &[("B", Inject), ("C", Inject)]),
+            reg("B", APP, &[("D", Inject)]),
+            reg("C", APP, &[("D", Inject)]),
             reg("D", APP, &[]),
         ])
     };
@@ -362,7 +366,7 @@ fn compiles_the_same_graph_to_the_same_output() {
 #[test]
 fn records_custom_resolver_requests_without_resolving_them() {
     let compiled = compile(graph(vec![
-        reg("A", APP, &[("MapInject<Update>", RequestMode::Resolver), ("B", Shared)]),
+        reg("A", APP, &[("MapInject<Update>", RequestMode::Resolver), ("B", Inject)]),
         reg("B", APP, &[]),
     ]))
     .unwrap();
@@ -380,7 +384,7 @@ fn exposes_nodes_in_registration_order() {
 }
 
 fn boundary(key: &'static str, scope: ScopeKey) -> Registration<&'static str> {
-    let mut registration = reg(key, scope, &[(key, Shared)]);
+    let mut registration = reg(key, scope, &[(key, Inject)]);
     registration.source = ValueSource::Runtime;
     registration
 }
@@ -389,7 +393,7 @@ fn boundary(key: &'static str, scope: ScopeKey) -> Registration<&'static str> {
 fn links_a_runtime_boundary_to_the_real_provider() {
     let compiled = compile(graph(vec![
         boundary("Plugin", APP),
-        reg("Host", APP, &[("Plugin", Shared)]),
+        reg("Host", APP, &[("Plugin", Inject)]),
         reg("Plugin", APP, &[]),
     ]))
     .unwrap();
@@ -428,14 +432,14 @@ fn an_explicit_replacement_takes_over_its_key_and_the_edges_to_it() {
 
 #[test]
 fn renders_where_each_step_of_a_path_is_registered() {
-    let mut a = reg("A", APP, &[("B", Shared)]);
+    let mut a = reg("A", APP, &[("B", Inject)]);
     a.origin = Some(Origin {
         expr: "make_a",
         file: "src/app.rs",
         line: 3,
         column: 17,
     });
-    let err = compile(graph(vec![a, reg("B", APP, &[("A", Shared)])])).unwrap_err();
+    let err = compile(graph(vec![a, reg("B", APP, &[("A", Inject)])])).unwrap_err();
 
     assert_eq!(
         err.to_string(),

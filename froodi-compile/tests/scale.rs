@@ -1,7 +1,6 @@
 //! A 100-deep static chain under rustc's default `recursion_limit`: the absence of a
 //! `#![recursion_limit]` attribute is the point, as in Froodi's `registry_scale` tests.
-// With `direct-edges`, proving a 100-deep chain exceeds the default recursion limit.
-#![cfg(all(feature = "thread_safe", not(feature = "direct-edges")))]
+#![cfg(feature = "thread_safe")]
 
 #[path = "../benches/support/graphs.rs"]
 mod graphs;

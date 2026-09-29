@@ -11,17 +11,17 @@ fn outcomes(source: &str) -> Vec<Outcome> {
         .collect()
 }
 
-fn shared(ty: &str) -> Dependency {
+fn inject(ty: &str) -> Dependency {
     Dependency {
         ty: ty.to_owned(),
-        mode: Mode::Shared,
+        mode: Mode::Inject,
     }
 }
 
-fn transient(ty: &str) -> Dependency {
+fn inject_transient(ty: &str) -> Dependency {
     Dependency {
         ty: ty.to_owned(),
-        mode: Mode::Transient,
+        mode: Mode::InjectTransient,
     }
 }
 
@@ -58,8 +58,8 @@ fn reads_the_signature_of_a_function_in_the_same_module() {
     assert_eq!(
         outcomes(source),
         [
-            resolved("Database", vec![shared("Config")]),
-            resolved("Handler", vec![shared("UserRepository"), transient("Clock")]),
+            resolved("Database", vec![inject("Config")]),
+            resolved("Handler", vec![inject("UserRepository"), inject_transient("Clock")]),
         ]
     );
 }
@@ -77,7 +77,7 @@ fn reads_async_functions_and_functions_declared_after_use() {
             Pool::connect(&config.url).await
         }
     ";
-    assert_eq!(outcomes(source), [resolved("Arc<Pool>", vec![shared("Settings")])]);
+    assert_eq!(outcomes(source), [resolved("Arc<Pool>", vec![inject("Settings")])]);
 }
 
 #[test]
@@ -99,7 +99,7 @@ fn reads_functions_declared_in_the_enclosing_block_and_inline_module() {
     ";
     assert_eq!(
         outcomes(source),
-        [resolved("Cache", vec![]), resolved("Metrics", vec![shared("Cache")])]
+        [resolved("Cache", vec![]), resolved("Metrics", vec![inject("Cache")])]
     );
 }
 
@@ -148,7 +148,7 @@ fn a_parameter_or_let_binding_shadows_a_function_of_the_same_name() {
     assert_eq!(
         outcomes(source),
         [
-            resolved("Repo", vec![shared("Database")]),
+            resolved("Repo", vec![inject("Database")]),
             Outcome::Unresolved(Reason::FactoryIsALocalValue {
                 name: "make_database".to_owned()
             }),

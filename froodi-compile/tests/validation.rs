@@ -42,14 +42,9 @@ fn new_panics_with_the_rendered_diagnostics() {
     });
 }
 
-#[cfg(not(feature = "direct-edges"))]
 struct A;
-#[cfg(not(feature = "direct-edges"))]
 struct B;
 
-/// With `direct-edges`, a cycle among static edges is rejected at compile time by a trait
-/// overflow instead.
-#[cfg(not(feature = "direct-edges"))]
 #[test]
 fn reports_a_cycle_among_static_edges_with_its_path() {
     let first = line!() + 3;

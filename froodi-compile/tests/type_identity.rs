@@ -1,5 +1,4 @@
-//! Type identity belongs to rustc (issue #57, ADR 0003): spellings that name the same type are
-//! the same binding, and no string comparison is involved.
+//! Rustc treats aliases and qualified paths to the same type as one binding.
 
 #![allow(clippy::unnecessary_wraps, reason = "factories return Result by contract")]
 

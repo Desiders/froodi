@@ -1,13 +1,13 @@
 use crate::thread_safety::RcThreadSafety;
 
-/// Called with a cached value when its container closes, as in Froodi.
+/// Runs on values constructed through `get` when the container closes, even if caching is disabled.
 pub trait Finalizer<Dep>: Clone + 'static {
     fn finalize(&mut self, dependency: RcThreadSafety<Dep>);
 }
 
-impl<F, Dep> Finalizer<Dep> for F
+impl<Fin, Dep> Finalizer<Dep> for Fin
 where
-    F: FnMut(RcThreadSafety<Dep>) + Clone + 'static,
+    Fin: FnMut(RcThreadSafety<Dep>) + Clone + 'static,
 {
     #[inline]
     fn finalize(&mut self, dependency: RcThreadSafety<Dep>) {
@@ -15,8 +15,6 @@ where
     }
 }
 
-/// The finalizer slot of a registration: [`NoFinalizer`] or [`WithFinalizer`]. A registration
-/// without a finalizer stores nothing.
 pub trait MaybeFinalizer<Dep> {
     const PRESENT: bool;
 
@@ -37,9 +35,9 @@ impl<Dep> MaybeFinalizer<Dep> for NoFinalizer {
 
 #[doc(hidden)]
 #[derive(Clone)]
-pub struct WithFinalizer<F>(pub F);
+pub struct WithFinalizer<Fin>(pub Fin);
 
-impl<Dep, F: Finalizer<Dep>> MaybeFinalizer<Dep> for WithFinalizer<F> {
+impl<Dep, Fin: Finalizer<Dep>> MaybeFinalizer<Dep> for WithFinalizer<Fin> {
     const PRESENT: bool = true;
 
     #[inline]

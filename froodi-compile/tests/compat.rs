@@ -194,7 +194,7 @@ macro_rules! scenario {
                 assert_eq!(first.url, "postgres://localhost");
                 assert_eq!(count(&config_calls), 2);
 
-                let _shared = container.get::<Config>().unwrap();
+                let _provided = container.get::<Config>().unwrap();
                 assert_eq!(count(&config_calls), 3);
             }
 
@@ -214,7 +214,7 @@ macro_rules! scenario {
                 assert_eq!(container.get::<First>().unwrap().0.url, "postgres://localhost");
                 let _second = container.get::<Second>().unwrap();
                 assert_eq!(count(&config_calls), 2);
-                let _shared = container.get::<Config>().unwrap();
+                let _provided = container.get::<Config>().unwrap();
                 assert_eq!(count(&config_calls), 3);
             }
 

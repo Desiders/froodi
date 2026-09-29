@@ -10,8 +10,6 @@ use crate::{
     scope::{DefaultScope, Scope, ScopeData, Scopes},
 };
 
-/// A registry fragment: the typed registration tree built by `registry!`, plus the scope
-/// hierarchy its scopes belong to.
 pub struct Registry<Tree> {
     pub(crate) tree: Tree,
     pub(crate) scopes: Vec<ScopeData>,
@@ -72,10 +70,9 @@ impl<Tree> Registry<Tree> {
     }
 }
 
-/// One `provide(...)` item.
 #[doc(hidden)]
 #[inline]
-pub fn reg<S: Scope, P, D, Fin>(
+pub fn reg<S: Scope, P, Deps, Fin>(
     scope: S,
     provider: P,
     config: Option<Config>,
@@ -84,7 +81,7 @@ pub fn reg<S: Scope, P, D, Fin>(
     origin: Origin,
 ) -> P::Leaf
 where
-    P: Provide<D, Fin>,
+    P: Provide<Deps, Fin>,
 {
     provider.into_leaf(
         finalizer,

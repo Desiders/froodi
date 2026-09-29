@@ -30,10 +30,10 @@ impl RegistrationId {
 /// wrappers, preserved as edge metadata.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum RequestMode {
-    /// `Inject<T>`: `get`-like. Scoped, shared, subject to the target's cache policy and finalizer.
-    Shared,
+    /// `Inject<T>`: `get`-like. Scoped, subject to the target's cache policy and finalizer.
+    Inject,
     /// `InjectTransient<T>`: `get_transient`-like. A fresh value, the provided-value cache is not used.
-    Transient,
+    InjectTransient,
     /// A custom `DependencyResolver`: user code that reads the container at runtime. The request
     /// is recorded, but its target is opaque to the compiler, so it is never resolved to an edge
     /// and never reported as missing.
