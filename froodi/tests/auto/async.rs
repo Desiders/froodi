@@ -14,7 +14,6 @@ use froodi_auto::{entry_getters::__ASYNC_ENTRY_GETTERS, injectable, AutoRegistri
 
 #[derive(Debug)]
 struct D;
-
 struct C;
 
 #[injectable]

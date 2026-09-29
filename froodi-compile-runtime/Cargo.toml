@@ -23,7 +23,6 @@ lock-spin = ["thread_safe", "dep:spin"]
 async = ["std", "dep:tokio"]
 compile-bench = ["std"]
 
-
 [dependencies]
 anyhow = { version = "1.0", default-features = false }
 froodi-compile-core = { path = "../froodi-compile-core" }

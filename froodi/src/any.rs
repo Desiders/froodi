@@ -180,10 +180,12 @@ mod tests {
         // Deterministic no_std hasher to exercise the Hash impl.
         #[derive(Default)]
         struct CountingHasher(u64);
+
         impl core::hash::Hasher for CountingHasher {
             fn finish(&self) -> u64 {
                 self.0
             }
+
             fn write(&mut self, bytes: &[u8]) {
                 for &b in bytes {
                     self.0 = self.0.wrapping_mul(31).wrapping_add(u64::from(b));

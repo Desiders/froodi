@@ -21,7 +21,6 @@ pub struct Config {
     pub database_url: String,
     pub cache_provides: bool,
 }
-
 pub struct Clock;
 pub struct Cache;
 pub struct Pool;

@@ -182,6 +182,7 @@ impl CollectRuntimeExecutors for RuntimeNode {
 pub trait RuntimeTree: SendSafety + SyncSafety {
     #[doc(hidden)]
     fn describe_runtime(&self, out: &mut Vec<Registration<TypeId>>);
+
     #[doc(hidden)]
     #[allow(private_interfaces)]
     fn collect_fragment_executors(&self, executors: &mut Vec<RegistrationExecutor>);
@@ -267,8 +268,9 @@ impl Describe for RuntimeNode {
     fn describe(&self, _out: &mut Vec<Registration<TypeId>>) {}
 }
 
-impl<Root> Link<Root, ()> for RuntimeNode {
+unsafe impl<Root> Link<Root, ()> for RuntimeNode {
     type Linked = Self;
+
     const TOPOLOGY: crate::topology::Topology = crate::topology::Topology::OPEN;
 
     #[inline]

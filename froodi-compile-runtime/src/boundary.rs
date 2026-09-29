@@ -68,8 +68,9 @@ pub struct ImportLeaf<T> {
     marker: PhantomData<fn() -> T>,
 }
 
-impl<Root, T> Link<Root, ()> for ImportLeaf<T> {
+unsafe impl<Root, T> Link<Root, ()> for ImportLeaf<T> {
     type Linked = Self;
+
     const TOPOLOGY: crate::topology::Topology = crate::topology::Topology::OPEN;
 
     #[inline]
@@ -156,8 +157,9 @@ pub struct ContextLeaf<T> {
     marker: PhantomData<fn() -> T>,
 }
 
-impl<Root, T> Link<Root, ()> for ContextLeaf<T> {
+unsafe impl<Root, T> Link<Root, ()> for ContextLeaf<T> {
     type Linked = Self;
+
     const TOPOLOGY: crate::topology::Topology = crate::topology::Topology::OPEN;
 
     #[inline]

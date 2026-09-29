@@ -159,6 +159,7 @@ fn from_signature(signature: &Signature) -> Outcome {
 
 fn is_generic(signature: &Signature) -> bool {
     struct ImplTrait(bool);
+
     impl Visit<'_> for ImplTrait {
         fn visit_type_impl_trait(&mut self, _: &TypeImplTrait) {
             self.0 = true;

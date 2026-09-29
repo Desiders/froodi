@@ -216,612 +216,815 @@ pub struct Wide(pub [u8; 16]);
 pub struct Plugin(pub u8);
 pub struct Host(pub Arc<Plugin>);
 
-pub mod froodi_engine {
+macro_rules! froodi_fixture { ($name:ident, $registry:path) => {
+pub mod $name {
     use super::*;
-    use froodi::{registry, Container, DefaultScope::*, Inject, InjectTransient, InstantiateErrorKind};
+    use $registry as registry;
+    use froodi::{Container, DefaultScope::*, Inject, InjectTransient, InstantiateErrorKind};
 
     mod f {
         use super::*;
+
         pub fn s0() -> Result<S0, InstantiateErrorKind> {
             Ok(S0)
         }
+
         pub fn t0() -> Result<T0, InstantiateErrorKind> {
             Ok(T0)
         }
+
         pub fn s1(Inject(p): Inject<S0>) -> Result<S1, InstantiateErrorKind> {
             Ok(S1(p))
         }
+
         pub fn t1(InjectTransient(p): InjectTransient<T0>) -> Result<T1, InstantiateErrorKind> {
             Ok(T1(Box::new(p)))
         }
+
         pub fn s2(Inject(p): Inject<S1>) -> Result<S2, InstantiateErrorKind> {
             Ok(S2(p))
         }
+
         pub fn t2(InjectTransient(p): InjectTransient<T1>) -> Result<T2, InstantiateErrorKind> {
             Ok(T2(Box::new(p)))
         }
+
         pub fn s3(Inject(p): Inject<S2>) -> Result<S3, InstantiateErrorKind> {
             Ok(S3(p))
         }
+
         pub fn t3(InjectTransient(p): InjectTransient<T2>) -> Result<T3, InstantiateErrorKind> {
             Ok(T3(Box::new(p)))
         }
+
         pub fn s4(Inject(p): Inject<S3>) -> Result<S4, InstantiateErrorKind> {
             Ok(S4(p))
         }
+
         pub fn t4(InjectTransient(p): InjectTransient<T3>) -> Result<T4, InstantiateErrorKind> {
             Ok(T4(Box::new(p)))
         }
+
         pub fn s5(Inject(p): Inject<S4>) -> Result<S5, InstantiateErrorKind> {
             Ok(S5(p))
         }
+
         pub fn t5(InjectTransient(p): InjectTransient<T4>) -> Result<T5, InstantiateErrorKind> {
             Ok(T5(Box::new(p)))
         }
+
         pub fn s6(Inject(p): Inject<S5>) -> Result<S6, InstantiateErrorKind> {
             Ok(S6(p))
         }
+
         pub fn t6(InjectTransient(p): InjectTransient<T5>) -> Result<T6, InstantiateErrorKind> {
             Ok(T6(Box::new(p)))
         }
+
         pub fn s7(Inject(p): Inject<S6>) -> Result<S7, InstantiateErrorKind> {
             Ok(S7(p))
         }
+
         pub fn t7(InjectTransient(p): InjectTransient<T6>) -> Result<T7, InstantiateErrorKind> {
             Ok(T7(Box::new(p)))
         }
+
         pub fn s8(Inject(p): Inject<S7>) -> Result<S8, InstantiateErrorKind> {
             Ok(S8(p))
         }
+
         pub fn t8(InjectTransient(p): InjectTransient<T7>) -> Result<T8, InstantiateErrorKind> {
             Ok(T8(Box::new(p)))
         }
+
         pub fn s9(Inject(p): Inject<S8>) -> Result<S9, InstantiateErrorKind> {
             Ok(S9(p))
         }
+
         pub fn t9(InjectTransient(p): InjectTransient<T8>) -> Result<T9, InstantiateErrorKind> {
             Ok(T9(Box::new(p)))
         }
+
         pub fn s10(Inject(p): Inject<S9>) -> Result<S10, InstantiateErrorKind> {
             Ok(S10(p))
         }
+
         pub fn t10(InjectTransient(p): InjectTransient<T9>) -> Result<T10, InstantiateErrorKind> {
             Ok(T10(Box::new(p)))
         }
+
         pub fn s11(Inject(p): Inject<S10>) -> Result<S11, InstantiateErrorKind> {
             Ok(S11(p))
         }
+
         pub fn t11(InjectTransient(p): InjectTransient<T10>) -> Result<T11, InstantiateErrorKind> {
             Ok(T11(Box::new(p)))
         }
+
         pub fn s12(Inject(p): Inject<S11>) -> Result<S12, InstantiateErrorKind> {
             Ok(S12(p))
         }
+
         pub fn t12(InjectTransient(p): InjectTransient<T11>) -> Result<T12, InstantiateErrorKind> {
             Ok(T12(Box::new(p)))
         }
+
         pub fn s13(Inject(p): Inject<S12>) -> Result<S13, InstantiateErrorKind> {
             Ok(S13(p))
         }
+
         pub fn t13(InjectTransient(p): InjectTransient<T12>) -> Result<T13, InstantiateErrorKind> {
             Ok(T13(Box::new(p)))
         }
+
         pub fn s14(Inject(p): Inject<S13>) -> Result<S14, InstantiateErrorKind> {
             Ok(S14(p))
         }
+
         pub fn t14(InjectTransient(p): InjectTransient<T13>) -> Result<T14, InstantiateErrorKind> {
             Ok(T14(Box::new(p)))
         }
+
         pub fn s15(Inject(p): Inject<S14>) -> Result<S15, InstantiateErrorKind> {
             Ok(S15(p))
         }
+
         pub fn t15(InjectTransient(p): InjectTransient<T14>) -> Result<T15, InstantiateErrorKind> {
             Ok(T15(Box::new(p)))
         }
+
         pub fn s16(Inject(p): Inject<S15>) -> Result<S16, InstantiateErrorKind> {
             Ok(S16(p))
         }
+
         pub fn t16(InjectTransient(p): InjectTransient<T15>) -> Result<T16, InstantiateErrorKind> {
             Ok(T16(Box::new(p)))
         }
+
         pub fn s17(Inject(p): Inject<S16>) -> Result<S17, InstantiateErrorKind> {
             Ok(S17(p))
         }
+
         pub fn t17(InjectTransient(p): InjectTransient<T16>) -> Result<T17, InstantiateErrorKind> {
             Ok(T17(Box::new(p)))
         }
+
         pub fn s18(Inject(p): Inject<S17>) -> Result<S18, InstantiateErrorKind> {
             Ok(S18(p))
         }
+
         pub fn t18(InjectTransient(p): InjectTransient<T17>) -> Result<T18, InstantiateErrorKind> {
             Ok(T18(Box::new(p)))
         }
+
         pub fn s19(Inject(p): Inject<S18>) -> Result<S19, InstantiateErrorKind> {
             Ok(S19(p))
         }
+
         pub fn t19(InjectTransient(p): InjectTransient<T18>) -> Result<T19, InstantiateErrorKind> {
             Ok(T19(Box::new(p)))
         }
+
         pub fn s20(Inject(p): Inject<S19>) -> Result<S20, InstantiateErrorKind> {
             Ok(S20(p))
         }
+
         pub fn t20(InjectTransient(p): InjectTransient<T19>) -> Result<T20, InstantiateErrorKind> {
             Ok(T20(Box::new(p)))
         }
+
         pub fn s21(Inject(p): Inject<S20>) -> Result<S21, InstantiateErrorKind> {
             Ok(S21(p))
         }
+
         pub fn t21(InjectTransient(p): InjectTransient<T20>) -> Result<T21, InstantiateErrorKind> {
             Ok(T21(Box::new(p)))
         }
+
         pub fn s22(Inject(p): Inject<S21>) -> Result<S22, InstantiateErrorKind> {
             Ok(S22(p))
         }
+
         pub fn t22(InjectTransient(p): InjectTransient<T21>) -> Result<T22, InstantiateErrorKind> {
             Ok(T22(Box::new(p)))
         }
+
         pub fn s23(Inject(p): Inject<S22>) -> Result<S23, InstantiateErrorKind> {
             Ok(S23(p))
         }
+
         pub fn t23(InjectTransient(p): InjectTransient<T22>) -> Result<T23, InstantiateErrorKind> {
             Ok(T23(Box::new(p)))
         }
+
         pub fn s24(Inject(p): Inject<S23>) -> Result<S24, InstantiateErrorKind> {
             Ok(S24(p))
         }
+
         pub fn t24(InjectTransient(p): InjectTransient<T23>) -> Result<T24, InstantiateErrorKind> {
             Ok(T24(Box::new(p)))
         }
+
         pub fn s25(Inject(p): Inject<S24>) -> Result<S25, InstantiateErrorKind> {
             Ok(S25(p))
         }
+
         pub fn t25(InjectTransient(p): InjectTransient<T24>) -> Result<T25, InstantiateErrorKind> {
             Ok(T25(Box::new(p)))
         }
+
         pub fn s26(Inject(p): Inject<S25>) -> Result<S26, InstantiateErrorKind> {
             Ok(S26(p))
         }
+
         pub fn t26(InjectTransient(p): InjectTransient<T25>) -> Result<T26, InstantiateErrorKind> {
             Ok(T26(Box::new(p)))
         }
+
         pub fn s27(Inject(p): Inject<S26>) -> Result<S27, InstantiateErrorKind> {
             Ok(S27(p))
         }
+
         pub fn t27(InjectTransient(p): InjectTransient<T26>) -> Result<T27, InstantiateErrorKind> {
             Ok(T27(Box::new(p)))
         }
+
         pub fn s28(Inject(p): Inject<S27>) -> Result<S28, InstantiateErrorKind> {
             Ok(S28(p))
         }
+
         pub fn t28(InjectTransient(p): InjectTransient<T27>) -> Result<T28, InstantiateErrorKind> {
             Ok(T28(Box::new(p)))
         }
+
         pub fn s29(Inject(p): Inject<S28>) -> Result<S29, InstantiateErrorKind> {
             Ok(S29(p))
         }
+
         pub fn t29(InjectTransient(p): InjectTransient<T28>) -> Result<T29, InstantiateErrorKind> {
             Ok(T29(Box::new(p)))
         }
+
         pub fn s30(Inject(p): Inject<S29>) -> Result<S30, InstantiateErrorKind> {
             Ok(S30(p))
         }
+
         pub fn t30(InjectTransient(p): InjectTransient<T29>) -> Result<T30, InstantiateErrorKind> {
             Ok(T30(Box::new(p)))
         }
+
         pub fn s31(Inject(p): Inject<S30>) -> Result<S31, InstantiateErrorKind> {
             Ok(S31(p))
         }
+
         pub fn t31(InjectTransient(p): InjectTransient<T30>) -> Result<T31, InstantiateErrorKind> {
             Ok(T31(Box::new(p)))
         }
+
         pub fn s32(Inject(p): Inject<S31>) -> Result<S32, InstantiateErrorKind> {
             Ok(S32(p))
         }
+
         pub fn t32(InjectTransient(p): InjectTransient<T31>) -> Result<T32, InstantiateErrorKind> {
             Ok(T32(Box::new(p)))
         }
+
         pub fn s33(Inject(p): Inject<S32>) -> Result<S33, InstantiateErrorKind> {
             Ok(S33(p))
         }
+
         pub fn t33(InjectTransient(p): InjectTransient<T32>) -> Result<T33, InstantiateErrorKind> {
             Ok(T33(Box::new(p)))
         }
+
         pub fn s34(Inject(p): Inject<S33>) -> Result<S34, InstantiateErrorKind> {
             Ok(S34(p))
         }
+
         pub fn t34(InjectTransient(p): InjectTransient<T33>) -> Result<T34, InstantiateErrorKind> {
             Ok(T34(Box::new(p)))
         }
+
         pub fn s35(Inject(p): Inject<S34>) -> Result<S35, InstantiateErrorKind> {
             Ok(S35(p))
         }
+
         pub fn t35(InjectTransient(p): InjectTransient<T34>) -> Result<T35, InstantiateErrorKind> {
             Ok(T35(Box::new(p)))
         }
+
         pub fn s36(Inject(p): Inject<S35>) -> Result<S36, InstantiateErrorKind> {
             Ok(S36(p))
         }
+
         pub fn t36(InjectTransient(p): InjectTransient<T35>) -> Result<T36, InstantiateErrorKind> {
             Ok(T36(Box::new(p)))
         }
+
         pub fn s37(Inject(p): Inject<S36>) -> Result<S37, InstantiateErrorKind> {
             Ok(S37(p))
         }
+
         pub fn t37(InjectTransient(p): InjectTransient<T36>) -> Result<T37, InstantiateErrorKind> {
             Ok(T37(Box::new(p)))
         }
+
         pub fn s38(Inject(p): Inject<S37>) -> Result<S38, InstantiateErrorKind> {
             Ok(S38(p))
         }
+
         pub fn t38(InjectTransient(p): InjectTransient<T37>) -> Result<T38, InstantiateErrorKind> {
             Ok(T38(Box::new(p)))
         }
+
         pub fn s39(Inject(p): Inject<S38>) -> Result<S39, InstantiateErrorKind> {
             Ok(S39(p))
         }
+
         pub fn t39(InjectTransient(p): InjectTransient<T38>) -> Result<T39, InstantiateErrorKind> {
             Ok(T39(Box::new(p)))
         }
+
         pub fn s40(Inject(p): Inject<S39>) -> Result<S40, InstantiateErrorKind> {
             Ok(S40(p))
         }
+
         pub fn t40(InjectTransient(p): InjectTransient<T39>) -> Result<T40, InstantiateErrorKind> {
             Ok(T40(Box::new(p)))
         }
+
         pub fn s41(Inject(p): Inject<S40>) -> Result<S41, InstantiateErrorKind> {
             Ok(S41(p))
         }
+
         pub fn t41(InjectTransient(p): InjectTransient<T40>) -> Result<T41, InstantiateErrorKind> {
             Ok(T41(Box::new(p)))
         }
+
         pub fn s42(Inject(p): Inject<S41>) -> Result<S42, InstantiateErrorKind> {
             Ok(S42(p))
         }
+
         pub fn t42(InjectTransient(p): InjectTransient<T41>) -> Result<T42, InstantiateErrorKind> {
             Ok(T42(Box::new(p)))
         }
+
         pub fn s43(Inject(p): Inject<S42>) -> Result<S43, InstantiateErrorKind> {
             Ok(S43(p))
         }
+
         pub fn t43(InjectTransient(p): InjectTransient<T42>) -> Result<T43, InstantiateErrorKind> {
             Ok(T43(Box::new(p)))
         }
+
         pub fn s44(Inject(p): Inject<S43>) -> Result<S44, InstantiateErrorKind> {
             Ok(S44(p))
         }
+
         pub fn t44(InjectTransient(p): InjectTransient<T43>) -> Result<T44, InstantiateErrorKind> {
             Ok(T44(Box::new(p)))
         }
+
         pub fn s45(Inject(p): Inject<S44>) -> Result<S45, InstantiateErrorKind> {
             Ok(S45(p))
         }
+
         pub fn t45(InjectTransient(p): InjectTransient<T44>) -> Result<T45, InstantiateErrorKind> {
             Ok(T45(Box::new(p)))
         }
+
         pub fn s46(Inject(p): Inject<S45>) -> Result<S46, InstantiateErrorKind> {
             Ok(S46(p))
         }
+
         pub fn t46(InjectTransient(p): InjectTransient<T45>) -> Result<T46, InstantiateErrorKind> {
             Ok(T46(Box::new(p)))
         }
+
         pub fn s47(Inject(p): Inject<S46>) -> Result<S47, InstantiateErrorKind> {
             Ok(S47(p))
         }
+
         pub fn t47(InjectTransient(p): InjectTransient<T46>) -> Result<T47, InstantiateErrorKind> {
             Ok(T47(Box::new(p)))
         }
+
         pub fn s48(Inject(p): Inject<S47>) -> Result<S48, InstantiateErrorKind> {
             Ok(S48(p))
         }
+
         pub fn t48(InjectTransient(p): InjectTransient<T47>) -> Result<T48, InstantiateErrorKind> {
             Ok(T48(Box::new(p)))
         }
+
         pub fn s49(Inject(p): Inject<S48>) -> Result<S49, InstantiateErrorKind> {
             Ok(S49(p))
         }
+
         pub fn t49(InjectTransient(p): InjectTransient<T48>) -> Result<T49, InstantiateErrorKind> {
             Ok(T49(Box::new(p)))
         }
+
         pub fn s50(Inject(p): Inject<S49>) -> Result<S50, InstantiateErrorKind> {
             Ok(S50(p))
         }
+
         pub fn t50(InjectTransient(p): InjectTransient<T49>) -> Result<T50, InstantiateErrorKind> {
             Ok(T50(Box::new(p)))
         }
+
         pub fn s51(Inject(p): Inject<S50>) -> Result<S51, InstantiateErrorKind> {
             Ok(S51(p))
         }
+
         pub fn t51(InjectTransient(p): InjectTransient<T50>) -> Result<T51, InstantiateErrorKind> {
             Ok(T51(Box::new(p)))
         }
+
         pub fn s52(Inject(p): Inject<S51>) -> Result<S52, InstantiateErrorKind> {
             Ok(S52(p))
         }
+
         pub fn t52(InjectTransient(p): InjectTransient<T51>) -> Result<T52, InstantiateErrorKind> {
             Ok(T52(Box::new(p)))
         }
+
         pub fn s53(Inject(p): Inject<S52>) -> Result<S53, InstantiateErrorKind> {
             Ok(S53(p))
         }
+
         pub fn t53(InjectTransient(p): InjectTransient<T52>) -> Result<T53, InstantiateErrorKind> {
             Ok(T53(Box::new(p)))
         }
+
         pub fn s54(Inject(p): Inject<S53>) -> Result<S54, InstantiateErrorKind> {
             Ok(S54(p))
         }
+
         pub fn t54(InjectTransient(p): InjectTransient<T53>) -> Result<T54, InstantiateErrorKind> {
             Ok(T54(Box::new(p)))
         }
+
         pub fn s55(Inject(p): Inject<S54>) -> Result<S55, InstantiateErrorKind> {
             Ok(S55(p))
         }
+
         pub fn t55(InjectTransient(p): InjectTransient<T54>) -> Result<T55, InstantiateErrorKind> {
             Ok(T55(Box::new(p)))
         }
+
         pub fn s56(Inject(p): Inject<S55>) -> Result<S56, InstantiateErrorKind> {
             Ok(S56(p))
         }
+
         pub fn t56(InjectTransient(p): InjectTransient<T55>) -> Result<T56, InstantiateErrorKind> {
             Ok(T56(Box::new(p)))
         }
+
         pub fn s57(Inject(p): Inject<S56>) -> Result<S57, InstantiateErrorKind> {
             Ok(S57(p))
         }
+
         pub fn t57(InjectTransient(p): InjectTransient<T56>) -> Result<T57, InstantiateErrorKind> {
             Ok(T57(Box::new(p)))
         }
+
         pub fn s58(Inject(p): Inject<S57>) -> Result<S58, InstantiateErrorKind> {
             Ok(S58(p))
         }
+
         pub fn t58(InjectTransient(p): InjectTransient<T57>) -> Result<T58, InstantiateErrorKind> {
             Ok(T58(Box::new(p)))
         }
+
         pub fn s59(Inject(p): Inject<S58>) -> Result<S59, InstantiateErrorKind> {
             Ok(S59(p))
         }
+
         pub fn t59(InjectTransient(p): InjectTransient<T58>) -> Result<T59, InstantiateErrorKind> {
             Ok(T59(Box::new(p)))
         }
+
         pub fn s60(Inject(p): Inject<S59>) -> Result<S60, InstantiateErrorKind> {
             Ok(S60(p))
         }
+
         pub fn t60(InjectTransient(p): InjectTransient<T59>) -> Result<T60, InstantiateErrorKind> {
             Ok(T60(Box::new(p)))
         }
+
         pub fn s61(Inject(p): Inject<S60>) -> Result<S61, InstantiateErrorKind> {
             Ok(S61(p))
         }
+
         pub fn t61(InjectTransient(p): InjectTransient<T60>) -> Result<T61, InstantiateErrorKind> {
             Ok(T61(Box::new(p)))
         }
+
         pub fn s62(Inject(p): Inject<S61>) -> Result<S62, InstantiateErrorKind> {
             Ok(S62(p))
         }
+
         pub fn t62(InjectTransient(p): InjectTransient<T61>) -> Result<T62, InstantiateErrorKind> {
             Ok(T62(Box::new(p)))
         }
+
         pub fn s63(Inject(p): Inject<S62>) -> Result<S63, InstantiateErrorKind> {
             Ok(S63(p))
         }
+
         pub fn t63(InjectTransient(p): InjectTransient<T62>) -> Result<T63, InstantiateErrorKind> {
             Ok(T63(Box::new(p)))
         }
+
         pub fn s64(Inject(p): Inject<S63>) -> Result<S64, InstantiateErrorKind> {
             Ok(S64(p))
         }
+
         pub fn t64(InjectTransient(p): InjectTransient<T63>) -> Result<T64, InstantiateErrorKind> {
             Ok(T64(Box::new(p)))
         }
+
         pub fn s65(Inject(p): Inject<S64>) -> Result<S65, InstantiateErrorKind> {
             Ok(S65(p))
         }
+
         pub fn t65(InjectTransient(p): InjectTransient<T64>) -> Result<T65, InstantiateErrorKind> {
             Ok(T65(Box::new(p)))
         }
+
         pub fn s66(Inject(p): Inject<S65>) -> Result<S66, InstantiateErrorKind> {
             Ok(S66(p))
         }
+
         pub fn t66(InjectTransient(p): InjectTransient<T65>) -> Result<T66, InstantiateErrorKind> {
             Ok(T66(Box::new(p)))
         }
+
         pub fn s67(Inject(p): Inject<S66>) -> Result<S67, InstantiateErrorKind> {
             Ok(S67(p))
         }
+
         pub fn t67(InjectTransient(p): InjectTransient<T66>) -> Result<T67, InstantiateErrorKind> {
             Ok(T67(Box::new(p)))
         }
+
         pub fn s68(Inject(p): Inject<S67>) -> Result<S68, InstantiateErrorKind> {
             Ok(S68(p))
         }
+
         pub fn t68(InjectTransient(p): InjectTransient<T67>) -> Result<T68, InstantiateErrorKind> {
             Ok(T68(Box::new(p)))
         }
+
         pub fn s69(Inject(p): Inject<S68>) -> Result<S69, InstantiateErrorKind> {
             Ok(S69(p))
         }
+
         pub fn t69(InjectTransient(p): InjectTransient<T68>) -> Result<T69, InstantiateErrorKind> {
             Ok(T69(Box::new(p)))
         }
+
         pub fn s70(Inject(p): Inject<S69>) -> Result<S70, InstantiateErrorKind> {
             Ok(S70(p))
         }
+
         pub fn t70(InjectTransient(p): InjectTransient<T69>) -> Result<T70, InstantiateErrorKind> {
             Ok(T70(Box::new(p)))
         }
+
         pub fn s71(Inject(p): Inject<S70>) -> Result<S71, InstantiateErrorKind> {
             Ok(S71(p))
         }
+
         pub fn t71(InjectTransient(p): InjectTransient<T70>) -> Result<T71, InstantiateErrorKind> {
             Ok(T71(Box::new(p)))
         }
+
         pub fn s72(Inject(p): Inject<S71>) -> Result<S72, InstantiateErrorKind> {
             Ok(S72(p))
         }
+
         pub fn t72(InjectTransient(p): InjectTransient<T71>) -> Result<T72, InstantiateErrorKind> {
             Ok(T72(Box::new(p)))
         }
+
         pub fn s73(Inject(p): Inject<S72>) -> Result<S73, InstantiateErrorKind> {
             Ok(S73(p))
         }
+
         pub fn t73(InjectTransient(p): InjectTransient<T72>) -> Result<T73, InstantiateErrorKind> {
             Ok(T73(Box::new(p)))
         }
+
         pub fn s74(Inject(p): Inject<S73>) -> Result<S74, InstantiateErrorKind> {
             Ok(S74(p))
         }
+
         pub fn t74(InjectTransient(p): InjectTransient<T73>) -> Result<T74, InstantiateErrorKind> {
             Ok(T74(Box::new(p)))
         }
+
         pub fn s75(Inject(p): Inject<S74>) -> Result<S75, InstantiateErrorKind> {
             Ok(S75(p))
         }
+
         pub fn t75(InjectTransient(p): InjectTransient<T74>) -> Result<T75, InstantiateErrorKind> {
             Ok(T75(Box::new(p)))
         }
+
         pub fn s76(Inject(p): Inject<S75>) -> Result<S76, InstantiateErrorKind> {
             Ok(S76(p))
         }
+
         pub fn t76(InjectTransient(p): InjectTransient<T75>) -> Result<T76, InstantiateErrorKind> {
             Ok(T76(Box::new(p)))
         }
+
         pub fn s77(Inject(p): Inject<S76>) -> Result<S77, InstantiateErrorKind> {
             Ok(S77(p))
         }
+
         pub fn t77(InjectTransient(p): InjectTransient<T76>) -> Result<T77, InstantiateErrorKind> {
             Ok(T77(Box::new(p)))
         }
+
         pub fn s78(Inject(p): Inject<S77>) -> Result<S78, InstantiateErrorKind> {
             Ok(S78(p))
         }
+
         pub fn t78(InjectTransient(p): InjectTransient<T77>) -> Result<T78, InstantiateErrorKind> {
             Ok(T78(Box::new(p)))
         }
+
         pub fn s79(Inject(p): Inject<S78>) -> Result<S79, InstantiateErrorKind> {
             Ok(S79(p))
         }
+
         pub fn t79(InjectTransient(p): InjectTransient<T78>) -> Result<T79, InstantiateErrorKind> {
             Ok(T79(Box::new(p)))
         }
+
         pub fn s80(Inject(p): Inject<S79>) -> Result<S80, InstantiateErrorKind> {
             Ok(S80(p))
         }
+
         pub fn t80(InjectTransient(p): InjectTransient<T79>) -> Result<T80, InstantiateErrorKind> {
             Ok(T80(Box::new(p)))
         }
+
         pub fn s81(Inject(p): Inject<S80>) -> Result<S81, InstantiateErrorKind> {
             Ok(S81(p))
         }
+
         pub fn t81(InjectTransient(p): InjectTransient<T80>) -> Result<T81, InstantiateErrorKind> {
             Ok(T81(Box::new(p)))
         }
+
         pub fn s82(Inject(p): Inject<S81>) -> Result<S82, InstantiateErrorKind> {
             Ok(S82(p))
         }
+
         pub fn t82(InjectTransient(p): InjectTransient<T81>) -> Result<T82, InstantiateErrorKind> {
             Ok(T82(Box::new(p)))
         }
+
         pub fn s83(Inject(p): Inject<S82>) -> Result<S83, InstantiateErrorKind> {
             Ok(S83(p))
         }
+
         pub fn t83(InjectTransient(p): InjectTransient<T82>) -> Result<T83, InstantiateErrorKind> {
             Ok(T83(Box::new(p)))
         }
+
         pub fn s84(Inject(p): Inject<S83>) -> Result<S84, InstantiateErrorKind> {
             Ok(S84(p))
         }
+
         pub fn t84(InjectTransient(p): InjectTransient<T83>) -> Result<T84, InstantiateErrorKind> {
             Ok(T84(Box::new(p)))
         }
+
         pub fn s85(Inject(p): Inject<S84>) -> Result<S85, InstantiateErrorKind> {
             Ok(S85(p))
         }
+
         pub fn t85(InjectTransient(p): InjectTransient<T84>) -> Result<T85, InstantiateErrorKind> {
             Ok(T85(Box::new(p)))
         }
+
         pub fn s86(Inject(p): Inject<S85>) -> Result<S86, InstantiateErrorKind> {
             Ok(S86(p))
         }
+
         pub fn t86(InjectTransient(p): InjectTransient<T85>) -> Result<T86, InstantiateErrorKind> {
             Ok(T86(Box::new(p)))
         }
+
         pub fn s87(Inject(p): Inject<S86>) -> Result<S87, InstantiateErrorKind> {
             Ok(S87(p))
         }
+
         pub fn t87(InjectTransient(p): InjectTransient<T86>) -> Result<T87, InstantiateErrorKind> {
             Ok(T87(Box::new(p)))
         }
+
         pub fn s88(Inject(p): Inject<S87>) -> Result<S88, InstantiateErrorKind> {
             Ok(S88(p))
         }
+
         pub fn t88(InjectTransient(p): InjectTransient<T87>) -> Result<T88, InstantiateErrorKind> {
             Ok(T88(Box::new(p)))
         }
+
         pub fn s89(Inject(p): Inject<S88>) -> Result<S89, InstantiateErrorKind> {
             Ok(S89(p))
         }
+
         pub fn t89(InjectTransient(p): InjectTransient<T88>) -> Result<T89, InstantiateErrorKind> {
             Ok(T89(Box::new(p)))
         }
+
         pub fn s90(Inject(p): Inject<S89>) -> Result<S90, InstantiateErrorKind> {
             Ok(S90(p))
         }
+
         pub fn t90(InjectTransient(p): InjectTransient<T89>) -> Result<T90, InstantiateErrorKind> {
             Ok(T90(Box::new(p)))
         }
+
         pub fn s91(Inject(p): Inject<S90>) -> Result<S91, InstantiateErrorKind> {
             Ok(S91(p))
         }
+
         pub fn t91(InjectTransient(p): InjectTransient<T90>) -> Result<T91, InstantiateErrorKind> {
             Ok(T91(Box::new(p)))
         }
+
         pub fn s92(Inject(p): Inject<S91>) -> Result<S92, InstantiateErrorKind> {
             Ok(S92(p))
         }
+
         pub fn t92(InjectTransient(p): InjectTransient<T91>) -> Result<T92, InstantiateErrorKind> {
             Ok(T92(Box::new(p)))
         }
+
         pub fn s93(Inject(p): Inject<S92>) -> Result<S93, InstantiateErrorKind> {
             Ok(S93(p))
         }
+
         pub fn t93(InjectTransient(p): InjectTransient<T92>) -> Result<T93, InstantiateErrorKind> {
             Ok(T93(Box::new(p)))
         }
+
         pub fn s94(Inject(p): Inject<S93>) -> Result<S94, InstantiateErrorKind> {
             Ok(S94(p))
         }
+
         pub fn t94(InjectTransient(p): InjectTransient<T93>) -> Result<T94, InstantiateErrorKind> {
             Ok(T94(Box::new(p)))
         }
+
         pub fn s95(Inject(p): Inject<S94>) -> Result<S95, InstantiateErrorKind> {
             Ok(S95(p))
         }
+
         pub fn t95(InjectTransient(p): InjectTransient<T94>) -> Result<T95, InstantiateErrorKind> {
             Ok(T95(Box::new(p)))
         }
+
         pub fn s96(Inject(p): Inject<S95>) -> Result<S96, InstantiateErrorKind> {
             Ok(S96(p))
         }
+
         pub fn t96(InjectTransient(p): InjectTransient<T95>) -> Result<T96, InstantiateErrorKind> {
             Ok(T96(Box::new(p)))
         }
+
         pub fn s97(Inject(p): Inject<S96>) -> Result<S97, InstantiateErrorKind> {
             Ok(S97(p))
         }
+
         pub fn t97(InjectTransient(p): InjectTransient<T96>) -> Result<T97, InstantiateErrorKind> {
             Ok(T97(Box::new(p)))
         }
+
         pub fn s98(Inject(p): Inject<S97>) -> Result<S98, InstantiateErrorKind> {
             Ok(S98(p))
         }
+
         pub fn t98(InjectTransient(p): InjectTransient<T97>) -> Result<T98, InstantiateErrorKind> {
             Ok(T98(Box::new(p)))
         }
+
         pub fn s99(Inject(p): Inject<S98>) -> Result<S99, InstantiateErrorKind> {
             Ok(S99(p))
         }
+
         pub fn t99(InjectTransient(p): InjectTransient<T98>) -> Result<T99, InstantiateErrorKind> {
             Ok(T99(Box::new(p)))
         }
+
         pub fn wide(
             Inject(_0): Inject<S0>,
             Inject(_1): Inject<S0>,
@@ -842,6 +1045,7 @@ pub mod froodi_engine {
         ) -> Result<Wide, InstantiateErrorKind> {
             Ok(Wide([0; 16]))
         }
+
         pub fn host(Inject(p): Inject<Plugin>) -> Result<Host, InstantiateErrorKind> {
             Ok(Host(p))
         }
@@ -874,6 +1078,9 @@ pub mod froodi_engine {
         Container::new(registry! { scope(Request) [ provide(move || Ok::<_, InstantiateErrorKind>(label.clone())) ] })
     }
 }
+}; }
+froodi_fixture!(froodi_engine, froodi::registry);
+froodi_fixture!(integrated_engine, froodi::compiled::registry);
 
 pub mod compile_engine {
     use super::*;
@@ -881,606 +1088,807 @@ pub mod compile_engine {
 
     mod f {
         use super::*;
+
         pub fn s0() -> Result<S0, InstantiateErrorKind> {
             Ok(S0)
         }
+
         pub fn t0() -> Result<T0, InstantiateErrorKind> {
             Ok(T0)
         }
+
         pub fn s1(Inject(p): Inject<S0>) -> Result<S1, InstantiateErrorKind> {
             Ok(S1(p))
         }
+
         pub fn t1(InjectTransient(p): InjectTransient<T0>) -> Result<T1, InstantiateErrorKind> {
             Ok(T1(Box::new(p)))
         }
+
         pub fn s2(Inject(p): Inject<S1>) -> Result<S2, InstantiateErrorKind> {
             Ok(S2(p))
         }
+
         pub fn t2(InjectTransient(p): InjectTransient<T1>) -> Result<T2, InstantiateErrorKind> {
             Ok(T2(Box::new(p)))
         }
+
         pub fn s3(Inject(p): Inject<S2>) -> Result<S3, InstantiateErrorKind> {
             Ok(S3(p))
         }
+
         pub fn t3(InjectTransient(p): InjectTransient<T2>) -> Result<T3, InstantiateErrorKind> {
             Ok(T3(Box::new(p)))
         }
+
         pub fn s4(Inject(p): Inject<S3>) -> Result<S4, InstantiateErrorKind> {
             Ok(S4(p))
         }
+
         pub fn t4(InjectTransient(p): InjectTransient<T3>) -> Result<T4, InstantiateErrorKind> {
             Ok(T4(Box::new(p)))
         }
+
         pub fn s5(Inject(p): Inject<S4>) -> Result<S5, InstantiateErrorKind> {
             Ok(S5(p))
         }
+
         pub fn t5(InjectTransient(p): InjectTransient<T4>) -> Result<T5, InstantiateErrorKind> {
             Ok(T5(Box::new(p)))
         }
+
         pub fn s6(Inject(p): Inject<S5>) -> Result<S6, InstantiateErrorKind> {
             Ok(S6(p))
         }
+
         pub fn t6(InjectTransient(p): InjectTransient<T5>) -> Result<T6, InstantiateErrorKind> {
             Ok(T6(Box::new(p)))
         }
+
         pub fn s7(Inject(p): Inject<S6>) -> Result<S7, InstantiateErrorKind> {
             Ok(S7(p))
         }
+
         pub fn t7(InjectTransient(p): InjectTransient<T6>) -> Result<T7, InstantiateErrorKind> {
             Ok(T7(Box::new(p)))
         }
+
         pub fn s8(Inject(p): Inject<S7>) -> Result<S8, InstantiateErrorKind> {
             Ok(S8(p))
         }
+
         pub fn t8(InjectTransient(p): InjectTransient<T7>) -> Result<T8, InstantiateErrorKind> {
             Ok(T8(Box::new(p)))
         }
+
         pub fn s9(Inject(p): Inject<S8>) -> Result<S9, InstantiateErrorKind> {
             Ok(S9(p))
         }
+
         pub fn t9(InjectTransient(p): InjectTransient<T8>) -> Result<T9, InstantiateErrorKind> {
             Ok(T9(Box::new(p)))
         }
+
         pub fn s10(Inject(p): Inject<S9>) -> Result<S10, InstantiateErrorKind> {
             Ok(S10(p))
         }
+
         pub fn t10(InjectTransient(p): InjectTransient<T9>) -> Result<T10, InstantiateErrorKind> {
             Ok(T10(Box::new(p)))
         }
+
         pub fn s11(Inject(p): Inject<S10>) -> Result<S11, InstantiateErrorKind> {
             Ok(S11(p))
         }
+
         pub fn t11(InjectTransient(p): InjectTransient<T10>) -> Result<T11, InstantiateErrorKind> {
             Ok(T11(Box::new(p)))
         }
+
         pub fn s12(Inject(p): Inject<S11>) -> Result<S12, InstantiateErrorKind> {
             Ok(S12(p))
         }
+
         pub fn t12(InjectTransient(p): InjectTransient<T11>) -> Result<T12, InstantiateErrorKind> {
             Ok(T12(Box::new(p)))
         }
+
         pub fn s13(Inject(p): Inject<S12>) -> Result<S13, InstantiateErrorKind> {
             Ok(S13(p))
         }
+
         pub fn t13(InjectTransient(p): InjectTransient<T12>) -> Result<T13, InstantiateErrorKind> {
             Ok(T13(Box::new(p)))
         }
+
         pub fn s14(Inject(p): Inject<S13>) -> Result<S14, InstantiateErrorKind> {
             Ok(S14(p))
         }
+
         pub fn t14(InjectTransient(p): InjectTransient<T13>) -> Result<T14, InstantiateErrorKind> {
             Ok(T14(Box::new(p)))
         }
+
         pub fn s15(Inject(p): Inject<S14>) -> Result<S15, InstantiateErrorKind> {
             Ok(S15(p))
         }
+
         pub fn t15(InjectTransient(p): InjectTransient<T14>) -> Result<T15, InstantiateErrorKind> {
             Ok(T15(Box::new(p)))
         }
+
         pub fn s16(Inject(p): Inject<S15>) -> Result<S16, InstantiateErrorKind> {
             Ok(S16(p))
         }
+
         pub fn t16(InjectTransient(p): InjectTransient<T15>) -> Result<T16, InstantiateErrorKind> {
             Ok(T16(Box::new(p)))
         }
+
         pub fn s17(Inject(p): Inject<S16>) -> Result<S17, InstantiateErrorKind> {
             Ok(S17(p))
         }
+
         pub fn t17(InjectTransient(p): InjectTransient<T16>) -> Result<T17, InstantiateErrorKind> {
             Ok(T17(Box::new(p)))
         }
+
         pub fn s18(Inject(p): Inject<S17>) -> Result<S18, InstantiateErrorKind> {
             Ok(S18(p))
         }
+
         pub fn t18(InjectTransient(p): InjectTransient<T17>) -> Result<T18, InstantiateErrorKind> {
             Ok(T18(Box::new(p)))
         }
+
         pub fn s19(Inject(p): Inject<S18>) -> Result<S19, InstantiateErrorKind> {
             Ok(S19(p))
         }
+
         pub fn t19(InjectTransient(p): InjectTransient<T18>) -> Result<T19, InstantiateErrorKind> {
             Ok(T19(Box::new(p)))
         }
+
         pub fn s20(Inject(p): Inject<S19>) -> Result<S20, InstantiateErrorKind> {
             Ok(S20(p))
         }
+
         pub fn t20(InjectTransient(p): InjectTransient<T19>) -> Result<T20, InstantiateErrorKind> {
             Ok(T20(Box::new(p)))
         }
+
         pub fn s21(Inject(p): Inject<S20>) -> Result<S21, InstantiateErrorKind> {
             Ok(S21(p))
         }
+
         pub fn t21(InjectTransient(p): InjectTransient<T20>) -> Result<T21, InstantiateErrorKind> {
             Ok(T21(Box::new(p)))
         }
+
         pub fn s22(Inject(p): Inject<S21>) -> Result<S22, InstantiateErrorKind> {
             Ok(S22(p))
         }
+
         pub fn t22(InjectTransient(p): InjectTransient<T21>) -> Result<T22, InstantiateErrorKind> {
             Ok(T22(Box::new(p)))
         }
+
         pub fn s23(Inject(p): Inject<S22>) -> Result<S23, InstantiateErrorKind> {
             Ok(S23(p))
         }
+
         pub fn t23(InjectTransient(p): InjectTransient<T22>) -> Result<T23, InstantiateErrorKind> {
             Ok(T23(Box::new(p)))
         }
+
         pub fn s24(Inject(p): Inject<S23>) -> Result<S24, InstantiateErrorKind> {
             Ok(S24(p))
         }
+
         pub fn t24(InjectTransient(p): InjectTransient<T23>) -> Result<T24, InstantiateErrorKind> {
             Ok(T24(Box::new(p)))
         }
+
         pub fn s25(Inject(p): Inject<S24>) -> Result<S25, InstantiateErrorKind> {
             Ok(S25(p))
         }
+
         pub fn t25(InjectTransient(p): InjectTransient<T24>) -> Result<T25, InstantiateErrorKind> {
             Ok(T25(Box::new(p)))
         }
+
         pub fn s26(Inject(p): Inject<S25>) -> Result<S26, InstantiateErrorKind> {
             Ok(S26(p))
         }
+
         pub fn t26(InjectTransient(p): InjectTransient<T25>) -> Result<T26, InstantiateErrorKind> {
             Ok(T26(Box::new(p)))
         }
+
         pub fn s27(Inject(p): Inject<S26>) -> Result<S27, InstantiateErrorKind> {
             Ok(S27(p))
         }
+
         pub fn t27(InjectTransient(p): InjectTransient<T26>) -> Result<T27, InstantiateErrorKind> {
             Ok(T27(Box::new(p)))
         }
+
         pub fn s28(Inject(p): Inject<S27>) -> Result<S28, InstantiateErrorKind> {
             Ok(S28(p))
         }
+
         pub fn t28(InjectTransient(p): InjectTransient<T27>) -> Result<T28, InstantiateErrorKind> {
             Ok(T28(Box::new(p)))
         }
+
         pub fn s29(Inject(p): Inject<S28>) -> Result<S29, InstantiateErrorKind> {
             Ok(S29(p))
         }
+
         pub fn t29(InjectTransient(p): InjectTransient<T28>) -> Result<T29, InstantiateErrorKind> {
             Ok(T29(Box::new(p)))
         }
+
         pub fn s30(Inject(p): Inject<S29>) -> Result<S30, InstantiateErrorKind> {
             Ok(S30(p))
         }
+
         pub fn t30(InjectTransient(p): InjectTransient<T29>) -> Result<T30, InstantiateErrorKind> {
             Ok(T30(Box::new(p)))
         }
+
         pub fn s31(Inject(p): Inject<S30>) -> Result<S31, InstantiateErrorKind> {
             Ok(S31(p))
         }
+
         pub fn t31(InjectTransient(p): InjectTransient<T30>) -> Result<T31, InstantiateErrorKind> {
             Ok(T31(Box::new(p)))
         }
+
         pub fn s32(Inject(p): Inject<S31>) -> Result<S32, InstantiateErrorKind> {
             Ok(S32(p))
         }
+
         pub fn t32(InjectTransient(p): InjectTransient<T31>) -> Result<T32, InstantiateErrorKind> {
             Ok(T32(Box::new(p)))
         }
+
         pub fn s33(Inject(p): Inject<S32>) -> Result<S33, InstantiateErrorKind> {
             Ok(S33(p))
         }
+
         pub fn t33(InjectTransient(p): InjectTransient<T32>) -> Result<T33, InstantiateErrorKind> {
             Ok(T33(Box::new(p)))
         }
+
         pub fn s34(Inject(p): Inject<S33>) -> Result<S34, InstantiateErrorKind> {
             Ok(S34(p))
         }
+
         pub fn t34(InjectTransient(p): InjectTransient<T33>) -> Result<T34, InstantiateErrorKind> {
             Ok(T34(Box::new(p)))
         }
+
         pub fn s35(Inject(p): Inject<S34>) -> Result<S35, InstantiateErrorKind> {
             Ok(S35(p))
         }
+
         pub fn t35(InjectTransient(p): InjectTransient<T34>) -> Result<T35, InstantiateErrorKind> {
             Ok(T35(Box::new(p)))
         }
+
         pub fn s36(Inject(p): Inject<S35>) -> Result<S36, InstantiateErrorKind> {
             Ok(S36(p))
         }
+
         pub fn t36(InjectTransient(p): InjectTransient<T35>) -> Result<T36, InstantiateErrorKind> {
             Ok(T36(Box::new(p)))
         }
+
         pub fn s37(Inject(p): Inject<S36>) -> Result<S37, InstantiateErrorKind> {
             Ok(S37(p))
         }
+
         pub fn t37(InjectTransient(p): InjectTransient<T36>) -> Result<T37, InstantiateErrorKind> {
             Ok(T37(Box::new(p)))
         }
+
         pub fn s38(Inject(p): Inject<S37>) -> Result<S38, InstantiateErrorKind> {
             Ok(S38(p))
         }
+
         pub fn t38(InjectTransient(p): InjectTransient<T37>) -> Result<T38, InstantiateErrorKind> {
             Ok(T38(Box::new(p)))
         }
+
         pub fn s39(Inject(p): Inject<S38>) -> Result<S39, InstantiateErrorKind> {
             Ok(S39(p))
         }
+
         pub fn t39(InjectTransient(p): InjectTransient<T38>) -> Result<T39, InstantiateErrorKind> {
             Ok(T39(Box::new(p)))
         }
+
         pub fn s40(Inject(p): Inject<S39>) -> Result<S40, InstantiateErrorKind> {
             Ok(S40(p))
         }
+
         pub fn t40(InjectTransient(p): InjectTransient<T39>) -> Result<T40, InstantiateErrorKind> {
             Ok(T40(Box::new(p)))
         }
+
         pub fn s41(Inject(p): Inject<S40>) -> Result<S41, InstantiateErrorKind> {
             Ok(S41(p))
         }
+
         pub fn t41(InjectTransient(p): InjectTransient<T40>) -> Result<T41, InstantiateErrorKind> {
             Ok(T41(Box::new(p)))
         }
+
         pub fn s42(Inject(p): Inject<S41>) -> Result<S42, InstantiateErrorKind> {
             Ok(S42(p))
         }
+
         pub fn t42(InjectTransient(p): InjectTransient<T41>) -> Result<T42, InstantiateErrorKind> {
             Ok(T42(Box::new(p)))
         }
+
         pub fn s43(Inject(p): Inject<S42>) -> Result<S43, InstantiateErrorKind> {
             Ok(S43(p))
         }
+
         pub fn t43(InjectTransient(p): InjectTransient<T42>) -> Result<T43, InstantiateErrorKind> {
             Ok(T43(Box::new(p)))
         }
+
         pub fn s44(Inject(p): Inject<S43>) -> Result<S44, InstantiateErrorKind> {
             Ok(S44(p))
         }
+
         pub fn t44(InjectTransient(p): InjectTransient<T43>) -> Result<T44, InstantiateErrorKind> {
             Ok(T44(Box::new(p)))
         }
+
         pub fn s45(Inject(p): Inject<S44>) -> Result<S45, InstantiateErrorKind> {
             Ok(S45(p))
         }
+
         pub fn t45(InjectTransient(p): InjectTransient<T44>) -> Result<T45, InstantiateErrorKind> {
             Ok(T45(Box::new(p)))
         }
+
         pub fn s46(Inject(p): Inject<S45>) -> Result<S46, InstantiateErrorKind> {
             Ok(S46(p))
         }
+
         pub fn t46(InjectTransient(p): InjectTransient<T45>) -> Result<T46, InstantiateErrorKind> {
             Ok(T46(Box::new(p)))
         }
+
         pub fn s47(Inject(p): Inject<S46>) -> Result<S47, InstantiateErrorKind> {
             Ok(S47(p))
         }
+
         pub fn t47(InjectTransient(p): InjectTransient<T46>) -> Result<T47, InstantiateErrorKind> {
             Ok(T47(Box::new(p)))
         }
+
         pub fn s48(Inject(p): Inject<S47>) -> Result<S48, InstantiateErrorKind> {
             Ok(S48(p))
         }
+
         pub fn t48(InjectTransient(p): InjectTransient<T47>) -> Result<T48, InstantiateErrorKind> {
             Ok(T48(Box::new(p)))
         }
+
         pub fn s49(Inject(p): Inject<S48>) -> Result<S49, InstantiateErrorKind> {
             Ok(S49(p))
         }
+
         pub fn t49(InjectTransient(p): InjectTransient<T48>) -> Result<T49, InstantiateErrorKind> {
             Ok(T49(Box::new(p)))
         }
+
         pub fn s50(Inject(p): Inject<S49>) -> Result<S50, InstantiateErrorKind> {
             Ok(S50(p))
         }
+
         pub fn t50(InjectTransient(p): InjectTransient<T49>) -> Result<T50, InstantiateErrorKind> {
             Ok(T50(Box::new(p)))
         }
+
         pub fn s51(Inject(p): Inject<S50>) -> Result<S51, InstantiateErrorKind> {
             Ok(S51(p))
         }
+
         pub fn t51(InjectTransient(p): InjectTransient<T50>) -> Result<T51, InstantiateErrorKind> {
             Ok(T51(Box::new(p)))
         }
+
         pub fn s52(Inject(p): Inject<S51>) -> Result<S52, InstantiateErrorKind> {
             Ok(S52(p))
         }
+
         pub fn t52(InjectTransient(p): InjectTransient<T51>) -> Result<T52, InstantiateErrorKind> {
             Ok(T52(Box::new(p)))
         }
+
         pub fn s53(Inject(p): Inject<S52>) -> Result<S53, InstantiateErrorKind> {
             Ok(S53(p))
         }
+
         pub fn t53(InjectTransient(p): InjectTransient<T52>) -> Result<T53, InstantiateErrorKind> {
             Ok(T53(Box::new(p)))
         }
+
         pub fn s54(Inject(p): Inject<S53>) -> Result<S54, InstantiateErrorKind> {
             Ok(S54(p))
         }
+
         pub fn t54(InjectTransient(p): InjectTransient<T53>) -> Result<T54, InstantiateErrorKind> {
             Ok(T54(Box::new(p)))
         }
+
         pub fn s55(Inject(p): Inject<S54>) -> Result<S55, InstantiateErrorKind> {
             Ok(S55(p))
         }
+
         pub fn t55(InjectTransient(p): InjectTransient<T54>) -> Result<T55, InstantiateErrorKind> {
             Ok(T55(Box::new(p)))
         }
+
         pub fn s56(Inject(p): Inject<S55>) -> Result<S56, InstantiateErrorKind> {
             Ok(S56(p))
         }
+
         pub fn t56(InjectTransient(p): InjectTransient<T55>) -> Result<T56, InstantiateErrorKind> {
             Ok(T56(Box::new(p)))
         }
+
         pub fn s57(Inject(p): Inject<S56>) -> Result<S57, InstantiateErrorKind> {
             Ok(S57(p))
         }
+
         pub fn t57(InjectTransient(p): InjectTransient<T56>) -> Result<T57, InstantiateErrorKind> {
             Ok(T57(Box::new(p)))
         }
+
         pub fn s58(Inject(p): Inject<S57>) -> Result<S58, InstantiateErrorKind> {
             Ok(S58(p))
         }
+
         pub fn t58(InjectTransient(p): InjectTransient<T57>) -> Result<T58, InstantiateErrorKind> {
             Ok(T58(Box::new(p)))
         }
+
         pub fn s59(Inject(p): Inject<S58>) -> Result<S59, InstantiateErrorKind> {
             Ok(S59(p))
         }
+
         pub fn t59(InjectTransient(p): InjectTransient<T58>) -> Result<T59, InstantiateErrorKind> {
             Ok(T59(Box::new(p)))
         }
+
         pub fn s60(Inject(p): Inject<S59>) -> Result<S60, InstantiateErrorKind> {
             Ok(S60(p))
         }
+
         pub fn t60(InjectTransient(p): InjectTransient<T59>) -> Result<T60, InstantiateErrorKind> {
             Ok(T60(Box::new(p)))
         }
+
         pub fn s61(Inject(p): Inject<S60>) -> Result<S61, InstantiateErrorKind> {
             Ok(S61(p))
         }
+
         pub fn t61(InjectTransient(p): InjectTransient<T60>) -> Result<T61, InstantiateErrorKind> {
             Ok(T61(Box::new(p)))
         }
+
         pub fn s62(Inject(p): Inject<S61>) -> Result<S62, InstantiateErrorKind> {
             Ok(S62(p))
         }
+
         pub fn t62(InjectTransient(p): InjectTransient<T61>) -> Result<T62, InstantiateErrorKind> {
             Ok(T62(Box::new(p)))
         }
+
         pub fn s63(Inject(p): Inject<S62>) -> Result<S63, InstantiateErrorKind> {
             Ok(S63(p))
         }
+
         pub fn t63(InjectTransient(p): InjectTransient<T62>) -> Result<T63, InstantiateErrorKind> {
             Ok(T63(Box::new(p)))
         }
+
         pub fn s64(Inject(p): Inject<S63>) -> Result<S64, InstantiateErrorKind> {
             Ok(S64(p))
         }
+
         pub fn t64(InjectTransient(p): InjectTransient<T63>) -> Result<T64, InstantiateErrorKind> {
             Ok(T64(Box::new(p)))
         }
+
         pub fn s65(Inject(p): Inject<S64>) -> Result<S65, InstantiateErrorKind> {
             Ok(S65(p))
         }
+
         pub fn t65(InjectTransient(p): InjectTransient<T64>) -> Result<T65, InstantiateErrorKind> {
             Ok(T65(Box::new(p)))
         }
+
         pub fn s66(Inject(p): Inject<S65>) -> Result<S66, InstantiateErrorKind> {
             Ok(S66(p))
         }
+
         pub fn t66(InjectTransient(p): InjectTransient<T65>) -> Result<T66, InstantiateErrorKind> {
             Ok(T66(Box::new(p)))
         }
+
         pub fn s67(Inject(p): Inject<S66>) -> Result<S67, InstantiateErrorKind> {
             Ok(S67(p))
         }
+
         pub fn t67(InjectTransient(p): InjectTransient<T66>) -> Result<T67, InstantiateErrorKind> {
             Ok(T67(Box::new(p)))
         }
+
         pub fn s68(Inject(p): Inject<S67>) -> Result<S68, InstantiateErrorKind> {
             Ok(S68(p))
         }
+
         pub fn t68(InjectTransient(p): InjectTransient<T67>) -> Result<T68, InstantiateErrorKind> {
             Ok(T68(Box::new(p)))
         }
+
         pub fn s69(Inject(p): Inject<S68>) -> Result<S69, InstantiateErrorKind> {
             Ok(S69(p))
         }
+
         pub fn t69(InjectTransient(p): InjectTransient<T68>) -> Result<T69, InstantiateErrorKind> {
             Ok(T69(Box::new(p)))
         }
+
         pub fn s70(Inject(p): Inject<S69>) -> Result<S70, InstantiateErrorKind> {
             Ok(S70(p))
         }
+
         pub fn t70(InjectTransient(p): InjectTransient<T69>) -> Result<T70, InstantiateErrorKind> {
             Ok(T70(Box::new(p)))
         }
+
         pub fn s71(Inject(p): Inject<S70>) -> Result<S71, InstantiateErrorKind> {
             Ok(S71(p))
         }
+
         pub fn t71(InjectTransient(p): InjectTransient<T70>) -> Result<T71, InstantiateErrorKind> {
             Ok(T71(Box::new(p)))
         }
+
         pub fn s72(Inject(p): Inject<S71>) -> Result<S72, InstantiateErrorKind> {
             Ok(S72(p))
         }
+
         pub fn t72(InjectTransient(p): InjectTransient<T71>) -> Result<T72, InstantiateErrorKind> {
             Ok(T72(Box::new(p)))
         }
+
         pub fn s73(Inject(p): Inject<S72>) -> Result<S73, InstantiateErrorKind> {
             Ok(S73(p))
         }
+
         pub fn t73(InjectTransient(p): InjectTransient<T72>) -> Result<T73, InstantiateErrorKind> {
             Ok(T73(Box::new(p)))
         }
+
         pub fn s74(Inject(p): Inject<S73>) -> Result<S74, InstantiateErrorKind> {
             Ok(S74(p))
         }
+
         pub fn t74(InjectTransient(p): InjectTransient<T73>) -> Result<T74, InstantiateErrorKind> {
             Ok(T74(Box::new(p)))
         }
+
         pub fn s75(Inject(p): Inject<S74>) -> Result<S75, InstantiateErrorKind> {
             Ok(S75(p))
         }
+
         pub fn t75(InjectTransient(p): InjectTransient<T74>) -> Result<T75, InstantiateErrorKind> {
             Ok(T75(Box::new(p)))
         }
+
         pub fn s76(Inject(p): Inject<S75>) -> Result<S76, InstantiateErrorKind> {
             Ok(S76(p))
         }
+
         pub fn t76(InjectTransient(p): InjectTransient<T75>) -> Result<T76, InstantiateErrorKind> {
             Ok(T76(Box::new(p)))
         }
+
         pub fn s77(Inject(p): Inject<S76>) -> Result<S77, InstantiateErrorKind> {
             Ok(S77(p))
         }
+
         pub fn t77(InjectTransient(p): InjectTransient<T76>) -> Result<T77, InstantiateErrorKind> {
             Ok(T77(Box::new(p)))
         }
+
         pub fn s78(Inject(p): Inject<S77>) -> Result<S78, InstantiateErrorKind> {
             Ok(S78(p))
         }
+
         pub fn t78(InjectTransient(p): InjectTransient<T77>) -> Result<T78, InstantiateErrorKind> {
             Ok(T78(Box::new(p)))
         }
+
         pub fn s79(Inject(p): Inject<S78>) -> Result<S79, InstantiateErrorKind> {
             Ok(S79(p))
         }
+
         pub fn t79(InjectTransient(p): InjectTransient<T78>) -> Result<T79, InstantiateErrorKind> {
             Ok(T79(Box::new(p)))
         }
+
         pub fn s80(Inject(p): Inject<S79>) -> Result<S80, InstantiateErrorKind> {
             Ok(S80(p))
         }
+
         pub fn t80(InjectTransient(p): InjectTransient<T79>) -> Result<T80, InstantiateErrorKind> {
             Ok(T80(Box::new(p)))
         }
+
         pub fn s81(Inject(p): Inject<S80>) -> Result<S81, InstantiateErrorKind> {
             Ok(S81(p))
         }
+
         pub fn t81(InjectTransient(p): InjectTransient<T80>) -> Result<T81, InstantiateErrorKind> {
             Ok(T81(Box::new(p)))
         }
+
         pub fn s82(Inject(p): Inject<S81>) -> Result<S82, InstantiateErrorKind> {
             Ok(S82(p))
         }
+
         pub fn t82(InjectTransient(p): InjectTransient<T81>) -> Result<T82, InstantiateErrorKind> {
             Ok(T82(Box::new(p)))
         }
+
         pub fn s83(Inject(p): Inject<S82>) -> Result<S83, InstantiateErrorKind> {
             Ok(S83(p))
         }
+
         pub fn t83(InjectTransient(p): InjectTransient<T82>) -> Result<T83, InstantiateErrorKind> {
             Ok(T83(Box::new(p)))
         }
+
         pub fn s84(Inject(p): Inject<S83>) -> Result<S84, InstantiateErrorKind> {
             Ok(S84(p))
         }
+
         pub fn t84(InjectTransient(p): InjectTransient<T83>) -> Result<T84, InstantiateErrorKind> {
             Ok(T84(Box::new(p)))
         }
+
         pub fn s85(Inject(p): Inject<S84>) -> Result<S85, InstantiateErrorKind> {
             Ok(S85(p))
         }
+
         pub fn t85(InjectTransient(p): InjectTransient<T84>) -> Result<T85, InstantiateErrorKind> {
             Ok(T85(Box::new(p)))
         }
+
         pub fn s86(Inject(p): Inject<S85>) -> Result<S86, InstantiateErrorKind> {
             Ok(S86(p))
         }
+
         pub fn t86(InjectTransient(p): InjectTransient<T85>) -> Result<T86, InstantiateErrorKind> {
             Ok(T86(Box::new(p)))
         }
+
         pub fn s87(Inject(p): Inject<S86>) -> Result<S87, InstantiateErrorKind> {
             Ok(S87(p))
         }
+
         pub fn t87(InjectTransient(p): InjectTransient<T86>) -> Result<T87, InstantiateErrorKind> {
             Ok(T87(Box::new(p)))
         }
+
         pub fn s88(Inject(p): Inject<S87>) -> Result<S88, InstantiateErrorKind> {
             Ok(S88(p))
         }
+
         pub fn t88(InjectTransient(p): InjectTransient<T87>) -> Result<T88, InstantiateErrorKind> {
             Ok(T88(Box::new(p)))
         }
+
         pub fn s89(Inject(p): Inject<S88>) -> Result<S89, InstantiateErrorKind> {
             Ok(S89(p))
         }
+
         pub fn t89(InjectTransient(p): InjectTransient<T88>) -> Result<T89, InstantiateErrorKind> {
             Ok(T89(Box::new(p)))
         }
+
         pub fn s90(Inject(p): Inject<S89>) -> Result<S90, InstantiateErrorKind> {
             Ok(S90(p))
         }
+
         pub fn t90(InjectTransient(p): InjectTransient<T89>) -> Result<T90, InstantiateErrorKind> {
             Ok(T90(Box::new(p)))
         }
+
         pub fn s91(Inject(p): Inject<S90>) -> Result<S91, InstantiateErrorKind> {
             Ok(S91(p))
         }
+
         pub fn t91(InjectTransient(p): InjectTransient<T90>) -> Result<T91, InstantiateErrorKind> {
             Ok(T91(Box::new(p)))
         }
+
         pub fn s92(Inject(p): Inject<S91>) -> Result<S92, InstantiateErrorKind> {
             Ok(S92(p))
         }
+
         pub fn t92(InjectTransient(p): InjectTransient<T91>) -> Result<T92, InstantiateErrorKind> {
             Ok(T92(Box::new(p)))
         }
+
         pub fn s93(Inject(p): Inject<S92>) -> Result<S93, InstantiateErrorKind> {
             Ok(S93(p))
         }
+
         pub fn t93(InjectTransient(p): InjectTransient<T92>) -> Result<T93, InstantiateErrorKind> {
             Ok(T93(Box::new(p)))
         }
+
         pub fn s94(Inject(p): Inject<S93>) -> Result<S94, InstantiateErrorKind> {
             Ok(S94(p))
         }
+
         pub fn t94(InjectTransient(p): InjectTransient<T93>) -> Result<T94, InstantiateErrorKind> {
             Ok(T94(Box::new(p)))
         }
+
         pub fn s95(Inject(p): Inject<S94>) -> Result<S95, InstantiateErrorKind> {
             Ok(S95(p))
         }
+
         pub fn t95(InjectTransient(p): InjectTransient<T94>) -> Result<T95, InstantiateErrorKind> {
             Ok(T95(Box::new(p)))
         }
+
         pub fn s96(Inject(p): Inject<S95>) -> Result<S96, InstantiateErrorKind> {
             Ok(S96(p))
         }
+
         pub fn t96(InjectTransient(p): InjectTransient<T95>) -> Result<T96, InstantiateErrorKind> {
             Ok(T96(Box::new(p)))
         }
+
         pub fn s97(Inject(p): Inject<S96>) -> Result<S97, InstantiateErrorKind> {
             Ok(S97(p))
         }
+
         pub fn t97(InjectTransient(p): InjectTransient<T96>) -> Result<T97, InstantiateErrorKind> {
             Ok(T97(Box::new(p)))
         }
+
         pub fn s98(Inject(p): Inject<S97>) -> Result<S98, InstantiateErrorKind> {
             Ok(S98(p))
         }
+
         pub fn t98(InjectTransient(p): InjectTransient<T97>) -> Result<T98, InstantiateErrorKind> {
             Ok(T98(Box::new(p)))
         }
+
         pub fn s99(Inject(p): Inject<S98>) -> Result<S99, InstantiateErrorKind> {
             Ok(S99(p))
         }
+
         pub fn t99(InjectTransient(p): InjectTransient<T98>) -> Result<T99, InstantiateErrorKind> {
             Ok(T99(Box::new(p)))
         }
+
         pub fn wide(
             Inject(_0): Inject<S0>,
             Inject(_1): Inject<S0>,
@@ -1501,6 +1909,7 @@ pub mod compile_engine {
         ) -> Result<Wide, InstantiateErrorKind> {
             Ok(Wide([0; 16]))
         }
+
         pub fn host(Inject(p): Inject<Plugin>) -> Result<Host, InstantiateErrorKind> {
             Ok(Host(p))
         }

@@ -4,12 +4,15 @@ mod thread_safe {
     use core::any::Any;
 
     pub trait SendSafety: Send {}
+
     pub trait SyncSafety: Sync {}
 
     impl<T: Send> SendSafety for T {}
+
     impl<T: Sync> SyncSafety for T {}
 
     pub type RcThreadSafety<T> = Arc<T>;
+
     pub type RcAnyThreadSafety = RcThreadSafety<dyn Any + Send + Sync>;
 }
 
@@ -19,12 +22,15 @@ mod thread_unsafe {
     use core::any::Any;
 
     pub trait SendSafety {}
+
     pub trait SyncSafety {}
 
     impl<T> SendSafety for T {}
+
     impl<T> SyncSafety for T {}
 
     pub type RcThreadSafety<T> = Rc<T>;
+
     pub type RcAnyThreadSafety = RcThreadSafety<dyn Any>;
 }
 

@@ -76,7 +76,6 @@ mod tests {
     use tracing_test::traced_test;
 
     struct Request;
-
     #[derive(Clone)]
     struct Instance;
 
@@ -84,6 +83,7 @@ mod tests {
     #[allow(dead_code)]
     fn test_dependency_resolver_impls() {
         fn resolver<T: DependencyResolver>() {}
+
         fn resolver_with_dep<Dep: Send + Sync + 'static>() {
             resolver::<Inject<Dep>>();
             resolver::<InjectTransient<Dep>>();

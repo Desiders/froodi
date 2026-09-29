@@ -60,6 +60,7 @@ async fn async_parameter_order_survives_resolvers_and_repeated_targets() {
 fn nested_import_replacement_keeps_storage_type_and_finalizer_identity() {
     use froodi_compile::{runtime, thread_safety::RcThreadSafety, Config};
     use std::sync::Mutex;
+
     #[repr(align(64))]
     struct Aligned(String);
     struct Consumer(String);

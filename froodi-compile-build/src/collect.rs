@@ -56,6 +56,7 @@ impl<'ast> Frame<'ast> {
 
     fn bind(&mut self, pattern: &Pat) {
         struct Names<'f>(&'f mut HashSet<String>);
+
         impl Visit<'_> for Names<'_> {
             fn visit_pat_ident(&mut self, ident: &PatIdent) {
                 self.0.insert(ident.ident.to_string());

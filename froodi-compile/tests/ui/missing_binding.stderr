@@ -9,9 +9,9 @@ error[E0277]: no registration provides the instantiator parameter `froodi_compil
 15 | |     });
    | |______^ this registry has no `provide(...)` for the type inside `froodi_compile::Inject<Config>`
    |
-   = help: the trait `froodi_compile_runtime::graph::LinkDependency<froodi_compile::__private::Node<froodi_compile_runtime::graph::Provider<Database>, froodi_compile_runtime::graph::Provider<froodi_compile::Container>>, _>` is not implemented for `froodi_compile::Inject<Config>`
+   = help: the trait `froodi_compile_runtime::graph::LinkDependency<Node<Provider<Database>, Provider<froodi_compile::Container>>, _>` is not implemented for `froodi_compile::Inject<Config>`
    = note: register an instantiator or `instance(...)` for it, or `extend(...)` a registry that does
-help: the trait `froodi_compile_runtime::graph::LinkDependency<Root, froodi_compile_runtime::graph::LinkedInject<Path>>` is conditionally implemented for `froodi_compile::Inject<T>`
+help: the trait `froodi_compile_runtime::graph::LinkDependency<Root, LinkedInject<Path>>` is conditionally implemented for `froodi_compile::Inject<T>`
   --> $WORKSPACE/froodi-compile-runtime/src/graph.rs
    |
    | / impl<Root, T: 'static, Path> LinkDependency<Root, LinkedInject<Path>> for Inject<T>
@@ -19,8 +19,8 @@ help: the trait `froodi_compile_runtime::graph::LinkDependency<Root, froodi_comp
    | |     Root: ProviderPath<T, Path>,
    | |___________---------------------^
    |             |
-   |             unsatisfied requirement introduced here: `froodi_compile::__private::Node<froodi_compile_runtime::graph::Provider<Database>, froodi_compile_runtime::graph::Provider<froodi_compile::Container>>: froodi_compile_runtime::graph::ProviderPath<Config, _>`
-   = note: required for `(froodi_compile::Inject<Config>,)` to implement `froodi_compile_runtime::graph::LinkDependencies<froodi_compile::__private::Node<froodi_compile_runtime::graph::Provider<Database>, froodi_compile_runtime::graph::Provider<froodi_compile::Container>>, (_,)>`
-   = note: required for `froodi_compile::__private::Reg<Database, fn(froodi_compile::Inject<Config>) -> Result<Database, InstantiateErrorKind> {make_database}, (froodi_compile::Inject<Config>,), froodi_compile::__private::NoFinalizer>` to implement `froodi_compile_runtime::graph::Link<froodi_compile::__private::Node<froodi_compile_runtime::graph::Provider<Database>, froodi_compile_runtime::graph::Provider<froodi_compile::Container>>, (_,)>`
+   |             unsatisfied requirement introduced here: `Node<Provider<Database>, Provider<froodi_compile::Container>>: ProviderPath<Config, _>`
+   = note: required for `(froodi_compile::Inject<Config>,)` to implement `froodi_compile_runtime::graph::LinkDependencies<Node<Provider<Database>, Provider<froodi_compile::Container>>, (_,)>`
+   = note: required for `froodi_compile::__private::Reg<Database, fn(froodi_compile::Inject<Config>) -> Result<Database, InstantiateErrorKind> {make_database}, (froodi_compile::Inject<Config>,), froodi_compile::__private::NoFinalizer>` to implement `Link<Node<Provider<Database>, Provider<froodi_compile::Container>>, (_,)>`
    = note: 1 redundant requirement hidden
-   = note: required for `froodi_compile::__private::Node<froodi_compile::__private::Reg<Database, fn(froodi_compile::Inject<Config>) -> Result<Database, InstantiateErrorKind> {make_database}, (froodi_compile::Inject<Config>,), froodi_compile::__private::NoFinalizer>, froodi_compile_runtime::graph::ContainerLeaf>` to implement `froodi_compile_runtime::graph::Link<froodi_compile::__private::Node<froodi_compile_runtime::graph::Provider<Database>, froodi_compile_runtime::graph::Provider<froodi_compile::Container>>, ((_,), ())>`
+   = note: required for `Node<froodi_compile::__private::Reg<Database, fn(froodi_compile::Inject<Config>) -> Result<Database, InstantiateErrorKind> {make_database}, (froodi_compile::Inject<Config>,), froodi_compile::__private::NoFinalizer>, froodi_compile_runtime::graph::ContainerLeaf>` to implement `Link<Node<Provider<Database>, Provider<froodi_compile::Container>>, ((_,), ())>`

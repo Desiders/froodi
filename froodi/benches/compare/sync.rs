@@ -199,7 +199,6 @@ fn criterion_benchmark(c: &mut Criterion) {
         struct Top3;
         struct Top4;
         struct Top5;
-
         struct Layer1(
             RcThreadSafety<Top0>,
             RcThreadSafety<Top1>,

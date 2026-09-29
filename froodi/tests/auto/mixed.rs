@@ -17,7 +17,6 @@ use froodi_auto::{
 
 #[derive(Debug)]
 struct D;
-
 struct C;
 
 #[injectable]

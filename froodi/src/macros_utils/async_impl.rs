@@ -144,7 +144,7 @@ where
         TypeInfo::of::<Inst::Provides>(),
         InstantiatorData {
             dependencies: Inst::dependencies(),
-            instantiator: boxed_instantiator(inst),
+            instantiator: boxed_instantiator(inst).into(),
             finalizer: fin.map(boxed_finalizer_factory),
             config: config.unwrap_or_default(),
             scope_data: scope.into(),
@@ -154,5 +154,6 @@ where
 
 #[cfg(feature = "thread_safe")]
 pub type FinDummy<T> = fn(T) -> Pin<super::aliases::Box<dyn Future<Output = ()> + Send>>;
+
 #[cfg(not(feature = "thread_safe"))]
 pub type FinDummy<T> = fn(T) -> Pin<super::aliases::Box<dyn Future<Output = ()>>>;
