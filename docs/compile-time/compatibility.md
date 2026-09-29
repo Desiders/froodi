@@ -87,3 +87,62 @@ how future integration into Froodi is affected
 ```
 
 A new backend being easier to implement is not enough reason to change the public model.
+
+## Remaining incompatibilities
+
+Each follows the compatibility policy above.
+
+### Duplicate registrations and overrides
+
+- Froodi: a later registration of a type replaces the earlier one, including through `extend`.
+- Why: rustc decides which registration a static dependency targets; two providers of one
+  depended-on type are ambiguous to it (ADR 0003).
+- Tested: unmarked duplicates (compile error or startup diagnostic), explicit replacement.
+- API: `RuntimeRegistry::replacing()` marks overrides.
+- Integration: Froodi code that relies on "last one wins" must mark its overrides.
+
+### Context-only types in static factories
+
+- Froodi: a factory may depend on any type a child container's `Context` supplies, registered
+  or not.
+- Why: rustc must find a provider for every static parameter.
+- Tested: `context::<T>()` declaration; `get` of unregistered context values keeps working.
+- API: `provide(scope, context::<T>())` per such type.
+- Integration: an integration that injects request data through `Context` needs one
+  `context::<T>()` per injected type in the registry it builds.
+
+### Registry-producing functions
+
+- Froodi: `fn infrastructure() -> Registry`.
+- Why: the typed tree is unnameable; an `impl Trait` return type hides it from rustc (ADR 0005).
+- Tested: runtime registries returned from functions; `macro_rules!` producers.
+- API: return `RuntimeRegistry` (`.into_runtime()`), or turn the function into a macro.
+- Integration: a runtime registry loses compile-time checks of its internal edges; they run when
+  the container is built.
+
+### Hand-written `Instantiator` impls
+
+- Froodi: the trait has `dependencies()`.
+- Why: dependency metadata comes from parameter types (ADR 0001).
+- Tested: every factory kind through the blanket impl.
+- API: hand-written impls drop the method.
+- Integration: only code implementing `Instantiator` by hand.
+
+### A closed parent under a live child
+
+- Froodi: a child keeps the parent's cached values it copied at creation, even after the parent
+  is closed.
+- Why: a child does not copy the parent's cache; it resolves wider values through the parent.
+- Tested: every scope scenario in `compat.rs` that does not close a parent before its child.
+- API: none.
+- Integration: only code that closes a parent while a child is still in use.
+
+### Async
+
+- Froodi: a full async container with its own builders.
+- Why: the prototype implements a vertical slice (factories, finalizers, `get`, `get_transient`,
+  `close`, `enter_build`, `enter_build_with_scope`) on the shared graph model.
+- Tested: `async_compat.rs`, `end_to_end.rs`.
+- API: async children are built with `enter_build` and `enter_build_with_scope(scope)`; they
+  take a scope, and the context of their parent.
+- Integration: completing the async builders on the same shared state.

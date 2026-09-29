@@ -211,3 +211,35 @@ map lookup, boxed service call, `Box<dyn Any>` downcast, cache map insert per ed
 call). Cached `get` is dominated by the single boundary lookup in every engine. Container
 construction is higher because the graph is compiled and the tables are built there
 (ADR 0004).
+
+## 10. Runtime-work accounting of the prototype
+
+What the final prototype still does at runtime, per issue #64. "Build" is `Container::new`, once
+per container tree; "resolution" is every `get` / `get_transient`.
+
+| Work | Static registrations | Runtime registries |
+|---|---|---|
+| provider discovery | no: the tree is built by `registry!` at compile time | no: same tree, erased |
+| graph construction | build: the IR is described from the linked tree | build |
+| dependency metadata construction | build, from parameter types; ids resolved by rustc | build; ids resolved by key |
+| cycle detection | build (graph compiler) | build |
+| scope graph validation | build (graph compiler) | build |
+| `TypeId` lookup | resolution: once at the public `get` boundary; none on edges | same; none on edges after build |
+| map lookup per dependency edge | no: edges carry constant ids | no: edges carry ids linked at build |
+| dyn factory dispatch | one function-pointer call per constructed edge (none with `direct-edges`) | one function-pointer call per constructed edge |
+| `Any`/downcast | at the `get` boundary only; edges cast without a check | one checked downcast per edge |
+| scope lookup | resolution: parent walk to the owning level for wider-scope values | same |
+| cache lookup | resolution: `Vec` slot by id | same |
+| finalizer bookkeeping | resolution: push to the container's list when a finalized value is built; close walks it | same |
+| `Context` propagation | child creation: context values of registered types written into slots | same |
+
+## 11. Conclusions
+
+- The compile-time engine removes per-edge type lookup, map lookup and downcast checks from
+  static graphs, and resolves cold and transient chains 1.6–2.6 times faster than current Froodi.
+- Cached resolution is on par: both engines pay one boundary lookup.
+- Container construction is about 45% more expensive, because graph compilation moved there from
+  `registry!` and gained checks Froodi does not make.
+- Among the backends, table edges (A+) are selected: direct calls (B) are faster by 7–35% but hit
+  rustc's recursion limit on ordinary depths; typed storage (C) was not worth its cost
+  (ADR 0004).
