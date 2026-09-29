@@ -19,10 +19,13 @@ help: the following other types implement trait `froodi_compile_runtime::graph::
    |
    | impl<T, F, D, Fin, DI> SyncProvider<T> for Linked<T, F, D, Fin, DI> {}
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `froodi_compile_runtime::graph::Linked<T, F, D, Fin, DI>` implements `froodi_compile_runtime::graph::SyncProvider<T>`
+   | #[cfg(not(feature = "direct-edges"))]
    | impl SyncProvider<Container> for ContainerLeaf {}
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `froodi_compile_runtime::graph::ContainerLeaf` implements `froodi_compile_runtime::graph::SyncProvider<froodi_compile::Container>`
+   | #[cfg(not(feature = "direct-edges"))]
    | impl<T> SyncProvider<T> for crate::boundary::ImportLeaf<T> {}
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `froodi_compile_runtime::boundary::ImportLeaf<T>` implements `froodi_compile_runtime::graph::SyncProvider<T>`
+   | #[cfg(not(feature = "direct-edges"))]
    | impl<T> SyncProvider<T> for crate::boundary::ContextLeaf<T> {}
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `froodi_compile_runtime::boundary::ContextLeaf<T>` implements `froodi_compile_runtime::graph::SyncProvider<T>`
    = note: required for `Inject<Config>` to implement `froodi_compile_runtime::graph::DepExec<froodi_compile::__private::Node<froodi_compile::__private::Node<AsyncLinked<Config, {async closure@$DIR/tests/ui/async/sync_needs_async.rs:8:30: 8:38}, (), froodi_compile::__private::NoFinalizer, ()>, froodi_compile_runtime::graph::Linked<Database, {closure@$DIR/tests/ui/async/sync_needs_async.rs:10:34: 10:67}, (Inject<Config>,), froodi_compile::__private::NoFinalizer, (froodi_compile_runtime::graph::SharedAt<froodi_compile_runtime::graph::L<froodi_compile_runtime::graph::L<froodi_compile_runtime::graph::Here>>>,)>>, froodi_compile_runtime::graph::ContainerLeaf>, froodi_compile_runtime::graph::SharedAt<froodi_compile_runtime::graph::L<froodi_compile_runtime::graph::L<froodi_compile_runtime::graph::Here>>>>`

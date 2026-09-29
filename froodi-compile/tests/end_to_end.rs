@@ -133,7 +133,10 @@ fn mixed_static_and_runtime_registrations() {
         ],
         extend(plugins("postgres://plugin")),
     });
-    assert_eq!(app.clone().enter_build().unwrap().get::<Database>().unwrap().url, "postgres://plugin");
+    assert_eq!(
+        app.clone().enter_build().unwrap().get::<Database>().unwrap().url,
+        "postgres://plugin"
+    );
 
     let overridden = Container::new(registry! {
         provide(App, instance(Config { url: "postgres://prod" })),

@@ -11,6 +11,7 @@ fn inst<const N: usize>() -> Result<T<N>, InstantiateErrorKind> {
 }
 
 #[test]
+#[allow(clippy::too_many_lines, reason = "500 registrations are the point")]
 fn builds_and_resolves_a_500_registration_registry() {
     let container = Container::new(registry! {
         scope(App) [

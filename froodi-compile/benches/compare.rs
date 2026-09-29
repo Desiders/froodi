@@ -12,7 +12,7 @@ mod graphs;
 mod bench {
     use super::graphs;
 
-    use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
+    use criterion::{criterion_group, BatchSize, BenchmarkId, Criterion};
     use graphs::{compile_engine as direct, compile_engine::indexed, froodi_engine as froodi, Host, Wide, S99, T99};
     use std::{hint::black_box, sync::Arc};
 

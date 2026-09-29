@@ -381,6 +381,7 @@ pub trait DepExec<Root, I>: Sized {
     fn resolve(root: &Root, container: &Container) -> Result<Self, ResolveErrorKind>;
 }
 
+#[cfg(not(feature = "direct-edges"))]
 /// A leaf that provides `T` synchronously. The bound is shallow: it names the leaf, not its
 /// dependencies, so proving it never walks the dependency graph.
 #[diagnostic::on_unimplemented(
@@ -390,9 +391,13 @@ pub trait DepExec<Root, I>: Sized {
 )]
 pub trait SyncProvider<T> {}
 
+#[cfg(not(feature = "direct-edges"))]
 impl<T, F, D, Fin, DI> SyncProvider<T> for Linked<T, F, D, Fin, DI> {}
+#[cfg(not(feature = "direct-edges"))]
 impl SyncProvider<Container> for ContainerLeaf {}
+#[cfg(not(feature = "direct-edges"))]
 impl<T> SyncProvider<T> for crate::boundary::ImportLeaf<T> {}
+#[cfg(not(feature = "direct-edges"))]
 impl<T> SyncProvider<T> for crate::boundary::ContextLeaf<T> {}
 
 /// Table edges (default): the dependency is constructed through the construction table at the

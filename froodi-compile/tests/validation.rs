@@ -42,7 +42,9 @@ fn new_panics_with_the_rendered_diagnostics() {
     });
 }
 
+#[cfg(not(feature = "direct-edges"))]
 struct A;
+#[cfg(not(feature = "direct-edges"))]
 struct B;
 
 /// With `direct-edges`, a cycle among static edges is rejected at compile time by a trait
@@ -50,6 +52,7 @@ struct B;
 #[cfg(not(feature = "direct-edges"))]
 #[test]
 fn reports_a_cycle_among_static_edges_with_its_path() {
+    let first = line!() + 3;
     let result = Container::try_new(registry! {
         scope(App) [
             provide(|Inject(_b): Inject<B>| Ok::<_, InstantiateErrorKind>(A)),
@@ -61,6 +64,11 @@ fn reports_a_cycle_among_static_edges_with_its_path() {
     let at = |line: u32| format!("[`closure` at {}:{line}:21]", file!());
     assert_eq!(
         diagnostics.to_string(),
-        format!("error: dependency cycle\n\nA  {}\n└── B  {}\n    └── A  {}", at(55), at(56), at(55))
+        format!(
+            "error: dependency cycle\n\nA  {}\n└── B  {}\n    └── A  {}",
+            at(first),
+            at(first + 1),
+            at(first)
+        )
     );
 }
