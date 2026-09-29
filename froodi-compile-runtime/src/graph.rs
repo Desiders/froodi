@@ -326,6 +326,11 @@ impl<Root, A: Link<Root, LA>, B: Link<Root, LB>, LA, LB> Link<Root, (LA, LB)> fo
 }
 
 /// Constructs the value of a linked registration inside the linked tree `Root`.
+#[diagnostic::on_unimplemented(
+    message = "this registration cannot be constructed synchronously",
+    label = "a sync factory depends on it",
+    note = "a sync factory may not depend on an async registration; make the dependent factory async"
+)]
 pub trait Exec<Root> {
     type Provides: 'static;
 

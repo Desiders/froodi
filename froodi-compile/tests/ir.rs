@@ -172,3 +172,27 @@ fn compiles_a_registry_graph_deterministically() {
         &[froodi_compile::ir::RegistrationId(0), froodi_compile::ir::RegistrationId(1)]
     );
 }
+
+#[cfg(feature = "async")]
+#[test]
+fn marks_async_factories_and_finalizers_in_the_same_graph() {
+    use froodi_compile::{async_registry, thread_safety::RcThreadSafety};
+
+    let graph = async_registry! {
+        scope(App) [
+            provide(async || Ok::<_, InstantiateErrorKind>(Seed), finalizer = async |_: RcThreadSafety<Seed>| {}),
+        ],
+        extend(registry! { scope(App) [ provide(make_config) ] }),
+    }
+    .graph();
+
+    let kinds: Vec<_> = graph
+        .registrations
+        .iter()
+        .map(|registration| (registration.execution, registration.finalizer))
+        .collect();
+    assert_eq!(
+        kinds,
+        vec![(ExecutionKind::Async, Some(ExecutionKind::Async)), (ExecutionKind::Sync, None)]
+    );
+}

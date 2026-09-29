@@ -22,6 +22,9 @@ pub(crate) mod runtime_registry;
 pub(crate) mod scope;
 pub mod thread_safety;
 
+#[cfg(feature = "async")]
+pub mod async_impl;
+
 pub use boundary::{context, runtime};
 pub use config::Config;
 pub use container::Container;
@@ -39,6 +42,8 @@ pub use scope::{DefaultScope, Scope, ScopeData, Scopes};
 
 #[doc(hidden)]
 pub mod __private {
+    #[cfg(feature = "async")]
+    pub use crate::async_impl::async_reg;
     pub use crate::finalizer::{NoFinalizer, WithFinalizer};
     pub use crate::graph::{Empty, Node, Reg};
     pub use crate::registry::{reg, Registry};

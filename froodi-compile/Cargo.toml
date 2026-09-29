@@ -26,6 +26,7 @@ froodi-compile-macros = { path = "../froodi-compile-macros" }
 froodi-compile-runtime = { path = "../froodi-compile-runtime", default-features = false }
 
 [dev-dependencies]
-froodi = { path = "../froodi" }
+froodi = { path = "../froodi", features = ["async"] }
 anyhow = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 trybuild = "1"

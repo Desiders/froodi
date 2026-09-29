@@ -20,7 +20,7 @@ thread_safe = []
 lock-parking-lot = ["thread_safe", "std", "dep:parking_lot"]
 lock-spin = ["thread_safe", "dep:spin"]
 
-async = ["std"]
+async = ["std", "dep:tokio"]
 
 [dependencies]
 anyhow = { version = "1.0", default-features = false }
@@ -28,3 +28,4 @@ froodi-compile-core = { path = "../froodi-compile-core" }
 parking_lot = { version = "0.12", default-features = false, optional = true }
 spin = { version = "0.12", features = ["mutex", "rwlock", "spin_mutex"], default-features = false, optional = true }
 thiserror = { version = "2.0", default-features = false }
+tokio = { version = "1", default-features = false, features = ["sync"], optional = true }

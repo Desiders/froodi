@@ -154,7 +154,7 @@ fn origin(factory: &Expr) -> TokenStream2 {
     }
 }
 
-fn leaf(scope: &Expr, entry: &Entry) -> TokenStream2 {
+fn leaf(constructor: &TokenStream2, scope: &Expr, entry: &Entry) -> TokenStream2 {
     let factory = &entry.factory;
     let source = value_source(factory);
     let origin = origin(factory);
@@ -166,12 +166,25 @@ fn leaf(scope: &Expr, entry: &Entry) -> TokenStream2 {
         || quote!(::froodi_compile::__private::NoFinalizer),
         |finalizer| quote!(::froodi_compile::__private::WithFinalizer(#finalizer)),
     );
-    quote!(::froodi_compile::__private::reg(#scope, #factory, #config, #finalizer, #source, #origin))
+    quote!(#constructor(#scope, #factory, #config, #finalizer, #source, #origin))
 }
 
+/// `registry! { ... }`: sync factories.
 #[proc_macro]
 pub fn registry(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as RegistryInput);
+    expand(&input, &quote!(::froodi_compile::__private::reg))
+}
+
+/// `async_registry! { ... }`: the same syntax with async factories. Sync registrations join
+/// through `extend(registry! { ... })`.
+#[proc_macro]
+pub fn async_registry(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as RegistryInput);
+    expand(&input, &quote!(::froodi_compile::__private::async_reg))
+}
+
+fn expand(input: &RegistryInput, constructor: &TokenStream2) -> TokenStream {
     let mut leaves = Vec::new();
     let mut scopes = Vec::new();
     let mut extensions = Vec::new();
@@ -186,7 +199,7 @@ pub fn registry(input: TokenStream) -> TokenStream {
         };
         scopes.push(scope);
         for entry in entries {
-            leaves.push(leaf(scope, entry));
+            leaves.push(leaf(constructor, scope, entry));
         }
     }
 

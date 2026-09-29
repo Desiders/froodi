@@ -5,6 +5,8 @@
 //! crate by changing the crate name in its imports.
 #![cfg_attr(not(feature = "std"), no_std)]
 
+#[cfg(feature = "async")]
+pub use froodi_compile_macros::async_registry;
 pub use froodi_compile_macros::registry;
 pub use froodi_compile_runtime::*;
 

@@ -6,7 +6,7 @@ use core::cmp::Ordering;
 #[cfg(feature = "thread_safe")]
 use crate::lock::NodeLocks;
 
-use froodi_compile_core::{compile, CompiledGraph, Diagnostics, ScopeId};
+use froodi_compile_core::{compile, CompiledGraph, Diagnostics, ExecutionKind, ScopeId};
 
 use crate::{
     context::Context,
@@ -20,42 +20,59 @@ use crate::{
 
 /// State shared by every container of one tree: the compiled graph, the linked registration
 /// tree and its construction entries.
-struct Plan {
-    compiled: CompiledGraph<TypeId>,
+pub(crate) struct Plan {
+    pub(crate) compiled: CompiledGraph<TypeId>,
     /// Keeps the linked tree alive at a stable address; `root` and the entries point into it.
     _tree: BoxAnyThreadSafety,
-    root: *const (),
+    pub(crate) root: *const (),
     /// Indexed by registration id.
-    entries: Vec<Entry>,
+    pub(crate) entries: Vec<Entry>,
     /// The scope hierarchy, widest first; indexed by `ScopeId`.
-    scopes: Vec<ScopeData>,
+    pub(crate) scopes: Vec<ScopeData>,
     /// Provided type of every registration, indexed by registration id.
     type_ids: Vec<TypeId>,
+    #[cfg(feature = "async")]
+    pub(crate) async_table: AsyncTable,
     #[cfg(feature = "thread_safe")]
     locks: NodeLocks,
 }
 
+/// Async construction functions, present when an async container built the plan.
+#[cfg(feature = "async")]
+pub(crate) type AsyncTable = crate::async_impl::AsyncTable;
+
+#[cfg(not(feature = "async"))]
+pub(crate) type AsyncTable = ();
+
 /// The linked form of a registry tree with the container registration appended.
-type Linked<Tree, Links> = <Node<Tree, ContainerLeaf> as Link<Node<Tree, ContainerLeaf>, Links>>::Linked;
+pub(crate) type Linked<Tree, Links> = <Node<Tree, ContainerLeaf> as Link<Node<Tree, ContainerLeaf>, Links>>::Linked;
 
 impl Inner {
     fn close(&self) {
         let resolved = core::mem::take(&mut *self.resolved.write());
         for (index, value) in resolved.into_iter().rev() {
+            // An async finalizer needs `close().await` on the async container; like Froodi, it
+            // does not run when the container is only dropped.
+            if self.plan.compiled.nodes()[index].finalizer == Some(ExecutionKind::Async) {
+                continue;
+            }
             let entry = &self.plan.entries[index];
             // SAFETY: `value` was constructed by the registration at `index`.
             unsafe { (entry.finalize)(entry.item, value) };
         }
-        {
-            let mut slots = self.slots.write();
-            slots.iter_mut().for_each(|slot| *slot = None);
-            self.plan.fill_from_context(&mut slots, &self.context);
-        }
+        self.reset_slots();
         if self.close_parent {
             if let Some(parent) = &self.parent {
                 parent.close();
             }
         }
+    }
+
+    /// Clears the cache back to the context values.
+    pub(crate) fn reset_slots(&self) {
+        let mut slots = self.slots.write();
+        slots.iter_mut().for_each(|slot| *slot = None);
+        self.plan.fill_from_context(&mut slots, &self.context);
     }
 }
 
@@ -76,7 +93,21 @@ impl Plan {
     }
 
     /// Compiles the registry graph and links its tree.
-    fn build<Tree, Links>(registry: Registry<Tree>) -> Result<RcThreadSafety<Self>, Diagnostics>
+    pub(crate) fn build<Tree, Links>(registry: Registry<Tree>) -> Result<RcThreadSafety<Self>, Diagnostics>
+    where
+        Node<Tree, ContainerLeaf>: Link<Node<Tree, ContainerLeaf>, Links>,
+        Linked<Tree, Links>:
+            Walk<Linked<Tree, Links>> + DescribeLinked<Linked<Tree, Links>> + CollectRuntime + SendSafety + SyncSafety + 'static,
+    {
+        Self::build_with(registry, |_| AsyncTable::default())
+    }
+
+    /// Like [`Self::build`], with the async construction table `walk_async` collects from the
+    /// linked tree.
+    pub(crate) fn build_with<Tree, Links>(
+        registry: Registry<Tree>,
+        walk_async: impl FnOnce(&Linked<Tree, Links>) -> AsyncTable,
+    ) -> Result<RcThreadSafety<Self>, Diagnostics>
     where
         Node<Tree, ContainerLeaf>: Link<Node<Tree, ContainerLeaf>, Links>,
         Linked<Tree, Links>:
@@ -102,7 +133,17 @@ impl Plan {
         let type_ids = graph.registrations.iter().map(|registration| registration.key).collect();
         let compiled = compile(graph)?;
         let root = core::ptr::from_ref::<Linked<Tree, Links>>(&tree).cast();
+        #[cfg(feature = "async")]
+        let async_table = {
+            let mut table = walk_async(&tree);
+            table.fill(entries.len());
+            table
+        };
+        #[cfg(not(feature = "async"))]
+        walk_async(&tree);
         Ok(RcThreadSafety::new(Self {
+            #[cfg(feature = "async")]
+            async_table,
             type_ids,
             #[cfg(feature = "thread_safe")]
             locks: NodeLocks::new(entries.len()),
@@ -124,23 +165,23 @@ unsafe impl Sync for Plan {}
 
 #[derive(Clone)]
 pub struct Container {
-    inner: RcThreadSafety<Inner>,
+    pub(crate) inner: RcThreadSafety<Inner>,
 }
 
-struct Inner {
-    plan: RcThreadSafety<Plan>,
+pub(crate) struct Inner {
+    pub(crate) plan: RcThreadSafety<Plan>,
     /// Position of this container's scope in the hierarchy.
-    level: ScopeId,
+    pub(crate) level: ScopeId,
     /// Cached values by registration id.
-    slots: LocalLock<Vec<Option<RcAnyThreadSafety>>>,
+    pub(crate) slots: LocalLock<Vec<Option<RcAnyThreadSafety>>>,
     /// Context values visible in this container: the parent's, overridden by its own.
-    context: Context,
+    pub(crate) context: Context,
     /// Values constructed here whose registration has a finalizer, in construction order.
-    resolved: LocalLock<Vec<(usize, RcAnyThreadSafety)>>,
-    parent: Option<Container>,
+    pub(crate) resolved: LocalLock<Vec<(usize, RcAnyThreadSafety)>>,
+    pub(crate) parent: Option<Container>,
     /// Whether closing this container also closes its parent: set for the levels a builder
     /// created on the way to the requested scope.
-    close_parent: bool,
+    pub(crate) close_parent: bool,
 }
 
 impl Container {
@@ -191,7 +232,7 @@ impl Container {
 
     /// Starts at the widest scope and descends until `is_target` accepts a scope, keeping every
     /// level as the parent of the next.
-    fn root(plan: RcThreadSafety<Plan>, is_target: impl Fn(&ScopeData) -> bool) -> Self {
+    pub(crate) fn root(plan: RcThreadSafety<Plan>, is_target: impl Fn(&ScopeData) -> bool) -> Self {
         let mut container = Self::with_level(plan, ScopeId(0), None, None, false);
         while !is_target(&container.scope()) {
             let level = ScopeId(container.inner.level.0 + 1);
@@ -281,7 +322,7 @@ impl Container {
     }
 
     /// The ancestor (or `self`) at `level`, which must not be narrower than `self`.
-    fn ancestor(&self, level: ScopeId) -> &Container {
+    pub(crate) fn ancestor(&self, level: ScopeId) -> &Container {
         let mut container = self;
         while container.inner.level != level {
             container = container
