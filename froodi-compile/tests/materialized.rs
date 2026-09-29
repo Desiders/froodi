@@ -55,3 +55,44 @@ async fn async_parameter_order_survives_resolvers_and_repeated_targets() {
     });
     assert_eq!(container.get::<Combined>().await.unwrap().0, [11, 22, 11]);
 }
+
+#[test]
+fn nested_import_replacement_keeps_storage_type_and_finalizer_identity() {
+    use froodi_compile::{runtime, thread_safety::RcThreadSafety, Config};
+    use std::sync::Mutex;
+    #[repr(align(64))]
+    struct Aligned(String);
+    struct Consumer(String);
+    let log = RcThreadSafety::new(Mutex::new(Vec::new()));
+    let original_log = log.clone();
+    let replacement_log = log.clone();
+    let original = registry! {
+        provide(App, || Ok::<_, InstantiateErrorKind>(Aligned("original".into())),
+            finalizer = move |_: RcThreadSafety<Aligned>| original_log.lock().unwrap().push("original")),
+    }
+    .into_runtime();
+    let replacement = registry! {
+        provide(App, || Ok::<_, InstantiateErrorKind>(Aligned("replacement".into())),
+            config = Config { cache_provides: false },
+            finalizer = move |_: RcThreadSafety<Aligned>| replacement_log.lock().unwrap().push("replacement")),
+    }
+    .into_runtime()
+    .replacing();
+    let nested = registry! { extend(original), extend(replacement) }.into_runtime();
+    let container = Container::new(registry! {
+        provide(App, runtime::<Aligned>(), config = Config { cache_provides: false }),
+        provide(App, |_: Resolved, a: Inject<Aligned>, b: InjectTransient<Aligned>, again: Inject<Aligned>| {
+            assert_eq!(a.0.0, b.0.0);
+            assert_eq!(a.0.0, again.0.0);
+            Ok::<_, InstantiateErrorKind>(Consumer(b.0.0))
+        }),
+        extend(nested),
+    });
+    let retained = container.clone();
+    drop(container);
+    assert_eq!(retained.get_transient::<Consumer>().unwrap().0, "replacement");
+    retained.close();
+    assert_eq!(*log.lock().unwrap(), ["replacement", "replacement"]);
+    drop(retained);
+    assert_eq!(log.lock().unwrap().len(), 2);
+}

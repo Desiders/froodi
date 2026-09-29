@@ -1,0 +1,10 @@
+[package]
+name = "froodi-topology-cases"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[dependencies]
+froodi-compile = { path = "../..", features = ["async"] }

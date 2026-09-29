@@ -7,6 +7,8 @@ balanced typed registration tree
     ↓
 rustc links Inject<T> / InjectTransient<T> to registrations
     ↓
+const cycle check for closed static compositions (at code generation)
+    ↓
 paths become RegistrationId graph edges
     ↓
 indexed registration executors
@@ -66,6 +68,10 @@ projection over the linked tree and no runtime tree traversal. Sync and async
 linking use shallow execution checks; dependency depth does not determine
 trait-resolution depth.
 
+Before the witnesses disappear, `Link::TOPOLOGY` also exposes const numeric targets
+from the same `LinkDependencies` impls. This does not add a second provider search
+or specialize runtime construction on `Root`.
+
 Custom `DependencyResolver` parameters use `ByResolver` and `RequestMode::Resolver`.
 They run user code against the container and have no statically validated target.
 `RequestMode::Inject` and `RequestMode::InjectTransient` describe the two built-in
@@ -80,8 +86,8 @@ source, finalizer presence and diagnostic origin.
 
 Rustc detects missing and ambiguous static providers and rejects synchronous
 instantiators that depend on async registrations. Container construction checks
-cycles, scope accessibility, invalid scope hierarchies and remaining duplicate or
-missing runtime bindings. `try_new` returns diagnostics; `new` panics on them.
+the effective graph, scope accessibility, invalid scope hierarchies and remaining
+duplicate or missing runtime bindings. `try_new` returns diagnostics; `new` panics on them.
 Graph compilation preserves registration IDs.
 
 Typed `extend(...)` fragments join the tree and link across fragment boundaries.
@@ -90,9 +96,42 @@ compilation. Static dependencies crossing that boundary declare `runtime::<T>()`
 context-only dependencies declare `context::<T>()`. Explicit `replacing()` fragments
 redirect matching registrations while preserving the provided Rust type.
 
+### Bounded static cycle validation
+
+`Link::TOPOLOGY` is a const tree of numeric adjacency slices. A const function
+flattens it and runs iterative DFS in O(V + E), with scratch space for 1,024 nodes
+(including the implicit container). Both injection modes contribute edges;
+all retained registrations are checked, whether requested or not.
+
+`Plan::build_with` consumes `Link::VALIDATE` before materializing the final tree.
+The sync and async constructors all use this entry point. Creating a fragment,
+calling `graph()`, or converting to `RuntimeRegistry` does not validate prematurely.
+
+| Composition | Cycle guarantee |
+|---|---|
+| Closed static tree, including static `extend`, at most 1,024 nodes | Const check of all declared edges |
+| Runtime fragments, replacements, imports, context declarations or custom resolvers | Runtime effective-graph check; opaque user lookups remain unknown |
+| More than 1,024 nodes | Runtime effective-graph check |
+
+Openness propagates to the whole composition: a runtime replacement can remove an
+original cycle or introduce a new one. Custom resolver code and lookups performed
+inside instantiators cannot be inspected; no claim covers arbitrary user control
+flow. Scope/config values remain runtime values and keep their existing checks.
+
+**Evaluation happens during monomorphization, not ordinary type checking.** Tested
+with rustc 1.98.1: `cargo check` accepts cycle fixtures; `cargo build` and `cargo test`
+reject instantiated constructors with E0080 and `dependency cycle in closed static
+registry`. Instantiated generic wrappers also fail. Uninstantiated generic wrappers
+and unreachable private functions pass all three commands. These limits are pinned
+by [`static_cycles.rs`](../../froodi-compile/tests/static_cycles.rs); the executable
+[`dag` fixture](../../froodi-compile/tests/topology/src/bin/dag.rs) covers a diamond,
+aliases, reordered registrations, captured instantiators, instances and fragments.
+
 ## Indexed execution
 
-`Plan::build_with` boxes the linked tree before collecting executor pointers.
+`Plan::build_with` places the linked tree in its final `Rc`/`Arc` allocation before
+collecting executor pointers. Moving a previously borrowed owning `Box` invalidated
+pointer provenance under Miri; shared ownership avoids that retag.
 Materialized request vectors move into the IR before executor collection; the
 linked leaves retain no allocated copy after compilation. Static registrations
 precede runtime fragments in matching graph/table order.
@@ -117,8 +156,9 @@ an indexed async table; its erased transient output is checked when extracted.
 The source contract lives beside `RegistrationExecutor` in
 [`graph.rs`](../../froodi-compile-runtime/src/graph.rs) and also applies to async execution:
 
-- The boxed tree and owned runtime fragments remain live at stable addresses until
-  all executors and borrowing futures are gone. `Plan` drops tables before storage.
+- The shared tree allocation and owned runtime fragments remain live at stable addresses
+  until all executors and borrowing futures are gone. `Plan` drops tables before storage.
+  Derive pointers only after the final allocation; do not subsequently move an owning `Box`.
 - Each registration pointer stays paired with functions specialized for its exact
   registration type. No executor stores or accepts a registry-root pointer.
 - IDs consistently index graph nodes, executors, type metadata and cache slots.
@@ -134,8 +174,11 @@ The source contract lives beside `RegistrationExecutor` in
   cloned finalizer and value. Thread-safe plans require `Send + Sync` trees and
   synchronized access.
 
-These obligations still require a dedicated soundness review; documenting them
-is not a completed audit.
+Raw-edge construction methods require `unsafe`; safe extension points cannot
+choose executor IDs or supply arbitrary edge slices. The focused materialized-edge
+review and Miri tests cover this correspondence, including repeated parameters,
+custom resolvers, aligned transient output, nested imports and replacement finalizers.
+They do not constitute a complete lifecycle/soundness audit.
 
 ## Runtime semantics
 
@@ -153,6 +196,11 @@ Finalizers run newest first for values constructed through `get`, including when
 caching is disabled. Async finalizers require explicit `close().await`.
 Thread safety follows Froodi's feature selection (`Arc` and locks, or
 `Rc`/`RefCell`); `lock-spin` supports `no_std + alloc` builds.
+Construction serialization spans the second cache check, instantiation, finalizer
+recording and cache publication. Cache write guards never span instantiation.
+Async construction uses a mutex even without `thread_safe`, since local futures
+can overlap. Lock granularity and close/drop behavior are unchanged.
 
 The [materialization decision](decisions/materialized-registration-ids.md) records
-the trade-offs; [benchmarks](benchmarks.md) compare the stages and provider-index experiment.
+the trade-offs; the [cycle-validation decision](decisions/static-cycle-validation.md)
+records the bounded mechanism. [Benchmarks](benchmarks.md) measure its compiler cost.

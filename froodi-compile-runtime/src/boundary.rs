@@ -70,6 +70,7 @@ pub struct ImportLeaf<T> {
 
 impl<Root, T> Link<Root, ()> for ImportLeaf<T> {
     type Linked = Self;
+    const TOPOLOGY: crate::topology::Topology = crate::topology::Topology::OPEN;
 
     #[inline]
     fn link(self) -> Self {
@@ -82,11 +83,11 @@ impl<T> CollectRuntime for ImportLeaf<T> {}
 impl<T: 'static> ConstructRegistration for ImportLeaf<T> {
     type Provides = T;
 
-    fn construct(&self, container: &Container, edges: &[CompiledEdge]) -> Result<T, ResolveErrorKind> {
+    unsafe fn construct(&self, container: &Container, edges: &[CompiledEdge]) -> Result<T, ResolveErrorKind> {
         container.get_transient_at::<T>(edges[0].target.index())
     }
 
-    fn construct_inject(&self, container: &Container, edges: &[CompiledEdge]) -> Result<RcAnyThreadSafety, ResolveErrorKind>
+    unsafe fn construct_inject(&self, container: &Container, edges: &[CompiledEdge]) -> Result<RcAnyThreadSafety, ResolveErrorKind>
     where
         T: SendSafety + SyncSafety,
     {
@@ -157,6 +158,7 @@ pub struct ContextLeaf<T> {
 
 impl<Root, T> Link<Root, ()> for ContextLeaf<T> {
     type Linked = Self;
+    const TOPOLOGY: crate::topology::Topology = crate::topology::Topology::OPEN;
 
     #[inline]
     fn link(self) -> Self {
@@ -169,7 +171,7 @@ impl<T> CollectRuntime for ContextLeaf<T> {}
 impl<T: 'static> ConstructRegistration for ContextLeaf<T> {
     type Provides = T;
 
-    fn construct(&self, container: &Container, _edges: &[CompiledEdge]) -> Result<T, ResolveErrorKind> {
+    unsafe fn construct(&self, container: &Container, _edges: &[CompiledEdge]) -> Result<T, ResolveErrorKind> {
         Err(ResolveErrorKind::NoContextValue {
             type_info: TypeInfo::of::<T>(),
             scope: container.scope().name,

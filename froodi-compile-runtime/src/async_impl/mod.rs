@@ -185,6 +185,7 @@ where
     Deps::Providers: SupportsExecution<AsyncExecution>,
 {
     type Linked = AsyncLinked<Out, Inst, Deps, Fin>;
+    const TOPOLOGY: crate::topology::Topology = crate::topology::Topology::leaf(Deps::TARGETS);
 
     #[inline]
     fn link(self) -> Self::Linked {
@@ -268,13 +269,17 @@ impl<Out: 'static, Inst, Deps, Fin> CollectExecutors for AsyncLinked<Out, Inst, 
 pub trait ConstructAsyncRegistration {
     type Provides: 'static;
 
-    fn construct_async<'a>(
+    /// # Safety
+    /// `edges` must be this registration's parameter edges in `container`'s plan.
+    unsafe fn construct_async<'a>(
         &'a self,
         container: &'a Container,
         edges: &'a [CompiledEdge],
     ) -> impl Future<Output = Result<Self::Provides, ResolveErrorKind>> + SendSafety + 'a;
 
-    fn construct_async_inject<'a>(
+    /// # Safety
+    /// Same edge/type correspondence as `construct_async`.
+    unsafe fn construct_async_inject<'a>(
         &'a self,
         container: &'a Container,
         edges: &'a [CompiledEdge],
@@ -293,16 +298,17 @@ macro_rules! sync_leaf_async_construction {
             type Provides = <Self as ConstructRegistration>::Provides;
 
             #[inline]
-            fn construct_async<'a>(
+            unsafe fn construct_async<'a>(
                 &'a self,
                 container: &'a Container,
                 edges: &'a [CompiledEdge],
             ) -> impl Future<Output = Result<Self::Provides, ResolveErrorKind>> + SendSafety + 'a {
-                core::future::ready(self.construct(&container.sync, edges))
+                // SAFETY: caller supplies this registration's compiled edges.
+                core::future::ready(unsafe { self.construct(&container.sync, edges) })
             }
 
             #[inline]
-            fn construct_async_inject<'a>(
+            unsafe fn construct_async_inject<'a>(
                 &'a self,
                 container: &'a Container,
                 edges: &'a [CompiledEdge],
@@ -310,7 +316,8 @@ macro_rules! sync_leaf_async_construction {
             where
                 Self::Provides: SendSafety + SyncSafety,
             {
-                core::future::ready(self.construct_inject(&container.sync, edges))
+                // SAFETY: caller supplies this registration's compiled edges.
+                core::future::ready(unsafe { self.construct_inject(&container.sync, edges) })
             }
         })*
     };
@@ -332,7 +339,7 @@ where
 {
     type Provides = Out;
 
-    fn construct_async<'a>(
+    unsafe fn construct_async<'a>(
         &'a self,
         container: &'a Container,
         edges: &'a [CompiledEdge],
@@ -350,7 +357,7 @@ where
         }
     }
 
-    fn construct_async_inject<'a>(
+    unsafe fn construct_async_inject<'a>(
         &'a self,
         container: &'a Container,
         edges: &'a [CompiledEdge],
@@ -358,7 +365,8 @@ where
     where
         Out: SyncSafety,
     {
-        async move { Ok(RcThreadSafety::new(self.construct_async(container, edges).await?) as RcAnyThreadSafety) }
+        // SAFETY: caller supplies this registration's compiled edges.
+        async move { Ok(RcThreadSafety::new(unsafe { self.construct_async(container, edges) }.await?) as RcAnyThreadSafety) }
     }
 }
 
@@ -445,7 +453,7 @@ pub(crate) struct AsyncRegistrationExecutor {
     finalize: unsafe fn(*const (), RcAnyThreadSafety) -> BoxFuture<'static, ()>,
 }
 
-// SAFETY: `registration` points into the boxed tree of the plan that owns this executor, which is
+// SAFETY: `registration` points into the shared tree allocation of the plan that owns this executor, which is
 // `Send + Sync` in thread-safe builds; the other fields are plain function pointers.
 #[cfg(feature = "thread_safe")]
 unsafe impl Send for AsyncRegistrationExecutor {}
@@ -456,14 +464,12 @@ unsafe impl Sync for AsyncRegistrationExecutor {}
 #[derive(Default)]
 pub(crate) struct AsyncTable {
     executors: Vec<Option<AsyncRegistrationExecutor>>,
-    #[cfg(feature = "thread_safe")]
     locks: Vec<tokio::sync::Mutex<()>>,
 }
 
 impl AsyncTable {
     pub(crate) fn fill(&mut self, len: usize) {
         self.executors.resize_with(len, || None);
-        #[cfg(feature = "thread_safe")]
         self.locks.resize_with(len, || tokio::sync::Mutex::new(()));
     }
 }
@@ -481,7 +487,8 @@ where
 {
     // SAFETY: the matching `Item` pointer remains live through the container-borrowing future.
     let item = unsafe { &*item.cast::<Item>() };
-    Box::pin(item.construct_async_inject(container, edges))
+    // SAFETY: caller pairs the registration with its compiled parameter edges.
+    Box::pin(unsafe { item.construct_async_inject(container, edges) })
 }
 
 /// # Safety
@@ -497,7 +504,8 @@ where
 {
     // SAFETY: the matching `Item` pointer stay live for the returned future.
     let item = unsafe { &*item.cast::<Item>() };
-    Box::pin(async move { Ok(Box::new(item.construct_async(container, edges).await?) as BoxAnyThreadSafety) })
+    // SAFETY: caller pairs the registration with its compiled parameter edges.
+    Box::pin(async move { Ok(Box::new(unsafe { item.construct_async(container, edges) }.await?) as BoxAnyThreadSafety) })
 }
 
 /// # Safety
@@ -738,21 +746,22 @@ impl Container {
                     });
                 }
                 core::cmp::Ordering::Equal => {
-                    #[cfg(feature = "thread_safe")]
                     let _guard = inner.plan.async_table.locks[index].lock().await;
-                    #[cfg(feature = "thread_safe")]
                     if let Some(value) = inner.slots.read().get(index) {
                         return Ok(value.clone());
                     }
                     let executor = inner.plan.async_table.executors[index]
                         .as_ref()
                         .expect("async executor checked above");
-                    // SAFETY: the plan and its boxed tree outlive this awaited call.
+                    // SAFETY: the plan and its shared tree allocation outlive this awaited call.
                     let value = unsafe { (executor.construct)(executor.registration, self, &node.edges) }.await?;
                     if node.finalizer.is_some() {
                         inner.resolved.write().push((index, value.clone()));
                     }
-                    value
+                    if node.cache_provides {
+                        inner.slots.write().set(index, value.clone(), inner.plan.executors.len());
+                    }
+                    return Ok(value);
                 }
             };
             if node.cache_provides {

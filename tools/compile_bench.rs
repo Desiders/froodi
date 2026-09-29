@@ -87,7 +87,7 @@ fn main() {
     fs::write(output.join("toolchain.txt"), version.stdout).unwrap();
     let mut results = String::from("shape,stage,measurement,seconds,bytes\n");
     for shape in ["chain100", "flat500"] {
-        for stage in ["typed", "linking", "metadata", "executors", "full"] {
+        for stage in ["typed", "linking", "validated", "metadata", "executors", "full"] {
             if mode == "full" && stage != "full" {
                 continue;
             }

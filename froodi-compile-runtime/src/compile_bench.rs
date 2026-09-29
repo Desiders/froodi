@@ -17,6 +17,14 @@ where
     core::hint::black_box(root(registry).link());
 }
 
+pub fn validated<Tree, Links>(registry: Registry<Tree>)
+where
+    Node<Tree, ContainerLeaf>: RegistryIndex + Link<ProviderIndex<Tree>, Links>,
+{
+    let () = <Node<Tree, ContainerLeaf> as Link<ProviderIndex<Tree>, Links>>::VALIDATE;
+    core::hint::black_box(root(registry).link());
+}
+
 pub fn metadata<Tree, Links>(registry: Registry<Tree>)
 where
     Node<Tree, ContainerLeaf>: RegistryIndex + Link<ProviderIndex<Tree>, Links>,

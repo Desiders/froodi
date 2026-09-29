@@ -47,16 +47,19 @@ struct B;
 
 #[test]
 fn reports_a_cycle_among_static_edges_with_its_path() {
-    let first = line!() + 3;
-    let result = Container::try_new(registry! {
-        scope(App) [
-            provide(|Inject(_b): Inject<B>| Ok::<_, InstantiateErrorKind>(A)),
-            provide(|Inject(_a): Inject<A>| Ok::<_, InstantiateErrorKind>(B)),
-        ],
-    });
+    let first = line!() + 4;
+    let result = froodi_compile::ir::compile(
+        registry! {
+            scope(App) [
+                provide(|Inject(_b): Inject<B>| Ok::<_, InstantiateErrorKind>(A)),
+                provide(|Inject(_a): Inject<A>| Ok::<_, InstantiateErrorKind>(B)),
+            ],
+        }
+        .graph(),
+    );
 
     let diagnostics = result.err().expect("the cycle is reported");
-    let at = |line: u32| format!("[`closure` at {}:{line}:21]", file!());
+    let at = |line: u32| format!("[`closure` at {}:{line}:25]", file!());
     assert_eq!(
         diagnostics.to_string(),
         format!(
@@ -66,4 +69,20 @@ fn reports_a_cycle_among_static_edges_with_its_path() {
             at(first)
         )
     );
+}
+
+#[test]
+fn custom_resolver_compositions_keep_runtime_cycle_validation() {
+    struct Opaque;
+    impl froodi_compile::DependencyResolver for Opaque {
+        type Error = froodi_compile::ResolveErrorKind;
+        fn resolve(_: &Container) -> Result<Self, Self::Error> {
+            Ok(Self)
+        }
+    }
+    let result = Container::try_new(registry! {
+        provide(App, |_: Opaque, _: Inject<B>| Ok::<_, InstantiateErrorKind>(A)),
+        provide(App, |_: Inject<A>| Ok::<_, InstantiateErrorKind>(B)),
+    });
+    assert!(result.err().unwrap().to_string().contains("dependency cycle"));
 }
