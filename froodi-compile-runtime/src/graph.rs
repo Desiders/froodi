@@ -3,9 +3,11 @@
 //! The resulting paths become `RegistrationId`s for indexed execution.
 
 use alloc::vec::Vec;
-use core::{any::TypeId, marker::PhantomData};
+use core::{any::TypeId, marker::PhantomData, slice};
 
-use froodi_compile_core::{DependencyRequest, ExecutionKind, Origin, Registration, RegistrationId, RequestMode, Target, ValueSource};
+use froodi_compile_core::{
+    CompiledEdge, DependencyRequest, ExecutionKind, Origin, Registration, RegistrationId, RequestMode, Target, ValueSource,
+};
 
 use crate::{
     config::Config,
@@ -69,7 +71,7 @@ impl<Root> Link<Root, ()> for Empty {
     }
 }
 
-impl<Root> CollectExecutors<Root> for Empty {
+impl CollectExecutors for Empty {
     #[allow(private_interfaces)]
     fn collect_executors(&self, _executors: &mut Vec<RegistrationExecutor>) {}
 }
@@ -159,12 +161,46 @@ impl<Left: Describe, Right: Describe> Describe for Node<Left, Right> {
     }
 }
 
-impl<Out, Inst, Deps, Fin> Size for Reg<Out, Inst, Deps, Fin> {
-    const SIZE: usize = 1;
-}
-
 impl<Left: Size, Right: Size> Size for Node<Left, Right> {
     const SIZE: usize = Left::SIZE + Right::SIZE;
+}
+
+/// Omits instantiators, dependency tuples and finalizers from provider lookup.
+pub trait RegistryIndex {
+    type Index;
+}
+
+pub struct Provider<Out>(PhantomData<fn() -> Out>);
+
+impl<Out> Size for Provider<Out> {
+    const SIZE: usize = 1;
+}
+impl<Out> ProviderPath<Out, Here> for Provider<Out> {
+    type Provider = Self;
+    const INDEX: usize = 0;
+}
+impl<Out, Execution> SupportsExecution<Execution> for Provider<Out> {}
+
+impl<Out, Inst, Deps, Fin> RegistryIndex for Reg<Out, Inst, Deps, Fin> {
+    type Index = Provider<Out>;
+}
+impl<Left: RegistryIndex, Right: RegistryIndex> RegistryIndex for Node<Left, Right> {
+    type Index = Node<Left::Index, Right::Index>;
+}
+impl RegistryIndex for Empty {
+    type Index = Empty;
+}
+impl RegistryIndex for ContainerLeaf {
+    type Index = Provider<Container>;
+}
+impl RegistryIndex for crate::runtime_registry::RuntimeNode {
+    type Index = Empty;
+}
+impl<T> RegistryIndex for crate::boundary::ImportLeaf<T> {
+    type Index = Provider<T>;
+}
+impl<T> RegistryIndex for crate::boundary::ContextLeaf<T> {
+    type Index = Provider<T>;
 }
 
 /// rustc infers `Path`; missing or ambiguous providers fail trait resolution.
@@ -173,75 +209,113 @@ impl<Left: Size, Right: Size> Size for Node<Left, Right> {
     label = "`{T}` is requested here, but no `provide(...)` in the registry produces it",
     note = "register an instantiator or `instance(...)` that returns `{T}`, or `extend(...)` a registry that does"
 )]
-pub trait ProviderPath<T, Path> {}
-
-impl<Out, Inst, Deps, Fin> ProviderPath<Out, Here> for Reg<Out, Inst, Deps, Fin> {}
-
-impl<T, Path, Left: ProviderPath<T, Path>, Right> ProviderPath<T, L<Path>> for Node<Left, Right> {}
-
-impl<T, Path, Left, Right: ProviderPath<T, Path>> ProviderPath<T, R<Path>> for Node<Left, Right> {}
-
-/// Separate from provider lookup to avoid duplicate missing-binding errors during metadata collection.
-pub trait RegistrationPath<Path> {
-    type Registration;
+pub trait ProviderPath<T, Path> {
+    type Provider;
     const INDEX: usize;
 }
 
-impl<Out, Inst, Deps, Fin, Links> RegistrationPath<Here> for Linked<Out, Inst, Deps, Fin, Links> {
-    type Registration = Self;
-    const INDEX: usize = 0;
-}
-
-impl<Path, Left: RegistrationPath<Path>, Right> RegistrationPath<L<Path>> for Node<Left, Right> {
-    type Registration = Left::Registration;
+impl<T, Path, Left: ProviderPath<T, Path>, Right> ProviderPath<T, L<Path>> for Node<Left, Right> {
+    type Provider = Left::Provider;
     const INDEX: usize = Left::INDEX;
 }
 
-impl<Path, Left: Size, Right: RegistrationPath<Path>> RegistrationPath<R<Path>> for Node<Left, Right> {
-    type Registration = Right::Registration;
+impl<T, Path, Left: Size, Right: ProviderPath<T, Path>> ProviderPath<T, R<Path>> for Node<Left, Right> {
+    type Provider = Right::Provider;
     const INDEX: usize = Left::SIZE + Right::INDEX;
 }
 
 pub struct LinkedInject<Path>(PhantomData<Path>);
+pub struct LinkedInjectTransient<Path>(PhantomData<Path>);
+pub struct ByResolver;
+pub struct SyncExecution;
+#[cfg(feature = "async")]
+pub struct AsyncExecution;
+
+#[diagnostic::on_unimplemented(
+    message = "this registration cannot be constructed synchronously",
+    label = "a sync instantiator depends on it",
+    note = "a sync instantiator may not depend on an async registration; make the dependent instantiator async"
+)]
+pub trait SupportsExecution<Execution> {}
 
 #[diagnostic::on_unimplemented(
     message = "no registration provides the instantiator parameter `{Self}`",
     label = "this registry has no `provide(...)` for the type inside `{Self}`",
     note = "register an instantiator or `instance(...)` for it, or `extend(...)` a registry that does"
 )]
-pub trait LinkDependency<Root, Path> {}
+pub trait LinkDependency<Root, Path> {
+    type Provider;
+    fn request() -> DependencyRequest<TypeId>;
+}
 
-impl<Root: ProviderPath<T, Path>, T, Path> LinkDependency<Root, LinkedInject<Path>> for Inject<T> {}
+impl<Root, T: 'static, Path> LinkDependency<Root, LinkedInject<Path>> for Inject<T>
+where
+    Root: ProviderPath<T, Path>,
+{
+    type Provider = Root::Provider;
 
-pub struct LinkedInjectTransient<Path>(PhantomData<Path>);
+    fn request() -> DependencyRequest<TypeId> {
+        let mut request = <Self as DependencyMetadata>::request();
+        request.target = Target::Id(RegistrationId(u32::try_from(Root::INDEX).expect("too many registrations")));
+        request
+    }
+}
 
-impl<Root: ProviderPath<T, Path>, T, Path> LinkDependency<Root, LinkedInjectTransient<Path>> for InjectTransient<T> {}
+impl<Root, T: 'static, Path> LinkDependency<Root, LinkedInjectTransient<Path>> for InjectTransient<T>
+where
+    Root: ProviderPath<T, Path>,
+{
+    type Provider = Root::Provider;
 
-/// Custom resolvers have no static dependency edge.
-pub struct ByResolver;
+    fn request() -> DependencyRequest<TypeId> {
+        let mut request = <Self as DependencyMetadata>::request();
+        request.target = Target::Id(RegistrationId(u32::try_from(Root::INDEX).expect("too many registrations")));
+        request
+    }
+}
 
-impl<Root, R: DependencyResolver> LinkDependency<Root, ByResolver> for R {}
+impl<Root, Resolver: DependencyResolver + 'static> LinkDependency<Root, ByResolver> for Resolver {
+    type Provider = ();
 
-pub trait LinkDependencies<Root, Links> {}
+    fn request() -> DependencyRequest<TypeId> {
+        <Self as DependencyMetadata>::request()
+    }
+}
+
+pub trait LinkDependencies<Root, Links> {
+    type Providers;
+
+    fn requests() -> Vec<DependencyRequest<TypeId>>;
+}
 
 macro_rules! impl_link_dependencies {
-    ([$($dep:ident $index:ident),*]) => {
-        impl<Root, $($dep: LinkDependency<Root, $index>, $index,)*> LinkDependencies<Root, ($($index,)*)> for ($($dep,)*) {}
+    ([$($dep:ident $path:ident),*]) => {
+        impl<Root, $($dep: LinkDependency<Root, $path>, $path,)*>
+            LinkDependencies<Root, ($($path,)*)> for ($($dep,)*) {
+            type Providers = ($($dep::Provider,)*);
+            fn requests() -> Vec<DependencyRequest<TypeId>> {
+                alloc::vec![$(<$dep as LinkDependency<Root, $path>>::request()),*]
+            }
+        }
     };
 }
 
 all_the_tuple_pairs!(impl_link_dependencies);
 
-pub struct Linked<Out, Inst, Deps, Fin, Links> {
+// Check execution after provider inference, so an async provider is not reported as missing.
+macro_rules! impl_supports_execution {
+    ([$($provider:ident),*]) => {
+        impl<Execution, $($provider: SupportsExecution<Execution>,)*> SupportsExecution<Execution> for ($($provider,)*) {}
+    };
+}
+all_the_tuples!(impl_supports_execution);
+
+pub struct Linked<Out, Inst, Deps, Fin> {
     pub(crate) instantiator: Inst,
     pub(crate) finalizer: Fin,
     pub(crate) meta: Meta,
-    #[allow(clippy::type_complexity, reason = "keep the registration marker inline with its type parameters")]
-    marker: PhantomData<fn() -> (Out, Deps, Links)>,
-}
-
-impl<Out, Inst, Deps, Fin, Links> Size for Linked<Out, Inst, Deps, Fin, Links> {
-    const SIZE: usize = 1;
+    pub(crate) dependencies: Vec<DependencyRequest<TypeId>>,
+    marker: PhantomData<fn() -> (Out, Deps)>,
 }
 
 /// `Links` mirrors the tree shape and is inferred by rustc.
@@ -254,8 +328,9 @@ pub trait Link<Root, Links> {
 impl<Root, Out, Inst, Deps, Fin, Links> Link<Root, Links> for Reg<Out, Inst, Deps, Fin>
 where
     Deps: LinkDependencies<Root, Links>,
+    Deps::Providers: SupportsExecution<SyncExecution>,
 {
-    type Linked = Linked<Out, Inst, Deps, Fin, Links>;
+    type Linked = Linked<Out, Inst, Deps, Fin>;
 
     #[inline]
     fn link(self) -> Self::Linked {
@@ -263,6 +338,7 @@ where
             instantiator: self.instantiator,
             finalizer: self.finalizer,
             meta: self.meta,
+            dependencies: Deps::requests(),
             marker: PhantomData,
         }
     }
@@ -277,38 +353,34 @@ impl<Root, Left: Link<Root, LLinks>, Right: Link<Root, RLinks>, LLinks, RLinks> 
     }
 }
 
-#[diagnostic::on_unimplemented(
-    message = "this registration cannot be constructed synchronously",
-    label = "a sync instantiator depends on it",
-    note = "a sync instantiator may not depend on an async registration; make the dependent instantiator async"
-)]
-pub trait ConstructRegistration<Root> {
+pub trait ConstructRegistration {
     type Provides: 'static;
 
-    fn construct(&self, root: &Root, container: &Container, index: usize) -> Result<Self::Provides, ResolveErrorKind>;
+    fn construct(&self, container: &Container, edges: &[CompiledEdge]) -> Result<Self::Provides, ResolveErrorKind>;
 
     /// The reference-counted value for `get` semantics. A registration that stands for another
     /// one returns that registration's value instead of a new allocation.
     #[inline]
-    fn construct_inject(&self, root: &Root, container: &Container, index: usize) -> Result<RcAnyThreadSafety, ResolveErrorKind>
+    fn construct_inject(&self, container: &Container, edges: &[CompiledEdge]) -> Result<RcAnyThreadSafety, ResolveErrorKind>
     where
         Self::Provides: SendSafety + SyncSafety,
     {
-        Ok(RcThreadSafety::new(self.construct(root, container, index)?) as RcAnyThreadSafety)
+        Ok(RcThreadSafety::new(self.construct(container, edges)?) as RcAnyThreadSafety)
     }
 }
 
-impl<Root, Out: 'static, Inst, Deps, Fin, Links> ConstructRegistration<Root> for Linked<Out, Inst, Deps, Fin, Links>
+impl<Out: 'static, Inst, Deps, Fin> ConstructRegistration for Linked<Out, Inst, Deps, Fin>
 where
     Inst: Instantiator<Deps, Provides = Out>,
-    Deps: ResolveLinkedDependencies<Root, Links>,
+    Deps: ResolveLinkedDependencies,
 {
     type Provides = Out;
 
     #[inline]
-    fn construct(&self, root: &Root, container: &Container, _index: usize) -> Result<Out, ResolveErrorKind> {
-        let dependencies =
-            Deps::resolve(root, container).map_err(|err| ResolveErrorKind::Instantiator(InstantiatorErrorKind::Deps(err.into())))?;
+    fn construct(&self, container: &Container, edges: &[CompiledEdge]) -> Result<Out, ResolveErrorKind> {
+        // SAFETY: dispatch supplies this registration's compiled parameter edges.
+        let dependencies = unsafe { Deps::resolve(container, &mut edges.iter()) }
+            .map_err(|err| ResolveErrorKind::Instantiator(InstantiatorErrorKind::Deps(err.into())))?;
         self.instantiator
             .clone()
             .instantiate(dependencies)
@@ -316,77 +388,67 @@ where
     }
 }
 
-#[diagnostic::on_unimplemented(
-    message = "no registration provides the instantiator parameter `{Self}`",
-    label = "this registry has no `provide(...)` for the type inside `{Self}`"
-)]
-pub trait ResolveLinkedDependency<Root, Path>: Sized {
-    fn resolve(root: &Root, container: &Container) -> Result<Self, ResolveErrorKind>;
+pub trait ResolveLinkedDependency: Sized {
+    /// # Safety
+    /// The next edge must provide the exact type requested by this parameter.
+    /// Custom resolvers consume no edge.
+    unsafe fn resolve(container: &Container, edges: &mut slice::Iter<'_, CompiledEdge>) -> Result<Self, ResolveErrorKind>;
 }
 
-/// Shallow bounds keep dependency graph depth independent of trait-resolution depth.
-#[diagnostic::on_unimplemented(
-    message = "this registration cannot be constructed synchronously",
-    label = "a sync instantiator depends on it",
-    note = "a sync instantiator may not depend on an async registration; make the dependent instantiator async"
-)]
-pub trait SyncProvider<T> {}
+/// # Safety
+/// An edge must remain for the current Inject/InjectTransient parameter. Linking emits
+/// one request per parameter, and compilation removes only custom resolver requests.
+#[inline]
+pub(crate) unsafe fn next_edge<'a>(edges: &mut slice::Iter<'a, CompiledEdge>) -> &'a CompiledEdge {
+    // SAFETY: the caller consumes exactly the edges emitted for its dependency tuple.
+    unsafe { edges.next().unwrap_unchecked() }
+}
 
-impl<Out, Inst, Deps, Fin, Links> SyncProvider<Out> for Linked<Out, Inst, Deps, Fin, Links> {}
-impl SyncProvider<Container> for ContainerLeaf {}
-impl<T> SyncProvider<T> for crate::boundary::ImportLeaf<T> {}
-impl<T> SyncProvider<T> for crate::boundary::ContextLeaf<T> {}
-
-impl<Root, T: SendSafety + SyncSafety + 'static, Path> ResolveLinkedDependency<Root, LinkedInject<Path>> for Inject<T>
-where
-    Root: RegistrationPath<Path>,
-    Root::Registration: SyncProvider<T>,
-{
+impl<T: SendSafety + SyncSafety + 'static> ResolveLinkedDependency for Inject<T> {
     #[inline]
-    fn resolve(_root: &Root, container: &Container) -> Result<Self, ResolveErrorKind> {
-        let value = container.get_at(Root::INDEX)?;
-        // SAFETY: slot `Root::INDEX` only ever holds values of the registration at path `Path`,
-        // which provides `T`.
+    unsafe fn resolve(container: &Container, edges: &mut slice::Iter<'_, CompiledEdge>) -> Result<Self, ResolveErrorKind> {
+        // SAFETY: the caller supplies this parameter's next compiled edge.
+        let value = container.get_at(unsafe { next_edge(edges) }.target.index())?;
+        // SAFETY: linking proved this edge provides T; graph compilation preserves its type.
         Ok(Inject(unsafe { downcast_unchecked(value) }))
     }
 }
 
-impl<Root, T: 'static, Path> ResolveLinkedDependency<Root, LinkedInjectTransient<Path>> for InjectTransient<T>
-where
-    Root: RegistrationPath<Path>,
-    Root::Registration: SyncProvider<T>,
-{
+impl<T: 'static> ResolveLinkedDependency for InjectTransient<T> {
     #[inline]
-    fn resolve(_root: &Root, container: &Container) -> Result<Self, ResolveErrorKind> {
-        // SAFETY: the registration at `Root::INDEX` provides `T`.
-        unsafe { container.get_transient_unchecked::<T>(Root::INDEX) }.map(InjectTransient)
+    unsafe fn resolve(container: &Container, edges: &mut slice::Iter<'_, CompiledEdge>) -> Result<Self, ResolveErrorKind> {
+        // SAFETY: the caller supplies the edge linked for this InjectTransient<T> parameter.
+        unsafe { container.get_transient_unchecked::<T>(next_edge(edges).target.index()) }.map(InjectTransient)
     }
 }
 
-impl<Root, R: DependencyResolver> ResolveLinkedDependency<Root, ByResolver> for R {
+impl<Resolver: DependencyResolver> ResolveLinkedDependency for Resolver {
     #[inline]
-    fn resolve(_root: &Root, container: &Container) -> Result<Self, ResolveErrorKind> {
-        R::resolve(container).map_err(Into::into)
+    unsafe fn resolve(container: &Container, _edges: &mut slice::Iter<'_, CompiledEdge>) -> Result<Self, ResolveErrorKind> {
+        Resolver::resolve(container).map_err(Into::into)
     }
 }
 
-pub trait ResolveLinkedDependencies<Root, Links>: Sized {
-    fn resolve(root: &Root, container: &Container) -> Result<Self, ResolveErrorKind>;
+pub trait ResolveLinkedDependencies: Sized {
+    /// # Safety
+    /// Edges must match this dependency tuple in parameter order, excluding custom resolvers.
+    unsafe fn resolve(container: &Container, edges: &mut slice::Iter<'_, CompiledEdge>) -> Result<Self, ResolveErrorKind>;
 }
 
 macro_rules! impl_resolve_linked_dependencies {
-    ([$($dep:ident $index:ident),*]) => {
-        impl<Root, $($dep: ResolveLinkedDependency<Root, $index>, $index,)*> ResolveLinkedDependencies<Root, ($($index,)*)> for ($($dep,)*) {
+    ([$($dep:ident),*]) => {
+        impl<$($dep: ResolveLinkedDependency,)*> ResolveLinkedDependencies for ($($dep,)*) {
             #[inline]
             #[allow(unused_variables)]
-            fn resolve(root: &Root, container: &Container) -> Result<Self, ResolveErrorKind> {
-                Ok(($($dep::resolve(root, container)?,)*))
+            unsafe fn resolve(container: &Container, edges: &mut slice::Iter<'_, CompiledEdge>) -> Result<Self, ResolveErrorKind> {
+                // SAFETY: each parameter consumes its edge in order; resolvers consume none.
+                Ok(($(unsafe { $dep::resolve(container, edges) }?,)*))
             }
         }
     };
 }
 
-all_the_tuple_pairs!(impl_resolve_linked_dependencies);
+all_the_tuples!(impl_resolve_linked_dependencies);
 
 /// Bridges typed registrations to `RegistrationId`-indexed execution.
 ///
@@ -395,9 +457,11 @@ all_the_tuple_pairs!(impl_resolve_linked_dependencies);
 /// - The boxed tree and owned runtime fragments stay live at stable addresses until all
 ///   executors and borrowing futures are gone. `Plan` drops executor tables before the tree.
 /// - Registration pointers and erased functions remain paired with their exact concrete
-///   types; construction receives the matching `Root` pointer and registration ID.
+///   types; construction receives that registration's compiled parameter edges.
 /// - IDs consistently index graph nodes, executors, type metadata and cache slots. Redirects
 ///   select the entire target executor; graph transformations must preserve this correspondence.
+/// - Compiled edges preserve parameter order, exact provided types and one edge per built-in
+///   parameter, excluding custom resolvers. This permits unchecked edge iteration.
 /// - Slot N holds only its registration's exact provided Rust type, justifying unchecked casts.
 ///   Runtime, replacement, import, context and ancestor-cache paths must preserve that type.
 /// - Transient output is aligned, writable, uninitialized storage for the exact provided type.
@@ -408,10 +472,9 @@ all_the_tuple_pairs!(impl_resolve_linked_dependencies);
 ///   cloned finalizer and value. Thread-safe plans require Send + Sync trees and synchronized access.
 pub(crate) struct RegistrationExecutor {
     pub(crate) registration: *const (),
-    pub(crate) construct:
-        unsafe fn(root: *const (), item: *const (), &Container, index: usize) -> Result<RcAnyThreadSafety, ResolveErrorKind>,
+    pub(crate) construct: unsafe fn(item: *const (), &Container, edges: &[CompiledEdge]) -> Result<RcAnyThreadSafety, ResolveErrorKind>,
     pub(crate) construct_transient:
-        unsafe fn(root: *const (), item: *const (), &Container, index: usize, out: *mut ()) -> Result<(), ResolveErrorKind>,
+        unsafe fn(item: *const (), &Container, edges: &[CompiledEdge], out: *mut ()) -> Result<(), ResolveErrorKind>,
     pub(crate) finalize: unsafe fn(item: *const (), value: RcAnyThreadSafety),
 }
 
@@ -428,7 +491,7 @@ pub trait Finalize {
     unsafe fn finalize(&self, value: RcAnyThreadSafety);
 }
 
-impl<Out: 'static, Inst, Deps, Fin: MaybeFinalizer<Out>, Links> Finalize for Linked<Out, Inst, Deps, Fin, Links> {
+impl<Out: 'static, Inst, Deps, Fin: MaybeFinalizer<Out>> Finalize for Linked<Out, Inst, Deps, Fin> {
     unsafe fn finalize(&self, value: RcAnyThreadSafety) {
         // SAFETY: the caller guarantees `value` came from this registration, which provides `Out`.
         self.finalizer.finalize(unsafe { downcast_unchecked::<Out>(value) });
@@ -437,76 +500,74 @@ impl<Out: 'static, Inst, Deps, Fin: MaybeFinalizer<Out>, Links> Finalize for Lin
 
 /// # Safety
 /// As [`construct_erased`]; `out` must be valid for writing an `Item::Provides`.
-unsafe fn transient_erased<Root, Item>(
-    root: *const (),
+unsafe fn transient_erased<Item>(
     item: *const (),
     container: &Container,
-    index: usize,
+    edges: &[CompiledEdge],
     out: *mut (),
 ) -> Result<(), ResolveErrorKind>
 where
-    Item: ConstructRegistration<Root>,
+    Item: ConstructRegistration,
 {
-    // SAFETY: the caller supplies a live `Root` and its matching `Item` from the same boxed tree.
-    let (root, item) = unsafe { (&*root.cast::<Root>(), &*item.cast::<Item>()) };
-    let value = item.construct(root, container, index)?;
+    // SAFETY: the caller supplies the live Item paired with this executor.
+    let item = unsafe { &*item.cast::<Item>() };
+    let value = item.construct(container, edges)?;
     // SAFETY: `out` is aligned, writable uninitialized storage for `Item::Provides`.
     unsafe { out.cast::<Item::Provides>().write(value) };
     Ok(())
 }
 
 impl RegistrationExecutor {
-    pub(crate) fn of<Root, Item>(item: &Item) -> Self
+    pub(crate) fn of<Item>(item: &Item) -> Self
     where
-        Item: ConstructRegistration<Root> + Finalize,
+        Item: ConstructRegistration + Finalize,
         Item::Provides: SendSafety + SyncSafety,
     {
         Self {
             registration: core::ptr::from_ref(item).cast(),
-            construct: construct_erased::<Root, Item>,
-            construct_transient: transient_erased::<Root, Item>,
+            construct: construct_erased::<Item>,
+            construct_transient: transient_erased::<Item>,
             finalize: finalize_erased::<Item>,
         }
     }
 }
 
 /// # Safety
-/// `root` must point to a live `Root` and `item` to a live `Item` inside it.
-unsafe fn construct_erased<Root, Item>(
-    root: *const (),
+/// `item` must point to a live `Item` whose compiled parameter `edges` belong to the container's plan.
+unsafe fn construct_erased<Item>(
     item: *const (),
     container: &Container,
-    index: usize,
+    edges: &[CompiledEdge],
 ) -> Result<RcAnyThreadSafety, ResolveErrorKind>
 where
-    Item: ConstructRegistration<Root>,
+    Item: ConstructRegistration,
     Item::Provides: SendSafety + SyncSafety,
 {
-    // SAFETY: the caller supplies a live `Root` and its matching `Item` from the same boxed tree.
-    let (root, item) = unsafe { (&*root.cast::<Root>(), &*item.cast::<Item>()) };
-    item.construct_inject(root, container, index)
+    // SAFETY: the caller supplies the live Item paired with this executor.
+    let item = unsafe { &*item.cast::<Item>() };
+    item.construct_inject(container, edges)
 }
 
 /// Collection order must match graph registration IDs.
-pub trait CollectExecutors<Root> {
+pub trait CollectExecutors {
     #[doc(hidden)]
     #[allow(private_interfaces)]
     fn collect_executors(&self, executors: &mut alloc::vec::Vec<RegistrationExecutor>);
 }
 
-impl<Root, Out, Inst, Deps, Fin, Links> CollectExecutors<Root> for Linked<Out, Inst, Deps, Fin, Links>
+impl<Out, Inst, Deps, Fin> CollectExecutors for Linked<Out, Inst, Deps, Fin>
 where
-    Self: ConstructRegistration<Root, Provides = Out>,
+    Self: ConstructRegistration<Provides = Out>,
     Out: SendSafety + SyncSafety + 'static,
     Fin: MaybeFinalizer<Out>,
 {
     #[allow(private_interfaces)]
     fn collect_executors(&self, executors: &mut alloc::vec::Vec<RegistrationExecutor>) {
-        executors.push(RegistrationExecutor::of::<Root, Self>(self));
+        executors.push(RegistrationExecutor::of::<Self>(self));
     }
 }
 
-impl<Root, Left: CollectExecutors<Root>, Right: CollectExecutors<Root>> CollectExecutors<Root> for Node<Left, Right> {
+impl<Left: CollectExecutors, Right: CollectExecutors> CollectExecutors for Node<Left, Right> {
     #[allow(private_interfaces)]
     fn collect_executors(&self, executors: &mut alloc::vec::Vec<RegistrationExecutor>) {
         self.0.collect_executors(executors);
@@ -519,17 +580,6 @@ pub struct ContainerLeaf {
     pub(crate) scope: ScopeData,
 }
 
-impl Size for ContainerLeaf {
-    const SIZE: usize = 1;
-}
-
-impl ProviderPath<Container, Here> for ContainerLeaf {}
-
-impl RegistrationPath<Here> for ContainerLeaf {
-    type Registration = Self;
-    const INDEX: usize = 0;
-}
-
 impl<Root> Link<Root, ()> for ContainerLeaf {
     type Linked = Self;
 
@@ -539,11 +589,11 @@ impl<Root> Link<Root, ()> for ContainerLeaf {
     }
 }
 
-impl<Root> ConstructRegistration<Root> for ContainerLeaf {
+impl ConstructRegistration for ContainerLeaf {
     type Provides = Container;
 
     #[inline]
-    fn construct(&self, _root: &Root, container: &Container, _index: usize) -> Result<Container, ResolveErrorKind> {
+    fn construct(&self, container: &Container, _edges: &[CompiledEdge]) -> Result<Container, ResolveErrorKind> {
         Ok(container.clone())
     }
 }
@@ -552,10 +602,10 @@ impl Finalize for ContainerLeaf {
     unsafe fn finalize(&self, _value: RcAnyThreadSafety) {}
 }
 
-impl<Root> CollectExecutors<Root> for ContainerLeaf {
+impl CollectExecutors for ContainerLeaf {
     #[allow(private_interfaces)]
     fn collect_executors(&self, executors: &mut Vec<RegistrationExecutor>) {
-        executors.push(RegistrationExecutor::of::<Root, Self>(self));
+        executors.push(RegistrationExecutor::of::<Self>(self));
     }
 }
 
@@ -583,7 +633,7 @@ pub trait CollectRuntime {
 }
 
 impl<Out, Inst, Deps, Fin> CollectRuntime for Reg<Out, Inst, Deps, Fin> {}
-impl<Out, Inst, Deps, Fin, Links> CollectRuntime for Linked<Out, Inst, Deps, Fin, Links> {}
+impl<Out, Inst, Deps, Fin> CollectRuntime for Linked<Out, Inst, Deps, Fin> {}
 impl CollectRuntime for Empty {}
 impl CollectRuntime for ContainerLeaf {}
 
@@ -594,66 +644,12 @@ impl<Left: CollectRuntime, Right: CollectRuntime> CollectRuntime for Node<Left, 
     }
 }
 
-pub trait LinkedDependencyMetadata<Root, Path> {
-    fn request() -> DependencyRequest<TypeId>;
-}
-
-impl<Root: RegistrationPath<Path>, T: 'static, Path> LinkedDependencyMetadata<Root, LinkedInject<Path>> for Inject<T> {
-    fn request() -> DependencyRequest<TypeId> {
-        DependencyRequest {
-            target: Target::Id(RegistrationId(u32::try_from(Root::INDEX).expect("too many registrations"))),
-            mode: RequestMode::Inject,
-            type_name: core::any::type_name::<T>(),
-        }
-    }
-}
-
-impl<Root: RegistrationPath<Path>, T: 'static, Path> LinkedDependencyMetadata<Root, LinkedInjectTransient<Path>> for InjectTransient<T> {
-    fn request() -> DependencyRequest<TypeId> {
-        DependencyRequest {
-            target: Target::Id(RegistrationId(u32::try_from(Root::INDEX).expect("too many registrations"))),
-            mode: RequestMode::InjectTransient,
-            type_name: core::any::type_name::<T>(),
-        }
-    }
-}
-
-impl<Root, R: DependencyResolver + 'static> LinkedDependencyMetadata<Root, ByResolver> for R {
-    fn request() -> DependencyRequest<TypeId> {
-        <R as DependencyMetadata>::request()
-    }
-}
-
-pub trait LinkedDependenciesMetadata<Root, Links> {
-    fn requests() -> Vec<DependencyRequest<TypeId>>;
-}
-
-macro_rules! impl_linked_dependencies_metadata {
-    ([$($dep:ident $index:ident),*]) => {
-        impl<Root, $($dep: LinkedDependencyMetadata<Root, $index>, $index,)*> LinkedDependenciesMetadata<Root, ($($index,)*)> for ($($dep,)*) {
-            fn requests() -> Vec<DependencyRequest<TypeId>> {
-                alloc::vec![$(<$dep as LinkedDependencyMetadata<Root, $index>>::request()),*]
-            }
-        }
-    };
-}
-
-all_the_tuple_pairs!(impl_linked_dependencies_metadata);
-
-/// Static edges enter the graph compiler as `Target::Id`.
-pub trait DescribeLinked<Root> {
-    fn describe_linked(&self, out: &mut Vec<Registration<TypeId>>);
-}
-
-impl<Root, Out: 'static, Inst, Deps, Fin: MaybeFinalizer<Out>, Links> DescribeLinked<Root> for Linked<Out, Inst, Deps, Fin, Links>
-where
-    Deps: LinkedDependenciesMetadata<Root, Links>,
-{
-    fn describe_linked(&self, out: &mut Vec<Registration<TypeId>>) {
+impl<Out: 'static, Inst, Deps, Fin: MaybeFinalizer<Out>> CollectRegistrations for Linked<Out, Inst, Deps, Fin> {
+    fn collect_registrations(&mut self, out: &mut Vec<Registration<TypeId>>) {
         out.push(Registration {
             key: TypeId::of::<Out>(),
             type_name: core::any::type_name::<Out>(),
-            requests: Deps::requests(),
+            requests: core::mem::take(&mut self.dependencies),
             scope: self.meta.scope.into(),
             cache_provides: self.meta.config.cache_provides,
             finalizer: Fin::PRESENT.then_some(ExecutionKind::Sync),
@@ -665,24 +661,29 @@ where
     }
 }
 
-impl<Root, Left: DescribeLinked<Root>, Right: DescribeLinked<Root>> DescribeLinked<Root> for Node<Left, Right> {
-    fn describe_linked(&self, out: &mut Vec<Registration<TypeId>>) {
-        self.0.describe_linked(out);
-        self.1.describe_linked(out);
+/// Moves materialized requests into the IR before executor collection, avoiding retained copies.
+pub trait CollectRegistrations {
+    fn collect_registrations(&mut self, out: &mut Vec<Registration<TypeId>>);
+}
+
+impl<Left: CollectRegistrations, Right: CollectRegistrations> CollectRegistrations for Node<Left, Right> {
+    fn collect_registrations(&mut self, out: &mut Vec<Registration<TypeId>>) {
+        self.0.collect_registrations(out);
+        self.1.collect_registrations(out);
     }
 }
 
-macro_rules! describe_linked_as_describe {
+macro_rules! collect_described_registrations {
     ($($ty:ty $(, $param:ident)*;)*) => {
-        $(impl<Root $(, $param: 'static)*> DescribeLinked<Root> for $ty {
-            fn describe_linked(&self, out: &mut Vec<Registration<TypeId>>) {
+        $(impl<$($param: 'static,)*> CollectRegistrations for $ty {
+            fn collect_registrations(&mut self, out: &mut Vec<Registration<TypeId>>) {
                 self.describe(out);
             }
         })*
     };
 }
 
-describe_linked_as_describe! {
+collect_described_registrations! {
     Empty;
     ContainerLeaf;
     crate::runtime_registry::RuntimeNode;

@@ -21,6 +21,7 @@ lock-parking-lot = ["thread_safe", "std", "dep:parking_lot"]
 lock-spin = ["thread_safe", "dep:spin"]
 
 async = ["std", "dep:tokio"]
+compile-bench = ["std"]
 
 
 [dependencies]

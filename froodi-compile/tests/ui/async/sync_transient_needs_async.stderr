@@ -1,11 +1,11 @@
 error[E0277]: this registration cannot be constructed synchronously
-  --> tests/ui/async/sync_needs_async.rs:7:22
+  --> tests/ui/async/sync_transient_needs_async.rs:7:22
    |
  7 |       let _container = Container::new(async_registry! {
    |  ______________________^
  8 | |         scope(App) [ provide(async || Ok::<_, InstantiateErrorKind>(Config)) ],
  9 | |         extend(registry! {
-10 | |             scope(App) [ provide(|Inject(_config): Inject<Config>| Ok::<_, InstantiateErrorKind>(Database)) ],
+10 | |             scope(App) [ provide(|InjectTransient(_config): InjectTransient<Config>| Ok::<_, InstantiateErrorKind>(Database)) ],
 11 | |         }),
 12 | |     });
    | |______^ a sync instantiator depends on it
@@ -19,4 +19,4 @@ help: the trait `SupportsExecution<froodi_compile_runtime::graph::SyncExecution>
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    = help: for that trait implementation, expected `froodi_compile_runtime::graph::AsyncExecution`, found `froodi_compile_runtime::graph::SyncExecution`
    = note: required for `(AsyncProvider<Config>,)` to implement `froodi_compile_runtime::graph::SupportsExecution<froodi_compile_runtime::graph::SyncExecution>`
-   = note: required for `froodi_compile::__private::Reg<Database, {closure@$DIR/tests/ui/async/sync_needs_async.rs:10:34: 10:67}, (froodi_compile::Inject<Config>,), froodi_compile::__private::NoFinalizer>` to implement `froodi_compile_runtime::graph::Link<froodi_compile::__private::Node<froodi_compile::__private::Node<AsyncProvider<Config>, froodi_compile_runtime::graph::Provider<Database>>, froodi_compile_runtime::graph::Provider<froodi_compile::Container>>, (froodi_compile_runtime::graph::LinkedInject<froodi_compile_runtime::graph::L<froodi_compile_runtime::graph::L<froodi_compile_runtime::graph::Here>>>,)>`
+   = note: required for `froodi_compile::__private::Reg<Database, {closure@$DIR/tests/ui/async/sync_transient_needs_async.rs:10:34: 10:85}, (froodi_compile::InjectTransient<Config>,), froodi_compile::__private::NoFinalizer>` to implement `froodi_compile_runtime::graph::Link<froodi_compile::__private::Node<froodi_compile::__private::Node<AsyncProvider<Config>, froodi_compile_runtime::graph::Provider<Database>>, froodi_compile_runtime::graph::Provider<froodi_compile::Container>>, (froodi_compile_runtime::graph::LinkedInjectTransient<froodi_compile_runtime::graph::L<froodi_compile_runtime::graph::L<froodi_compile_runtime::graph::Here>>>,)>`

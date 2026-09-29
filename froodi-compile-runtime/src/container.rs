@@ -11,7 +11,7 @@ use froodi_compile_core::{compile, CompiledGraph, Diagnostics, ExecutionKind, Sc
 use crate::{
     context::Context,
     errors::{ResolveErrorKind, ScopeErrorKind, ScopeWithErrorKind, TypeInfo},
-    graph::{CollectExecutors, CollectRuntime, ContainerLeaf, DescribeLinked, Link, Node, RegistrationExecutor},
+    graph::{CollectExecutors, CollectRegistrations, CollectRuntime, ContainerLeaf, Link, Node, RegistrationExecutor, RegistryIndex},
     lock::LocalLock,
     registry::Registry,
     scope::{Scope, ScopeData},
@@ -21,7 +21,6 @@ use crate::{
 /// Owned by every scope container so executor storage outlives construction and finalization.
 pub(crate) struct Plan {
     pub(crate) compiled: CompiledGraph<TypeId>,
-    pub(crate) root: *const (),
     /// Indexed by registration id.
     pub(crate) executors: Vec<RegistrationExecutor>,
     /// The scope hierarchy, widest first; indexed by `ScopeId`.
@@ -32,7 +31,7 @@ pub(crate) struct Plan {
     pub(crate) async_table: AsyncTable,
     #[cfg(feature = "thread_safe")]
     locks: NodeLocks,
-    /// Stable storage for `root` and both executor tables, including owned runtime fragments.
+    /// Stable storage for both executor tables, including owned runtime fragments.
     /// Declared last so executor tables are dropped first. See `RegistrationExecutor`'s invariants.
     _tree: BoxAnyThreadSafety,
 }
@@ -69,8 +68,9 @@ impl Slots {
     }
 }
 
-/// The linked form of a registry tree with the container registration appended.
-pub(crate) type Linked<Tree, Links> = <Node<Tree, ContainerLeaf> as Link<Node<Tree, ContainerLeaf>, Links>>::Linked;
+// Both phases include the implicit container provider.
+pub(crate) type ProviderIndex<Tree> = <Node<Tree, ContainerLeaf> as RegistryIndex>::Index;
+pub(crate) type Linked<Tree, Links> = <Node<Tree, ContainerLeaf> as Link<ProviderIndex<Tree>, Links>>::Linked;
 
 impl Inner {
     fn close(&self) {
@@ -119,13 +119,8 @@ impl Plan {
 
     pub(crate) fn build<Tree, Links>(registry: Registry<Tree>) -> Result<RcThreadSafety<Self>, Diagnostics>
     where
-        Node<Tree, ContainerLeaf>: Link<Node<Tree, ContainerLeaf>, Links>,
-        Linked<Tree, Links>: CollectExecutors<Linked<Tree, Links>>
-            + DescribeLinked<Linked<Tree, Links>>
-            + CollectRuntime
-            + SendSafety
-            + SyncSafety
-            + 'static,
+        Node<Tree, ContainerLeaf>: RegistryIndex + Link<ProviderIndex<Tree>, Links>,
+        Linked<Tree, Links>: CollectExecutors + CollectRegistrations + CollectRuntime + SendSafety + SyncSafety + 'static,
     {
         Self::build_with(registry, |_| AsyncTable::default())
     }
@@ -135,13 +130,8 @@ impl Plan {
         collect_async_executors: impl FnOnce(&Linked<Tree, Links>) -> AsyncTable,
     ) -> Result<RcThreadSafety<Self>, Diagnostics>
     where
-        Node<Tree, ContainerLeaf>: Link<Node<Tree, ContainerLeaf>, Links>,
-        Linked<Tree, Links>: CollectExecutors<Linked<Tree, Links>>
-            + DescribeLinked<Linked<Tree, Links>>
-            + CollectRuntime
-            + SendSafety
-            + SyncSafety
-            + 'static,
+        Node<Tree, ContainerLeaf>: RegistryIndex + Link<ProviderIndex<Tree>, Links>,
+        Linked<Tree, Links>: CollectExecutors + CollectRegistrations + CollectRuntime + SendSafety + SyncSafety + 'static,
     {
         let mut scopes = registry.scopes;
         scopes.sort_by_key(|scope| scope.priority);
@@ -149,9 +139,9 @@ impl Plan {
         let container = ContainerLeaf {
             scope: *scopes.first().expect("a registry has at least one scope"),
         };
-        let tree = alloc::boxed::Box::new(Node(registry.tree, container).link());
+        let mut tree = alloc::boxed::Box::new(Node(registry.tree, container).link());
         let mut graph = froodi_compile_core::Graph::new(scopes.iter().copied().map(Into::into).collect());
-        tree.describe_linked(&mut graph.registrations);
+        tree.collect_registrations(&mut graph.registrations);
         let mut executors = Vec::new();
         tree.collect_executors(&mut executors);
         let mut runtime = Vec::new();
@@ -162,7 +152,6 @@ impl Plan {
         }
         let type_ids = graph.registrations.iter().map(|registration| registration.key).collect();
         let compiled = compile(graph)?;
-        let root = core::ptr::from_ref::<Linked<Tree, Links>>(&tree).cast();
         #[cfg(feature = "async")]
         let async_table = {
             let mut table = collect_async_executors(&tree);
@@ -179,14 +168,13 @@ impl Plan {
             locks: NodeLocks::new(executors.len()),
             compiled,
             _tree: tree,
-            root,
             executors,
             scopes,
         }))
     }
 }
 
-// SAFETY: the raw pointers only address the boxed tree owned by the same `Plan`, which is
+// SAFETY: registration pointers only address the boxed tree owned by the same `Plan`, which is
 // `Send + Sync` in thread-safe builds; executors hold plain function pointers.
 #[cfg(feature = "thread_safe")]
 unsafe impl Send for Plan {}
@@ -220,13 +208,8 @@ impl Container {
     #[must_use]
     pub fn new<Tree, Links>(registry: Registry<Tree>) -> Self
     where
-        Node<Tree, ContainerLeaf>: Link<Node<Tree, ContainerLeaf>, Links>,
-        Linked<Tree, Links>: CollectExecutors<Linked<Tree, Links>>
-            + DescribeLinked<Linked<Tree, Links>>
-            + CollectRuntime
-            + SendSafety
-            + SyncSafety
-            + 'static,
+        Node<Tree, ContainerLeaf>: RegistryIndex + Link<ProviderIndex<Tree>, Links>,
+        Linked<Tree, Links>: CollectExecutors + CollectRegistrations + CollectRuntime + SendSafety + SyncSafety + 'static,
     {
         Self::try_new(registry).unwrap_or_else(|diagnostics| panic!("invalid registry:\n{diagnostics}"))
     }
@@ -238,13 +221,8 @@ impl Container {
     /// violations. Missing and ambiguous providers of static dependencies are compile errors.
     pub fn try_new<Tree, Links>(registry: Registry<Tree>) -> Result<Self, Diagnostics>
     where
-        Node<Tree, ContainerLeaf>: Link<Node<Tree, ContainerLeaf>, Links>,
-        Linked<Tree, Links>: CollectExecutors<Linked<Tree, Links>>
-            + DescribeLinked<Linked<Tree, Links>>
-            + CollectRuntime
-            + SendSafety
-            + SyncSafety
-            + 'static,
+        Node<Tree, ContainerLeaf>: RegistryIndex + Link<ProviderIndex<Tree>, Links>,
+        Linked<Tree, Links>: CollectExecutors + CollectRegistrations + CollectRuntime + SendSafety + SyncSafety + 'static,
     {
         Ok(Self::root(Plan::build(registry)?, |scope| !scope.is_skipped_by_default))
     }
@@ -257,13 +235,8 @@ impl Container {
     #[allow(clippy::needless_pass_by_value)]
     pub fn new_with_start_scope<Tree, Links, S: Scope>(registry: Registry<Tree>, scope: S) -> Self
     where
-        Node<Tree, ContainerLeaf>: Link<Node<Tree, ContainerLeaf>, Links>,
-        Linked<Tree, Links>: CollectExecutors<Linked<Tree, Links>>
-            + DescribeLinked<Linked<Tree, Links>>
-            + CollectRuntime
-            + SendSafety
-            + SyncSafety
-            + 'static,
+        Node<Tree, ContainerLeaf>: RegistryIndex + Link<ProviderIndex<Tree>, Links>,
+        Linked<Tree, Links>: CollectExecutors + CollectRegistrations + CollectRuntime + SendSafety + SyncSafety + 'static,
     {
         let priority = scope.priority();
         let plan = Plan::build(registry).unwrap_or_else(|diagnostics| panic!("invalid registry:\n{diagnostics}"));
@@ -462,14 +435,14 @@ impl Container {
         let mut out = core::mem::MaybeUninit::<Dep>::uninit();
         // SAFETY: guaranteed by the caller; the executor belongs to this plan.
         unsafe {
-            (executor.construct_transient)(plan.root, executor.registration, owner, index, out.as_mut_ptr().cast())?;
+            (executor.construct_transient)(
+                executor.registration,
+                owner,
+                &plan.compiled.nodes()[index].edges,
+                out.as_mut_ptr().cast(),
+            )?;
             Ok(out.assume_init())
         }
-    }
-
-    /// Dependency edges of the registration at `index`, in parameter order.
-    pub(crate) fn edges(&self, index: usize) -> &[froodi_compile_core::CompiledEdge] {
-        &self.inner.plan.compiled.nodes()[index].edges
     }
 
     pub(crate) fn get_at(&self, index: usize) -> Result<RcAnyThreadSafety, ResolveErrorKind> {
@@ -501,7 +474,7 @@ impl Container {
                 }
                 let executor = &plan.executors[index];
                 // SAFETY: this plan owns the registration and its matching erased functions.
-                let value = unsafe { (executor.construct)(plan.root, executor.registration, self, index) }?;
+                let value = unsafe { (executor.construct)(executor.registration, self, &node.edges) }?;
                 if node.finalizer.is_some() {
                     self.inner.resolved.write().push((index, value.clone()));
                 }

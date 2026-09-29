@@ -11,7 +11,7 @@ use crate::{
     dependency_resolver::DependencyResolver,
     errors::{InstantiatorErrorKind, ResolveErrorKind, TypeInfo},
     finalizer::MaybeFinalizer,
-    graph::{CollectExecutors, CollectRuntime, Describe, Empty, Finalize, Link, Node, Reg, RegistrationExecutor, Size},
+    graph::{CollectExecutors, CollectRuntime, Describe, Empty, Finalize, Link, Node, Reg, RegistrationExecutor},
     inject::{Inject, InjectTransient},
     instantiator::Instantiator,
     registry::Registry,
@@ -79,8 +79,7 @@ where
     Inst: Instantiator<Deps, Provides = Out>,
     Deps: ResolveRuntimeDependencies,
 {
-    fn construct_indexed(&self, container: &Container, index: usize) -> Result<Out, ResolveErrorKind> {
-        let edges = container.edges(index);
+    fn construct_indexed(&self, container: &Container, edges: &[CompiledEdge]) -> Result<Out, ResolveErrorKind> {
         let dependencies = Deps::resolve(container, &mut edges.iter())
             .map_err(|err| ResolveErrorKind::Instantiator(InstantiatorErrorKind::Deps(err.into())))?;
         self.instantiator
@@ -91,12 +90,11 @@ where
 }
 
 /// # Safety
-/// `item` must point to a live `Reg<Out, Inst, Deps, Fin>` registered at `index`.
+/// `item` must point to a live `Reg<Out, Inst, Deps, Fin>` with the matching compiled parameter `edges`.
 unsafe fn construct_indexed<Out, Inst, Deps, Fin>(
-    _root: *const (),
     item: *const (),
     container: &Container,
-    index: usize,
+    edges: &[CompiledEdge],
 ) -> Result<RcAnyThreadSafety, ResolveErrorKind>
 where
     Out: SendSafety + SyncSafety + 'static,
@@ -105,16 +103,15 @@ where
 {
     // SAFETY: the caller supplies a live `Reg<Out, Inst, Deps, Fin>` with this executor's registration ID.
     let item = unsafe { &*item.cast::<Reg<Out, Inst, Deps, Fin>>() };
-    Ok(RcThreadSafety::new(item.construct_indexed(container, index)?) as RcAnyThreadSafety)
+    Ok(RcThreadSafety::new(item.construct_indexed(container, edges)?) as RcAnyThreadSafety)
 }
 
 /// # Safety
 /// As [`construct_indexed`]; `out` must be valid for writing an `Out`.
 unsafe fn transient_indexed<Out, Inst, Deps, Fin>(
-    _root: *const (),
     item: *const (),
     container: &Container,
-    index: usize,
+    edges: &[CompiledEdge],
     out: *mut (),
 ) -> Result<(), ResolveErrorKind>
 where
@@ -123,7 +120,7 @@ where
 {
     // SAFETY: the caller supplies a live `Reg<Out, Inst, Deps, Fin>` with this executor's registration ID.
     let item = unsafe { &*item.cast::<Reg<Out, Inst, Deps, Fin>>() };
-    let value = item.construct_indexed(container, index)?;
+    let value = item.construct_indexed(container, edges)?;
     // SAFETY: `out` is aligned, writable uninitialized storage for `Out`.
     unsafe { out.cast::<Out>().write(value) };
     Ok(())
@@ -263,13 +260,8 @@ where
     }
 }
 
-/// A runtime registry inside a registry tree. It has no size and no `ProviderPath` impls, so static
-/// code cannot see its registrations.
+/// Runtime fragments contribute no leaves to the provider index; static dependencies need import declarations.
 pub struct RuntimeNode(pub(crate) Box<dyn RuntimeTree>);
-
-impl Size for RuntimeNode {
-    const SIZE: usize = 0;
-}
 
 impl Describe for RuntimeNode {
     fn describe(&self, _out: &mut Vec<Registration<TypeId>>) {}
@@ -284,7 +276,7 @@ impl<Root> Link<Root, ()> for RuntimeNode {
     }
 }
 
-impl<Root> CollectExecutors<Root> for RuntimeNode {
+impl CollectExecutors for RuntimeNode {
     #[allow(private_interfaces)]
     fn collect_executors(&self, _executors: &mut Vec<RegistrationExecutor>) {}
 }

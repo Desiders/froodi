@@ -9,51 +9,18 @@ error[E0277]: no registration provides the instantiator parameter `froodi_compil
 15 | |     });
    | |______^ this registry has no `provide(...)` for the type inside `froodi_compile::Inject<Config>`
    |
-   = help: the trait `froodi_compile_runtime::graph::LinkDependency<froodi_compile::__private::Node<froodi_compile::__private::Reg<Database, fn(froodi_compile::Inject<Config>) -> Result<Database, InstantiateErrorKind> {make_database}, (froodi_compile::Inject<Config>,), froodi_compile::__private::NoFinalizer>, froodi_compile_runtime::graph::ContainerLeaf>, froodi_compile_runtime::graph::LinkedInject<_>>` is not implemented for `froodi_compile::Inject<Config>`
+   = help: the trait `froodi_compile_runtime::graph::LinkDependency<froodi_compile::__private::Node<froodi_compile_runtime::graph::Provider<Database>, froodi_compile_runtime::graph::Provider<froodi_compile::Container>>, _>` is not implemented for `froodi_compile::Inject<Config>`
    = note: register an instantiator or `instance(...)` for it, or `extend(...)` a registry that does
 help: the trait `froodi_compile_runtime::graph::LinkDependency<Root, froodi_compile_runtime::graph::LinkedInject<Path>>` is conditionally implemented for `froodi_compile::Inject<T>`
   --> $WORKSPACE/froodi-compile-runtime/src/graph.rs
    |
-   | impl<Root: ProviderPath<T, Path>, T, Path> LinkDependency<Root, LinkedInject<Path>> for Inject<T> {}
-   | ^^^^^^^^^^^---------------------^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-   |            |
-   |            unsatisfied requirement introduced here: `froodi_compile::__private::Node<froodi_compile::__private::Reg<Database, fn(froodi_compile::Inject<Config>) -> Result<Database, InstantiateErrorKind> {make_database}, (froodi_compile::Inject<Config>,), froodi_compile::__private::NoFinalizer>, froodi_compile_runtime::graph::ContainerLeaf>: froodi_compile_runtime::graph::ProviderPath<Config, _>`
-   = note: required for `(froodi_compile::Inject<Config>,)` to implement `froodi_compile_runtime::graph::LinkDependencies<froodi_compile::__private::Node<froodi_compile::__private::Reg<Database, fn(froodi_compile::Inject<Config>) -> Result<Database, InstantiateErrorKind> {make_database}, (froodi_compile::Inject<Config>,), froodi_compile::__private::NoFinalizer>, froodi_compile_runtime::graph::ContainerLeaf>, (froodi_compile_runtime::graph::LinkedInject<_>,)>`
-   = note: required for `froodi_compile::__private::Reg<Database, fn(froodi_compile::Inject<Config>) -> Result<Database, InstantiateErrorKind> {make_database}, (froodi_compile::Inject<Config>,), froodi_compile::__private::NoFinalizer>` to implement `froodi_compile_runtime::graph::Link<froodi_compile::__private::Node<froodi_compile::__private::Reg<Database, fn(froodi_compile::Inject<Config>) -> Result<Database, InstantiateErrorKind> {make_database}, (froodi_compile::Inject<Config>,), froodi_compile::__private::NoFinalizer>, froodi_compile_runtime::graph::ContainerLeaf>, (froodi_compile_runtime::graph::LinkedInject<_>,)>`
+   | / impl<Root, T: 'static, Path> LinkDependency<Root, LinkedInject<Path>> for Inject<T>
+   | | where
+   | |     Root: ProviderPath<T, Path>,
+   | |___________---------------------^
+   |             |
+   |             unsatisfied requirement introduced here: `froodi_compile::__private::Node<froodi_compile_runtime::graph::Provider<Database>, froodi_compile_runtime::graph::Provider<froodi_compile::Container>>: froodi_compile_runtime::graph::ProviderPath<Config, _>`
+   = note: required for `(froodi_compile::Inject<Config>,)` to implement `froodi_compile_runtime::graph::LinkDependencies<froodi_compile::__private::Node<froodi_compile_runtime::graph::Provider<Database>, froodi_compile_runtime::graph::Provider<froodi_compile::Container>>, (_,)>`
+   = note: required for `froodi_compile::__private::Reg<Database, fn(froodi_compile::Inject<Config>) -> Result<Database, InstantiateErrorKind> {make_database}, (froodi_compile::Inject<Config>,), froodi_compile::__private::NoFinalizer>` to implement `froodi_compile_runtime::graph::Link<froodi_compile::__private::Node<froodi_compile_runtime::graph::Provider<Database>, froodi_compile_runtime::graph::Provider<froodi_compile::Container>>, (_,)>`
    = note: 1 redundant requirement hidden
-   = note: required for `froodi_compile::__private::Node<froodi_compile::__private::Reg<Database, fn(froodi_compile::Inject<Config>) -> Result<Database, InstantiateErrorKind> {make_database}, (froodi_compile::Inject<Config>,), froodi_compile::__private::NoFinalizer>, froodi_compile_runtime::graph::ContainerLeaf>` to implement `froodi_compile_runtime::graph::Link<froodi_compile::__private::Node<froodi_compile::__private::Reg<Database, fn(froodi_compile::Inject<Config>) -> Result<Database, InstantiateErrorKind> {make_database}, (froodi_compile::Inject<Config>,), froodi_compile::__private::NoFinalizer>, froodi_compile_runtime::graph::ContainerLeaf>, ((froodi_compile_runtime::graph::LinkedInject<_>,), ())>`
-
-error[E0277]: no registration provides the instantiator parameter `froodi_compile::Inject<Config>`
-  --> tests/ui/missing_binding.rs:11:37
-   |
-11 |       let _container = Container::new(registry! {
-   |  ______________________--------------_^
-   | |                      |
-   | |                      required by a bound introduced by this call
-12 | |         scope(App) [
-13 | |             provide(make_database),
-14 | |         ],
-15 | |     });
-   | |_____^ this registry has no `provide(...)` for the type inside `froodi_compile::Inject<Config>`
-   |
-   = help: the trait `froodi_compile_runtime::graph::LinkDependency<froodi_compile::__private::Node<froodi_compile::__private::Reg<Database, fn(froodi_compile::Inject<Config>) -> Result<Database, InstantiateErrorKind> {make_database}, (froodi_compile::Inject<Config>,), froodi_compile::__private::NoFinalizer>, froodi_compile_runtime::graph::ContainerLeaf>, froodi_compile_runtime::graph::LinkedInject<_>>` is not implemented for `froodi_compile::Inject<Config>`
-   = note: register an instantiator or `instance(...)` for it, or `extend(...)` a registry that does
-help: the trait `froodi_compile_runtime::graph::LinkDependency<Root, froodi_compile_runtime::graph::LinkedInject<Path>>` is conditionally implemented for `froodi_compile::Inject<T>`
-  --> $WORKSPACE/froodi-compile-runtime/src/graph.rs
-   |
-   | impl<Root: ProviderPath<T, Path>, T, Path> LinkDependency<Root, LinkedInject<Path>> for Inject<T> {}
-   | ^^^^^^^^^^^---------------------^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-   |            |
-   |            unsatisfied requirement introduced here: `froodi_compile::__private::Node<froodi_compile::__private::Reg<Database, fn(froodi_compile::Inject<Config>) -> Result<Database, InstantiateErrorKind> {make_database}, (froodi_compile::Inject<Config>,), froodi_compile::__private::NoFinalizer>, froodi_compile_runtime::graph::ContainerLeaf>: froodi_compile_runtime::graph::ProviderPath<Config, _>`
-   = note: required for `(froodi_compile::Inject<Config>,)` to implement `froodi_compile_runtime::graph::LinkDependencies<froodi_compile::__private::Node<froodi_compile::__private::Reg<Database, fn(froodi_compile::Inject<Config>) -> Result<Database, InstantiateErrorKind> {make_database}, (froodi_compile::Inject<Config>,), froodi_compile::__private::NoFinalizer>, froodi_compile_runtime::graph::ContainerLeaf>, (froodi_compile_runtime::graph::LinkedInject<_>,)>`
-   = note: required for `froodi_compile::__private::Reg<Database, fn(froodi_compile::Inject<Config>) -> Result<Database, InstantiateErrorKind> {make_database}, (froodi_compile::Inject<Config>,), froodi_compile::__private::NoFinalizer>` to implement `froodi_compile_runtime::graph::Link<froodi_compile::__private::Node<froodi_compile::__private::Reg<Database, fn(froodi_compile::Inject<Config>) -> Result<Database, InstantiateErrorKind> {make_database}, (froodi_compile::Inject<Config>,), froodi_compile::__private::NoFinalizer>, froodi_compile_runtime::graph::ContainerLeaf>, (froodi_compile_runtime::graph::LinkedInject<_>,)>`
-   = note: 1 redundant requirement hidden
-   = note: required for `froodi_compile::__private::Node<froodi_compile::__private::Reg<Database, fn(froodi_compile::Inject<Config>) -> Result<Database, InstantiateErrorKind> {make_database}, (froodi_compile::Inject<Config>,), froodi_compile::__private::NoFinalizer>, froodi_compile_runtime::graph::ContainerLeaf>` to implement `froodi_compile_runtime::graph::Link<froodi_compile::__private::Node<froodi_compile::__private::Reg<Database, fn(froodi_compile::Inject<Config>) -> Result<Database, InstantiateErrorKind> {make_database}, (froodi_compile::Inject<Config>,), froodi_compile::__private::NoFinalizer>, froodi_compile_runtime::graph::ContainerLeaf>, ((froodi_compile_runtime::graph::LinkedInject<_>,), ())>`
-note: required by a bound in `froodi_compile::Container::new`
-  --> $WORKSPACE/froodi-compile-runtime/src/container.rs
-   |
-   |     pub fn new<Tree, Links>(registry: Registry<Tree>) -> Self
-   |            --- required by a bound in this associated function
-   |     where
-   |         Node<Tree, ContainerLeaf>: Link<Node<Tree, ContainerLeaf>, Links>,
-   |                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `Container::new`
+   = note: required for `froodi_compile::__private::Node<froodi_compile::__private::Reg<Database, fn(froodi_compile::Inject<Config>) -> Result<Database, InstantiateErrorKind> {make_database}, (froodi_compile::Inject<Config>,), froodi_compile::__private::NoFinalizer>, froodi_compile_runtime::graph::ContainerLeaf>` to implement `froodi_compile_runtime::graph::Link<froodi_compile::__private::Node<froodi_compile_runtime::graph::Provider<Database>, froodi_compile_runtime::graph::Provider<froodi_compile::Container>>, ((_,), ())>`

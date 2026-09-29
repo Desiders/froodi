@@ -16,7 +16,7 @@ engine into Froodi. This cleanup does not change their behavior.
 ## Further work
 
 - Audit soundness of the erased `RegistrationId` execution table: registration
-  pointers, safe extension traits, unchecked downcasts, transient storage,
+  pointers, safe extension traits, unchecked edge iteration and downcasts, transient storage,
   finalizers, runtime replacements/imports/context, async cancellation, concurrent
   close and container lifetime. Use the [executor contract](architecture.md#safety-contract)
   as the starting point.
