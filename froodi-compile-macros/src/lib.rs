@@ -140,10 +140,33 @@ fn value_source(factory: &Expr) -> TokenStream2 {
     }
 }
 
+/// A short label for the factory expression: a path as written, `f(..)` for a call, `closure`
+/// for a closure. A span covers only the first token of an expression on stable Rust, so the
+/// label is built from the syntax tree.
+fn label(factory: &Expr) -> String {
+    let path = |path: &syn::Path| {
+        path.segments
+            .iter()
+            .map(|segment| segment.ident.to_string())
+            .collect::<Vec<_>>()
+            .join("::")
+    };
+    match factory {
+        Expr::Path(expr) => path(&expr.path),
+        Expr::Call(call) => match &*call.func {
+            Expr::Path(func) => format!("{}(..)", path(&func.path)),
+            _ => String::from("call"),
+        },
+        Expr::Closure(_) => String::from("closure"),
+        Expr::Block(_) => String::from("block"),
+        _ => String::from("expression"),
+    }
+}
+
 /// Where the factory expression is written. Used only in diagnostics.
 fn origin(factory: &Expr) -> TokenStream2 {
     let span = factory.span();
-    let expr = span.source_text().unwrap_or_else(|| quote!(#factory).to_string());
+    let expr = label(factory);
     quote_spanned! {span=>
         ::froodi_compile::__private::Origin {
             expr: #expr,

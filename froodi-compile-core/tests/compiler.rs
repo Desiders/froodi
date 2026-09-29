@@ -425,3 +425,20 @@ fn an_explicit_replacement_takes_over_its_key_and_the_edges_to_it() {
     assert_eq!(compiled.node(RegistrationId(1)).edges[0].target, RegistrationId(2));
     assert_eq!(compiled.node(RegistrationId(0)).replaced_by, Some(RegistrationId(2)));
 }
+
+#[test]
+fn renders_where_each_step_of_a_path_is_registered() {
+    let mut a = reg("A", APP, &[("B", Shared)]);
+    a.origin = Some(Origin {
+        expr: "make_a",
+        file: "src/app.rs",
+        line: 3,
+        column: 17,
+    });
+    let err = compile(graph(vec![a, reg("B", APP, &[("A", Shared)])])).unwrap_err();
+
+    assert_eq!(
+        err.to_string(),
+        "error: dependency cycle\n\nA  [`make_a` at src/app.rs:3:17]\n└── B\n    └── A  [`make_a` at src/app.rs:3:17]"
+    );
+}

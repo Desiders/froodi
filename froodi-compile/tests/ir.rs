@@ -196,3 +196,22 @@ fn marks_async_factories_and_finalizers_in_the_same_graph() {
         vec![(ExecutionKind::Async, Some(ExecutionKind::Async)), (ExecutionKind::Sync, None)]
     );
 }
+
+#[test]
+fn labels_closure_and_call_origins_readably() {
+    let graph = registry! {
+        scope(App) [
+            provide(|| Ok::<_, InstantiateErrorKind>(Seed)),
+            provide(instance(Seed2)),
+            provide(crate::make_config),
+        ],
+    }
+    .graph();
+
+    let labels: Vec<_> = graph
+        .registrations
+        .iter()
+        .map(|registration| registration.origin.unwrap().expr)
+        .collect();
+    assert_eq!(labels, vec!["closure", "instance(..)", "crate::make_config"]);
+}

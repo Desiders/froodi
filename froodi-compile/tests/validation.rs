@@ -58,5 +58,9 @@ fn reports_a_cycle_among_static_edges_with_its_path() {
     });
 
     let diagnostics = result.err().expect("the cycle is reported");
-    assert_eq!(diagnostics.to_string(), "error: dependency cycle\n\nA\n└── B\n    └── A");
+    let at = |line: u32| format!("[`closure` at {}:{line}:21]", file!());
+    assert_eq!(
+        diagnostics.to_string(),
+        format!("error: dependency cycle\n\nA  {}\n└── B  {}\n    └── A  {}", at(55), at(56), at(55))
+    );
 }
