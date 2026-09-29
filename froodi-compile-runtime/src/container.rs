@@ -410,6 +410,7 @@ impl Container {
 
     /// `get_transient` semantics for the registration at `index`: the result of `construct`, a
     /// direct call to its factory, unless the registration is replaced.
+    #[cfg(feature = "direct-edges")]
     pub(crate) fn transient_with<Dep: 'static>(
         &self,
         index: usize,

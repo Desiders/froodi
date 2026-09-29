@@ -36,3 +36,4 @@ trybuild = "1"
 [[bench]]
 name = "compare"
 harness = false
+required-features = ["thread_safe"]

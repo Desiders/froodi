@@ -350,6 +350,7 @@ where
 {
     type Provides = T;
 
+    #[allow(clippy::manual_async_fn, reason = "the trait's signature states the `SendSafety` bound")]
     fn construct_async<'a>(
         &'a self,
         root: &'a Root,

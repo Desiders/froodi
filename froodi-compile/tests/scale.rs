@@ -3,7 +3,7 @@
 // With `direct-edges`, proving a 100-deep chain exceeds the default recursion limit.
 #![cfg(all(feature = "thread_safe", not(feature = "direct-edges")))]
 
-#[path = "../benches/graphs.rs"]
+#[path = "../benches/support/graphs.rs"]
 mod graphs;
 
 use graphs::{compile_engine, S99, T99};
