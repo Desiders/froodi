@@ -1,5 +1,5 @@
 [workspace]
-members = ["examples/*", "froodi", "froodi-*"]
+members = ["examples/*", "froodi", "froodi-*", "froodi-compile", "froodi-compile-*"]
 default-members = ["froodi", "froodi-*"]
 resolver = "2"
 
