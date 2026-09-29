@@ -269,6 +269,7 @@ impl Describe for RuntimeNode {
 
 impl<Root> Link<Root, ()> for RuntimeNode {
     type Linked = Self;
+    const TOPOLOGY: crate::topology::Topology = crate::topology::Topology::OPEN;
 
     #[inline]
     fn link(self) -> Self {

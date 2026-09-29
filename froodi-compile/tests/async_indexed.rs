@@ -39,10 +39,11 @@ async fn resolves_a_deep_async_chain_under_the_default_recursion_limit() {
 }
 
 #[test]
-fn async_cycles_reach_the_graph_compiler() {
+fn open_async_cycles_reach_the_graph_compiler() {
     struct First;
     struct Second;
     let result = Container::try_new(async_registry! {
+        extend(registry!().into_runtime()),
         scope(App) [
             provide(async |_: Inject<Second>| Ok::<_, InstantiateErrorKind>(First)),
             provide(async |_: InjectTransient<First>| Ok::<_, InstantiateErrorKind>(Second)),

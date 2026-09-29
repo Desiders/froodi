@@ -115,6 +115,60 @@ The last run had visible wall-clock variation: chain clean-build samples ranged
 from 1.18–1.42 s, and flat topology edits from 3.70–6.21 s. Tables report the medians
 without discarding samples; treat small differences between variants as noise.
 
+## Bounded static validation and construction fixes
+
+Baseline: `7f6881d`, measured before this change on the same rustc 1.98.1,
+Ryzen 5 7500F host and settings above. Three-sample medians, warm dependencies,
+app-only builds; before/after output directories were `froodi-static-before` and
+`froodi-static-after`. The final revision also fixes cache publication locking and
+registration-pointer ownership, so full-engine differences include those changes.
+
+| Measurement | Chain before | Chain after | Flat before | Flat after |
+|---|---:|---:|---:|---:|
+| clean-app | 0.961 s | 1.002 s | 3.537 s | 3.795 s |
+| provider body edit | 0.201 s | 0.206 s | 0.491 s | 0.491 s |
+| registry shape edit | 0.929 s | 1.002 s | 3.586 s | 3.664 s |
+| release build | 2.108 s | 2.204 s | 7.240 s | 7.123 s |
+| release executable bytes | 1,094,672 | 1,099,520 | 1,964,512 | 1,983,528 |
+
+To isolate validation, `validated` performs the same linking work as `linking`
+plus mandatory evaluation of `Link::VALIDATE`, with no container or executor
+generation. It uses the same inferred provider witnesses.
+
+| Stage | Chain 100 | Flat 500 |
+|---|---:|---:|
+| linking | 0.549 s | 1.913 s |
+| linking + const validation | 0.594 s | 2.213 s |
+| additional time | 0.045 s | 0.300 s |
+
+Both stage pairs produced identical executable sizes. Full flat clean builds
+increase about 7%; topology-edit medians increase about 2%, with overlapping
+ranges (before 3.47–3.62 s, after 3.45–3.81 s). The result stays below 4 seconds
+without restoring root/path specialization in runtime executors.
+
+Runtime checks used the existing `compare` fixtures with 1-second warmup,
+3-second measurement, 60 samples and Criterion baseline `before-static-validation`.
+Median point estimates:
+
+| Static backend case | Before | After |
+|---|---:|---:|
+| cached get | 22.42 ns | 22.10 ns |
+| first get, chain 100 | 7.70 µs | 7.68 µs |
+| transient, chain 100 | 4.02 µs | 4.15 µs |
+
+Criterion detected no significant cached/first-get change and about a 3%
+transient regression. This remains a measured trade-off of the resulting build;
+the experiment does not attribute it to const validation or tune unrelated runtime
+code to compensate. Reproduce with:
+
+```sh
+cargo bench -p froodi-compile --bench compare -- \
+  'compile_time_engine/(get_cached|first_get_chain_100|get_transient_chain_100)/static' \
+  --warm-up-time 1 --measurement-time 3 --sample-size 60 \
+  --save-baseline before-static-validation
+# On the changed revision, replace --save-baseline with --baseline.
+```
+
 ## Runtime comparisons
 
 ```sh

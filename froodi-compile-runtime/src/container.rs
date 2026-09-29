@@ -15,7 +15,7 @@ use crate::{
     lock::LocalLock,
     registry::Registry,
     scope::{Scope, ScopeData},
-    thread_safety::{BoxAnyThreadSafety, RcAnyThreadSafety, RcThreadSafety, SendSafety, SyncSafety},
+    thread_safety::{RcAnyThreadSafety, RcThreadSafety, SendSafety, SyncSafety},
 };
 
 /// Owned by every scope container so executor storage outlives construction and finalization.
@@ -33,7 +33,7 @@ pub(crate) struct Plan {
     locks: NodeLocks,
     /// Stable storage for both executor tables, including owned runtime fragments.
     /// Declared last so executor tables are dropped first. See `RegistrationExecutor`'s invariants.
-    _tree: BoxAnyThreadSafety,
+    _tree: RcAnyThreadSafety,
 }
 
 /// Async construction functions, present when an async container built the plan.
@@ -133,15 +133,19 @@ impl Plan {
         Node<Tree, ContainerLeaf>: RegistryIndex + Link<ProviderIndex<Tree>, Links>,
         Linked<Tree, Links>: CollectExecutors + CollectRegistrations + CollectRuntime + SendSafety + SyncSafety + 'static,
     {
+        let () = <Node<Tree, ContainerLeaf> as Link<ProviderIndex<Tree>, Links>>::VALIDATE;
         let mut scopes = registry.scopes;
         scopes.sort_by_key(|scope| scope.priority);
         scopes.dedup();
         let container = ContainerLeaf {
             scope: *scopes.first().expect("a registry has at least one scope"),
         };
-        let mut tree = alloc::boxed::Box::new(Node(registry.tree, container).link());
+        let mut tree = Node(registry.tree, container).link();
         let mut graph = froodi_compile_core::Graph::new(scopes.iter().copied().map(Into::into).collect());
         tree.collect_registrations(&mut graph.registrations);
+        // Collect pointers only after the final allocation. Moving an owning Box after
+        // deriving shared raw pointers retags its pointee and invalidates their provenance.
+        let tree = RcThreadSafety::new(tree);
         let mut executors = Vec::new();
         tree.collect_executors(&mut executors);
         let mut runtime = Vec::new();
@@ -174,7 +178,7 @@ impl Plan {
     }
 }
 
-// SAFETY: registration pointers only address the boxed tree owned by the same `Plan`, which is
+// SAFETY: registration pointers only address the shared tree owned by the same `Plan`, which is
 // `Send + Sync` in thread-safe builds; executors hold plain function pointers.
 #[cfg(feature = "thread_safe")]
 unsafe impl Send for Plan {}
@@ -217,8 +221,9 @@ impl Container {
     /// Builds the container of a registry after compiling its graph.
     ///
     /// # Errors
-    /// Returns the graph compiler's diagnostics: duplicates no factory depends on, cycles, scope
-    /// violations. Missing and ambiguous providers of static dependencies are compile errors.
+    /// Returns runtime graph diagnostics, including open-graph cycles and scope violations.
+    /// Closed static graphs also check cycles during code generation; missing and ambiguous
+    /// static providers fail type checking. See `docs/compile-time/architecture.md` for limits.
     pub fn try_new<Tree, Links>(registry: Registry<Tree>) -> Result<Self, Diagnostics>
     where
         Node<Tree, ContainerLeaf>: RegistryIndex + Link<ProviderIndex<Tree>, Links>,
@@ -478,7 +483,10 @@ impl Container {
                 if node.finalizer.is_some() {
                     self.inner.resolved.write().push((index, value.clone()));
                 }
-                value
+                if node.cache_provides {
+                    self.inner.slots.write().set(index, value.clone(), plan.executors.len());
+                }
+                return Ok(value);
             }
         };
         if node.cache_provides {

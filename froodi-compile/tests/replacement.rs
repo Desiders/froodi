@@ -42,3 +42,33 @@ fn a_replacing_registry_overrides_static_registrations_everywhere() {
     assert_eq!(container.get::<Snapshot>().unwrap().0, "test");
     assert_eq!(container.get_transient::<Config>().unwrap().0, "test");
 }
+
+#[test]
+fn replacement_can_remove_a_static_cycle() {
+    struct A;
+    struct B;
+    let cyclic = registry! {
+        provide(App, |_: Inject<B>| Ok::<_, InstantiateErrorKind>(A)),
+        provide(App, |_: Inject<A>| Ok::<_, InstantiateErrorKind>(B)),
+    };
+    let replacement = registry! { provide(App, || Ok::<_, InstantiateErrorKind>(A)) }
+        .into_runtime()
+        .replacing();
+    let container = Container::new(registry! { extend(cyclic), extend(replacement) });
+    container.get::<B>().unwrap();
+}
+
+#[test]
+fn replacement_can_introduce_a_cycle() {
+    struct A;
+    struct B;
+    let base = registry! {
+        provide(App, || Ok::<_, InstantiateErrorKind>(A)),
+        provide(App, |_: Inject<A>| Ok::<_, InstantiateErrorKind>(B)),
+    };
+    let replacement = registry! { provide(App, |_: Inject<B>| Ok::<_, InstantiateErrorKind>(A)) }
+        .into_runtime()
+        .replacing();
+    let result = Container::try_new(registry! { extend(base), extend(replacement) });
+    assert!(result.err().unwrap().to_string().contains("dependency cycle"));
+}

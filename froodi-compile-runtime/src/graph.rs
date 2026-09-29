@@ -64,6 +64,7 @@ impl Describe for Empty {
 
 impl<Root> Link<Root, ()> for Empty {
     type Linked = Empty;
+    const TOPOLOGY: crate::topology::Topology = crate::topology::Topology::EMPTY;
 
     #[inline]
     fn link(self) -> Empty {
@@ -245,6 +246,7 @@ pub trait SupportsExecution<Execution> {}
 )]
 pub trait LinkDependency<Root, Path> {
     type Provider;
+    const TARGET: Option<usize>;
     fn request() -> DependencyRequest<TypeId>;
 }
 
@@ -253,6 +255,7 @@ where
     Root: ProviderPath<T, Path>,
 {
     type Provider = Root::Provider;
+    const TARGET: Option<usize> = Some(Root::INDEX);
 
     fn request() -> DependencyRequest<TypeId> {
         let mut request = <Self as DependencyMetadata>::request();
@@ -266,6 +269,7 @@ where
     Root: ProviderPath<T, Path>,
 {
     type Provider = Root::Provider;
+    const TARGET: Option<usize> = Some(Root::INDEX);
 
     fn request() -> DependencyRequest<TypeId> {
         let mut request = <Self as DependencyMetadata>::request();
@@ -276,6 +280,7 @@ where
 
 impl<Root, Resolver: DependencyResolver + 'static> LinkDependency<Root, ByResolver> for Resolver {
     type Provider = ();
+    const TARGET: Option<usize> = None;
 
     fn request() -> DependencyRequest<TypeId> {
         <Self as DependencyMetadata>::request()
@@ -284,6 +289,7 @@ impl<Root, Resolver: DependencyResolver + 'static> LinkDependency<Root, ByResolv
 
 pub trait LinkDependencies<Root, Links> {
     type Providers;
+    const TARGETS: &'static [Option<usize>];
 
     fn requests() -> Vec<DependencyRequest<TypeId>>;
 }
@@ -293,6 +299,7 @@ macro_rules! impl_link_dependencies {
         impl<Root, $($dep: LinkDependency<Root, $path>, $path,)*>
             LinkDependencies<Root, ($($path,)*)> for ($($dep,)*) {
             type Providers = ($($dep::Provider,)*);
+            const TARGETS: &'static [Option<usize>] = &[$($dep::TARGET,)*];
             fn requests() -> Vec<DependencyRequest<TypeId>> {
                 alloc::vec![$(<$dep as LinkDependency<Root, $path>>::request()),*]
             }
@@ -321,6 +328,8 @@ pub struct Linked<Out, Inst, Deps, Fin> {
 /// `Links` mirrors the tree shape and is inferred by rustc.
 pub trait Link<Root, Links> {
     type Linked;
+    const TOPOLOGY: crate::topology::Topology;
+    const VALIDATE: () = Self::TOPOLOGY.validate();
 
     fn link(self) -> Self::Linked;
 }
@@ -331,6 +340,7 @@ where
     Deps::Providers: SupportsExecution<SyncExecution>,
 {
     type Linked = Linked<Out, Inst, Deps, Fin>;
+    const TOPOLOGY: crate::topology::Topology = crate::topology::Topology::leaf(Deps::TARGETS);
 
     #[inline]
     fn link(self) -> Self::Linked {
@@ -346,6 +356,7 @@ where
 
 impl<Root, Left: Link<Root, LLinks>, Right: Link<Root, RLinks>, LLinks, RLinks> Link<Root, (LLinks, RLinks)> for Node<Left, Right> {
     type Linked = Node<Left::Linked, Right::Linked>;
+    const TOPOLOGY: crate::topology::Topology = crate::topology::Topology::branch(&Left::TOPOLOGY, &Right::TOPOLOGY);
 
     #[inline]
     fn link(self) -> Self::Linked {
@@ -356,16 +367,22 @@ impl<Root, Left: Link<Root, LLinks>, Right: Link<Root, RLinks>, LLinks, RLinks> 
 pub trait ConstructRegistration {
     type Provides: 'static;
 
-    fn construct(&self, container: &Container, edges: &[CompiledEdge]) -> Result<Self::Provides, ResolveErrorKind>;
+    /// # Safety
+    /// `edges` must be this registration's parameter edges in `container`'s plan.
+    unsafe fn construct(&self, container: &Container, edges: &[CompiledEdge]) -> Result<Self::Provides, ResolveErrorKind>;
 
     /// The reference-counted value for `get` semantics. A registration that stands for another
     /// one returns that registration's value instead of a new allocation.
+    ///
+    /// # Safety
+    /// Same edge/type correspondence as `construct`.
     #[inline]
-    fn construct_inject(&self, container: &Container, edges: &[CompiledEdge]) -> Result<RcAnyThreadSafety, ResolveErrorKind>
+    unsafe fn construct_inject(&self, container: &Container, edges: &[CompiledEdge]) -> Result<RcAnyThreadSafety, ResolveErrorKind>
     where
         Self::Provides: SendSafety + SyncSafety,
     {
-        Ok(RcThreadSafety::new(self.construct(container, edges)?) as RcAnyThreadSafety)
+        // SAFETY: the caller supplies this registration's compiled edges.
+        Ok(RcThreadSafety::new(unsafe { self.construct(container, edges) }?) as RcAnyThreadSafety)
     }
 }
 
@@ -377,7 +394,7 @@ where
     type Provides = Out;
 
     #[inline]
-    fn construct(&self, container: &Container, edges: &[CompiledEdge]) -> Result<Out, ResolveErrorKind> {
+    unsafe fn construct(&self, container: &Container, edges: &[CompiledEdge]) -> Result<Out, ResolveErrorKind> {
         // SAFETY: dispatch supplies this registration's compiled parameter edges.
         let dependencies = unsafe { Deps::resolve(container, &mut edges.iter()) }
             .map_err(|err| ResolveErrorKind::Instantiator(InstantiatorErrorKind::Deps(err.into())))?;
@@ -454,8 +471,9 @@ all_the_tuples!(impl_resolve_linked_dependencies);
 ///
 /// # Safety invariants
 ///
-/// - The boxed tree and owned runtime fragments stay live at stable addresses until all
+/// - The shared tree allocation and owned runtime fragments stay live at stable addresses until all
 ///   executors and borrowing futures are gone. `Plan` drops executor tables before the tree.
+///   Derive pointers after allocating the tree; never move/retag an owning Box afterwards.
 /// - Registration pointers and erased functions remain paired with their exact concrete
 ///   types; construction receives that registration's compiled parameter edges.
 /// - IDs consistently index graph nodes, executors, type metadata and cache slots. Redirects
@@ -511,7 +529,8 @@ where
 {
     // SAFETY: the caller supplies the live Item paired with this executor.
     let item = unsafe { &*item.cast::<Item>() };
-    let value = item.construct(container, edges)?;
+    // SAFETY: caller pairs the registration with its compiled parameter edges.
+    let value = unsafe { item.construct(container, edges) }?;
     // SAFETY: `out` is aligned, writable uninitialized storage for `Item::Provides`.
     unsafe { out.cast::<Item::Provides>().write(value) };
     Ok(())
@@ -545,7 +564,8 @@ where
 {
     // SAFETY: the caller supplies the live Item paired with this executor.
     let item = unsafe { &*item.cast::<Item>() };
-    item.construct_inject(container, edges)
+    // SAFETY: caller pairs the registration with its compiled parameter edges.
+    unsafe { item.construct_inject(container, edges) }
 }
 
 /// Collection order must match graph registration IDs.
@@ -582,6 +602,7 @@ pub struct ContainerLeaf {
 
 impl<Root> Link<Root, ()> for ContainerLeaf {
     type Linked = Self;
+    const TOPOLOGY: crate::topology::Topology = crate::topology::Topology::leaf(&[]);
 
     #[inline]
     fn link(self) -> Self {
@@ -593,7 +614,7 @@ impl ConstructRegistration for ContainerLeaf {
     type Provides = Container;
 
     #[inline]
-    fn construct(&self, container: &Container, _edges: &[CompiledEdge]) -> Result<Container, ResolveErrorKind> {
+    unsafe fn construct(&self, container: &Container, _edges: &[CompiledEdge]) -> Result<Container, ResolveErrorKind> {
         Ok(container.clone())
     }
 }

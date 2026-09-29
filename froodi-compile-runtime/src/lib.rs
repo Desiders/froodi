@@ -21,6 +21,7 @@ pub(crate) mod registry;
 pub(crate) mod runtime_registry;
 pub(crate) mod scope;
 pub mod thread_safety;
+pub(crate) mod topology;
 
 #[cfg(feature = "compile-bench")]
 #[doc(hidden)]
