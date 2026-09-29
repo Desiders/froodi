@@ -2,6 +2,7 @@
 //! the current engine (`froodi`) and the experimental one (`froodi_compile`). A scenario that
 //! stops compiling or behaving the same on one side is API or semantic drift.
 
+#![cfg(feature = "thread_safe")]
 #![allow(clippy::unnecessary_wraps, reason = "factories return Result by contract")]
 
 macro_rules! scenario {
@@ -160,7 +161,7 @@ macro_rules! scenario {
 
             #[test]
             fn inject_shares_the_cached_value() {
-                struct Pool(Config);
+                struct Pool(#[allow(dead_code)] Config);
                 struct Repository(Arc<Config>);
                 let config_calls = calls();
                 let container = Container::new(registry! {
@@ -200,7 +201,7 @@ macro_rules! scenario {
             #[test]
             fn inject_transient_builds_a_fresh_value_for_each_dependent() {
                 struct First(Config);
-                struct Second(Config);
+                struct Second(#[allow(dead_code)] Config);
                 let config_calls = calls();
                 let container = Container::new(registry! {
                     scope(App) [
@@ -408,6 +409,91 @@ macro_rules! scenario {
 
                 assert!(request.get::<Probe>().unwrap().0 == false);
                 assert!(root.get::<Config>().is_err());
+            }
+
+            #[test]
+            fn concurrent_get_constructs_a_cached_value_once() {
+                let config_calls = calls();
+                let slow = {
+                    let config_calls = config_calls.clone();
+                    move || {
+                        config_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                        std::thread::sleep(std::time::Duration::from_millis(20));
+                        Ok::<_, InstantiateErrorKind>(Config { url: "slow" })
+                    }
+                };
+                let container = Container::new(registry! {
+                    scope(App) [ provide(slow) ],
+                });
+                let barrier = Arc::new(std::sync::Barrier::new(8));
+
+                let handles: Vec<_> = (0..8)
+                    .map(|_| {
+                        let (container, barrier) = (container.clone(), barrier.clone());
+                        std::thread::spawn(move || {
+                            barrier.wait();
+                            container.get::<Config>().unwrap()
+                        })
+                    })
+                    .collect();
+                let values: Vec<_> = handles.into_iter().map(|handle| handle.join().unwrap()).collect();
+
+                assert_eq!(count(&config_calls), 1);
+                assert!(values.iter().all(|value| Arc::ptr_eq(value, &values[0])));
+            }
+
+            #[test]
+            fn errors_keep_froodis_nesting() {
+                let container = Container::new(registry! {
+                    scope(App) [
+                        provide(|| Err::<Config, _>(InstantiateErrorKind::Custom(anyhow::anyhow!("no config")))),
+                        provide(make_database),
+                    ],
+                });
+
+                // Froodi does not export `InstantiatorErrorKind`, so the shape is compared by `Debug`.
+                let factory = format!("{:?}", container.get::<Config>().err().unwrap());
+                assert!(factory.starts_with("Instantiator(Factory(Custom("), "{factory}");
+                assert_eq!(container.get::<Config>().err().unwrap().to_string(), "no config");
+                let deps = format!("{:?}", container.get::<Database>().err().unwrap());
+                assert!(deps.starts_with("Instantiator(Deps(Instantiator(Factory(Custom("), "{deps}");
+                assert!(matches!(container.get::<u8>(), Err(ResolveErrorKind::NoInstantiator { .. })));
+            }
+
+            #[test]
+            fn a_failed_construction_still_finalizes_the_dependencies_it_built() {
+                let log = events();
+                let container = Container::new(registry! {
+                    scope(App) [
+                        provide(make_config, finalizer = record(&log, "config")),
+                        provide(
+                            |Inject(_config): Inject<Config>| Err::<Database, _>(InstantiateErrorKind::Custom(anyhow::anyhow!("down"))),
+                            finalizer = record(&log, "database"),
+                        ),
+                    ],
+                });
+
+                assert!(container.get::<Database>().is_err());
+                container.close();
+
+                assert_eq!(*log.lock().unwrap(), vec!["config"]);
+            }
+
+            #[test]
+            fn closing_a_scope_finalizes_only_its_own_values() {
+                let log = events();
+                let app = Container::new(registry! {
+                    provide(App, make_config, finalizer = record(&log, "config")),
+                    provide(Request, make_database, finalizer = record(&log, "database")),
+                });
+                let request = app.clone().enter_build().unwrap();
+
+                let _database = request.get::<Database>().unwrap();
+                request.close();
+                assert_eq!(*log.lock().unwrap(), vec!["database"]);
+
+                app.close();
+                assert_eq!(*log.lock().unwrap(), vec!["database", "config"]);
             }
 
             #[test]

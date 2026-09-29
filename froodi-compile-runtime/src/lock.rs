@@ -152,3 +152,21 @@ mod generic {
 }
 
 pub(crate) use generic::LocalLock;
+
+/// One construction lock per registration, indexed by registration id and shared by every
+/// container of one tree. The compiled graph fixes their number, so they are allocated once and
+/// never looked up by type.
+#[cfg(feature = "thread_safe")]
+pub(crate) struct NodeLocks(alloc::boxed::Box<[backend::Mutex<()>]>);
+
+#[cfg(feature = "thread_safe")]
+impl NodeLocks {
+    pub(crate) fn new(len: usize) -> Self {
+        Self((0..len).map(|_| backend::Mutex::new(())).collect())
+    }
+
+    #[inline]
+    pub(crate) fn get(&self, index: usize) -> &backend::Mutex<()> {
+        &self.0[index]
+    }
+}

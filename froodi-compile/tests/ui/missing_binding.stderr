@@ -9,17 +9,17 @@ error[E0277]: no registration provides the factory parameter `Inject<Config>`
 15 | |     });
    | |______^ this registry has no `provide(...)` for the type inside `Inject<Config>`
    |
-   = help: the trait `DepIn<Node<Reg<Database, fn(Inject<Config>) -> Result<Database, InstantiateErrorKind> {make_database}, (Inject<Config>,), froodi_compile::finalizer::NoFinalizer>, ContainerLeaf>, SharedAt<_>>` is not implemented for `Inject<Config>`
+   = help: the trait `froodi_compile_runtime::graph::DepIn<froodi_compile::__private::Node<froodi_compile::__private::Reg<Database, fn(Inject<Config>) -> Result<Database, InstantiateErrorKind> {make_database}, (Inject<Config>,), froodi_compile::__private::NoFinalizer>, froodi_compile_runtime::graph::ContainerLeaf>, froodi_compile_runtime::graph::SharedAt<_>>` is not implemented for `Inject<Config>`
    = note: register a factory or `instance(...)` for it, or `extend(...)` a registry that does
-help: the trait `DepIn<Root, SharedAt<I>>` is implemented for `Inject<T>`
+help: the trait `froodi_compile_runtime::graph::DepIn<Root, froodi_compile_runtime::graph::SharedAt<I>>` is implemented for `Inject<T>`
   --> $WORKSPACE/froodi-compile-runtime/src/graph.rs
    |
    | impl<Root: Has<T, I>, T, I> DepIn<Root, SharedAt<I>> for Inject<T> {}
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-   = note: required for `(Inject<Config>,)` to implement `DepsIn<Node<Reg<Database, fn(Inject<Config>) -> Result<Database, InstantiateErrorKind> {make_database}, (Inject<Config>,), froodi_compile::finalizer::NoFinalizer>, ContainerLeaf>, (SharedAt<_>,)>`
-   = note: required for `Reg<Database, fn(Inject<Config>) -> Result<Database, InstantiateErrorKind> {make_database}, (Inject<Config>,), froodi_compile::finalizer::NoFinalizer>` to implement `Link<Node<Reg<Database, fn(Inject<Config>) -> Result<Database, InstantiateErrorKind> {make_database}, (Inject<Config>,), froodi_compile::finalizer::NoFinalizer>, ContainerLeaf>, (SharedAt<_>,)>`
+   = note: required for `(Inject<Config>,)` to implement `froodi_compile_runtime::graph::DepsIn<froodi_compile::__private::Node<froodi_compile::__private::Reg<Database, fn(Inject<Config>) -> Result<Database, InstantiateErrorKind> {make_database}, (Inject<Config>,), froodi_compile::__private::NoFinalizer>, froodi_compile_runtime::graph::ContainerLeaf>, (froodi_compile_runtime::graph::SharedAt<_>,)>`
+   = note: required for `froodi_compile::__private::Reg<Database, fn(Inject<Config>) -> Result<Database, InstantiateErrorKind> {make_database}, (Inject<Config>,), froodi_compile::__private::NoFinalizer>` to implement `froodi_compile_runtime::graph::Link<froodi_compile::__private::Node<froodi_compile::__private::Reg<Database, fn(Inject<Config>) -> Result<Database, InstantiateErrorKind> {make_database}, (Inject<Config>,), froodi_compile::__private::NoFinalizer>, froodi_compile_runtime::graph::ContainerLeaf>, (froodi_compile_runtime::graph::SharedAt<_>,)>`
    = note: 1 redundant requirement hidden
-   = note: required for `Node<Reg<Database, fn(Inject<Config>) -> Result<Database, InstantiateErrorKind> {make_database}, (Inject<Config>,), froodi_compile::finalizer::NoFinalizer>, ContainerLeaf>` to implement `Link<Node<Reg<Database, fn(Inject<Config>) -> Result<Database, InstantiateErrorKind> {make_database}, (Inject<Config>,), froodi_compile::finalizer::NoFinalizer>, ContainerLeaf>, ((SharedAt<_>,), ())>`
+   = note: required for `froodi_compile::__private::Node<froodi_compile::__private::Reg<Database, fn(Inject<Config>) -> Result<Database, InstantiateErrorKind> {make_database}, (Inject<Config>,), froodi_compile::__private::NoFinalizer>, froodi_compile_runtime::graph::ContainerLeaf>` to implement `froodi_compile_runtime::graph::Link<froodi_compile::__private::Node<froodi_compile::__private::Reg<Database, fn(Inject<Config>) -> Result<Database, InstantiateErrorKind> {make_database}, (Inject<Config>,), froodi_compile::__private::NoFinalizer>, froodi_compile_runtime::graph::ContainerLeaf>, ((froodi_compile_runtime::graph::SharedAt<_>,), ())>`
 
 error[E0277]: no registration provides the factory parameter `Inject<Config>`
   --> tests/ui/missing_binding.rs:11:37
@@ -34,22 +34,22 @@ error[E0277]: no registration provides the factory parameter `Inject<Config>`
 15 | |     });
    | |_____^ this registry has no `provide(...)` for the type inside `Inject<Config>`
    |
-   = help: the trait `DepIn<Node<Reg<Database, fn(Inject<Config>) -> Result<Database, InstantiateErrorKind> {make_database}, (Inject<Config>,), froodi_compile::finalizer::NoFinalizer>, ContainerLeaf>, SharedAt<_>>` is not implemented for `Inject<Config>`
+   = help: the trait `froodi_compile_runtime::graph::DepIn<froodi_compile::__private::Node<froodi_compile::__private::Reg<Database, fn(Inject<Config>) -> Result<Database, InstantiateErrorKind> {make_database}, (Inject<Config>,), froodi_compile::__private::NoFinalizer>, froodi_compile_runtime::graph::ContainerLeaf>, froodi_compile_runtime::graph::SharedAt<_>>` is not implemented for `Inject<Config>`
    = note: register a factory or `instance(...)` for it, or `extend(...)` a registry that does
-help: the trait `DepIn<Root, SharedAt<I>>` is implemented for `Inject<T>`
+help: the trait `froodi_compile_runtime::graph::DepIn<Root, froodi_compile_runtime::graph::SharedAt<I>>` is implemented for `Inject<T>`
   --> $WORKSPACE/froodi-compile-runtime/src/graph.rs
    |
    | impl<Root: Has<T, I>, T, I> DepIn<Root, SharedAt<I>> for Inject<T> {}
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-   = note: required for `(Inject<Config>,)` to implement `DepsIn<Node<Reg<Database, fn(Inject<Config>) -> Result<Database, InstantiateErrorKind> {make_database}, (Inject<Config>,), froodi_compile::finalizer::NoFinalizer>, ContainerLeaf>, (SharedAt<_>,)>`
-   = note: required for `Reg<Database, fn(Inject<Config>) -> Result<Database, InstantiateErrorKind> {make_database}, (Inject<Config>,), froodi_compile::finalizer::NoFinalizer>` to implement `Link<Node<Reg<Database, fn(Inject<Config>) -> Result<Database, InstantiateErrorKind> {make_database}, (Inject<Config>,), froodi_compile::finalizer::NoFinalizer>, ContainerLeaf>, (SharedAt<_>,)>`
+   = note: required for `(Inject<Config>,)` to implement `froodi_compile_runtime::graph::DepsIn<froodi_compile::__private::Node<froodi_compile::__private::Reg<Database, fn(Inject<Config>) -> Result<Database, InstantiateErrorKind> {make_database}, (Inject<Config>,), froodi_compile::__private::NoFinalizer>, froodi_compile_runtime::graph::ContainerLeaf>, (froodi_compile_runtime::graph::SharedAt<_>,)>`
+   = note: required for `froodi_compile::__private::Reg<Database, fn(Inject<Config>) -> Result<Database, InstantiateErrorKind> {make_database}, (Inject<Config>,), froodi_compile::__private::NoFinalizer>` to implement `froodi_compile_runtime::graph::Link<froodi_compile::__private::Node<froodi_compile::__private::Reg<Database, fn(Inject<Config>) -> Result<Database, InstantiateErrorKind> {make_database}, (Inject<Config>,), froodi_compile::__private::NoFinalizer>, froodi_compile_runtime::graph::ContainerLeaf>, (froodi_compile_runtime::graph::SharedAt<_>,)>`
    = note: 1 redundant requirement hidden
-   = note: required for `Node<Reg<Database, fn(Inject<Config>) -> Result<Database, InstantiateErrorKind> {make_database}, (Inject<Config>,), froodi_compile::finalizer::NoFinalizer>, ContainerLeaf>` to implement `Link<Node<Reg<Database, fn(Inject<Config>) -> Result<Database, InstantiateErrorKind> {make_database}, (Inject<Config>,), froodi_compile::finalizer::NoFinalizer>, ContainerLeaf>, ((SharedAt<_>,), ())>`
+   = note: required for `froodi_compile::__private::Node<froodi_compile::__private::Reg<Database, fn(Inject<Config>) -> Result<Database, InstantiateErrorKind> {make_database}, (Inject<Config>,), froodi_compile::__private::NoFinalizer>, froodi_compile_runtime::graph::ContainerLeaf>` to implement `froodi_compile_runtime::graph::Link<froodi_compile::__private::Node<froodi_compile::__private::Reg<Database, fn(Inject<Config>) -> Result<Database, InstantiateErrorKind> {make_database}, (Inject<Config>,), froodi_compile::__private::NoFinalizer>, froodi_compile_runtime::graph::ContainerLeaf>, ((froodi_compile_runtime::graph::SharedAt<_>,), ())>`
 note: required by a bound in `froodi_compile::Container::new`
   --> $WORKSPACE/froodi-compile-runtime/src/container.rs
    |
    |     pub fn new<Tree, Links>(registry: Registry<Tree>) -> Self
    |            --- required by a bound in this associated function
    |     where
-   |         Node<Tree, ContainerLeaf>: Link<Node<Tree, ContainerLeaf>, Links> + Describe,
+   |         Node<Tree, ContainerLeaf>: Link<Node<Tree, ContainerLeaf>, Links>,
    |                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `Container::new`

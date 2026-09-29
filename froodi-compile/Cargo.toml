@@ -27,4 +27,5 @@ froodi-compile-runtime = { path = "../froodi-compile-runtime", default-features 
 
 [dev-dependencies]
 froodi = { path = "../froodi" }
+anyhow = "1"
 trybuild = "1"

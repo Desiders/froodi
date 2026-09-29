@@ -40,6 +40,8 @@ pub struct CompiledNode {
     pub finalizer: Option<ExecutionKind>,
     pub execution: ExecutionKind,
     pub source: ValueSource,
+    /// The registration that explicitly replaces this one; edges to this one lead there.
+    pub replaced_by: Option<RegistrationId>,
     /// Dependency edges in parameter order.
     pub edges: Vec<CompiledEdge>,
 }
@@ -114,8 +116,8 @@ pub fn compile<K: Ord + Clone>(graph: Graph<K>) -> Result<CompiledGraph<K>, Diag
 
     let mut diagnostics = Vec::new();
     let node_scopes = assign_scopes(&registrations, &scopes, &mut diagnostics);
-    let keys = index_keys(&registrations, &mut diagnostics);
-    let (edges, missing) = resolve_edges(&registrations, &keys);
+    let (keys, replaced_by) = index_keys(&registrations, &mut diagnostics);
+    let (edges, missing) = resolve_edges(&registrations, &keys, &replaced_by);
 
     let step = |index: usize| PathStep {
         type_name: registrations[index].type_name,
@@ -146,8 +148,9 @@ pub fn compile<K: Ord + Clone>(graph: Graph<K>) -> Result<CompiledGraph<K>, Diag
         .iter()
         .zip(edges)
         .zip(node_scopes)
+        .zip(replaced_by)
         .enumerate()
-        .map(|(index, ((registration, edges), scope))| CompiledNode {
+        .map(|(index, (((registration, edges), scope), replaced_by))| CompiledNode {
             id: id(index),
             type_name: registration.type_name,
             scope,
@@ -155,6 +158,7 @@ pub fn compile<K: Ord + Clone>(graph: Graph<K>) -> Result<CompiledGraph<K>, Diag
             finalizer: registration.finalizer,
             execution: registration.execution,
             source: registration.source,
+            replaced_by,
             edges,
         })
         .collect();
@@ -187,23 +191,49 @@ fn assign_scopes<K>(registrations: &[Registration<K>], scopes: &[ScopeKey], diag
         .collect()
 }
 
-/// Sorted `(key, id)` pairs with one entry per key. Every run of equal keys is reported as a
-/// duplicate, in order of its first registration.
-fn index_keys<K: Ord + Clone>(registrations: &[Registration<K>], diagnostics: &mut Vec<Diagnostic>) -> Vec<(K, RegistrationId)> {
+/// Sorted `(key, id)` pairs with one entry per key, and for every registration the one that
+/// explicitly replaces it.
+///
+/// Within a run of equal keys, registrations flagged `replaces` take over the others. More than
+/// one registration on either side is a duplicate, reported in order of its first registration.
+///
+/// A runtime boundary (`ValueSource::Runtime`) is not a provider of its key: it stands for the
+/// registration that provides it at runtime, which its own request points to.
+#[allow(clippy::type_complexity)]
+fn index_keys<K: Ord + Clone>(
+    registrations: &[Registration<K>],
+    diagnostics: &mut Vec<Diagnostic>,
+) -> (Vec<(K, RegistrationId)>, Vec<Option<RegistrationId>>) {
     let mut keys: Vec<(K, RegistrationId)> = registrations
         .iter()
         .enumerate()
+        .filter(|(_, registration)| registration.source != ValueSource::Runtime)
         .map(|(index, registration)| (registration.key.clone(), id(index)))
         .collect();
     keys.sort_by(|(a, a_id), (b, b_id)| a.cmp(b).then(a_id.cmp(b_id)));
 
+    let mut replaced_by = vec![None; registrations.len()];
     let mut duplicates: Vec<Vec<RegistrationId>> = Vec::new();
+    let mut winners = Vec::new();
     let mut start = 0;
     while start < keys.len() {
         let end = start + keys[start..].iter().take_while(|(key, _)| *key == keys[start].0).count();
-        if end - start > 1 {
-            duplicates.push(keys[start..end].iter().map(|(_, id)| *id).collect());
+        let (replacing, replaced): (Vec<RegistrationId>, Vec<RegistrationId>) = keys[start..end]
+            .iter()
+            .map(|(_, id)| *id)
+            .partition(|id| registrations[id.index()].replaces);
+        for group in [&replacing, &replaced] {
+            if group.len() > 1 {
+                duplicates.push(group.clone());
+            }
         }
+        let winner = replacing.first().or(replaced.first()).copied().expect("a run is never empty");
+        if let Some(&replacement) = replacing.first() {
+            for id in &replaced {
+                replaced_by[id.index()] = Some(replacement);
+            }
+        }
+        winners.push((keys[start].0.clone(), winner));
         start = end;
     }
     duplicates.sort();
@@ -213,12 +243,15 @@ fn index_keys<K: Ord + Clone>(registrations: &[Registration<K>], diagnostics: &m
             origins: group.iter().map(|id| registrations[id.index()].origin).collect(),
         });
     }
-    keys.dedup_by(|b, a| a.0 == b.0);
-    keys
+    (winners, replaced_by)
 }
 
 /// Resolved edges per registration, and the `(registration, request)` pairs nothing provides.
-fn resolve_edges<K: Ord>(registrations: &[Registration<K>], keys: &[(K, RegistrationId)]) -> (Vec<Vec<CompiledEdge>>, Vec<(usize, usize)>) {
+fn resolve_edges<K: Ord>(
+    registrations: &[Registration<K>],
+    keys: &[(K, RegistrationId)],
+    replaced_by: &[Option<RegistrationId>],
+) -> (Vec<Vec<CompiledEdge>>, Vec<(usize, usize)>) {
     let lookup = |key: &K| keys.binary_search_by(|(probe, _)| probe.cmp(key)).ok().map(|index| keys[index].1);
     let mut missing = Vec::new();
     let mut edges = Vec::with_capacity(registrations.len());
@@ -231,7 +264,7 @@ fn resolve_edges<K: Ord>(registrations: &[Registration<K>], keys: &[(K, Registra
             let target = match &request.target {
                 Target::Id(id) => {
                     assert!(id.index() < registrations.len(), "request targets a registration outside the graph");
-                    Some(*id)
+                    Some(replaced_by[id.index()].unwrap_or(*id))
                 }
                 Target::Key(key) => lookup(key),
             };

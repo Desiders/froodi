@@ -18,7 +18,7 @@
 use alloc::vec::Vec;
 use core::{any::TypeId, marker::PhantomData};
 
-use froodi_compile_core::{DependencyRequest, ExecutionKind, Origin, Registration, RequestMode, Target, ValueSource};
+use froodi_compile_core::{DependencyRequest, ExecutionKind, Origin, Registration, RegistrationId, RequestMode, Target, ValueSource};
 
 use crate::{
     config::Config,
@@ -49,7 +49,7 @@ pub struct Reg<T, F, D, Fin> {
 
 /// What `registry!` knows about a registration besides its factory.
 #[derive(Clone, Copy)]
-pub(crate) struct Meta {
+pub struct Meta {
     pub(crate) scope: ScopeData,
     pub(crate) source: ValueSource,
     pub(crate) origin: Origin,
@@ -169,6 +169,7 @@ impl<T: 'static, F, D: DepsMeta, Fin: MaybeFinalizer<T>> Describe for Reg<T, F, 
             finalizer: Fin::PRESENT.then_some(ExecutionKind::Sync),
             execution: ExecutionKind::Sync,
             source: self.meta.source,
+            replaces: false,
             origin: Some(self.meta.origin),
         });
     }
@@ -282,6 +283,7 @@ type LinkedMarker<T, D, DI> = PhantomData<fn() -> (T, D, DI)>;
 pub struct Linked<T, F, D, Fin, DI> {
     pub(crate) factory: F,
     pub(crate) finalizer: Fin,
+    pub(crate) meta: Meta,
     marker: LinkedMarker<T, D, DI>,
 }
 
@@ -308,6 +310,7 @@ where
         Linked {
             factory: self.factory,
             finalizer: self.finalizer,
+            meta: self.meta,
             marker: PhantomData,
         }
     }
@@ -328,7 +331,20 @@ pub trait Exec<Root> {
 
     /// # Errors
     /// Returns the error of a dependency or of the factory.
-    fn construct(&self, root: &Root, container: &Container) -> Result<Self::Provides, ResolveErrorKind>;
+    fn construct(&self, root: &Root, container: &Container, index: usize) -> Result<Self::Provides, ResolveErrorKind>;
+
+    /// The shared form of the value for `get` semantics. A registration that stands for another
+    /// one returns that registration's value instead of a new allocation.
+    ///
+    /// # Errors
+    /// Returns the error of a dependency or of the factory.
+    #[inline]
+    fn construct_shared(&self, root: &Root, container: &Container, index: usize) -> Result<RcAnyThreadSafety, ResolveErrorKind>
+    where
+        Self::Provides: SendSafety + SyncSafety,
+    {
+        Ok(RcThreadSafety::new(self.construct(root, container, index)?) as RcAnyThreadSafety)
+    }
 }
 
 impl<Root, T: 'static, F, D, Fin, DI> Exec<Root> for Linked<T, F, D, Fin, DI>
@@ -339,7 +355,7 @@ where
     type Provides = T;
 
     #[inline]
-    fn construct(&self, root: &Root, container: &Container) -> Result<T, ResolveErrorKind> {
+    fn construct(&self, root: &Root, container: &Container, _index: usize) -> Result<T, ResolveErrorKind> {
         let dependencies =
             D::resolve(root, container).map_err(|err| ResolveErrorKind::Instantiator(InstantiatorErrorKind::Deps(err.into())))?;
         self.factory
@@ -367,23 +383,23 @@ where
 {
     #[inline]
     fn resolve(root: &Root, container: &Container) -> Result<Self, ResolveErrorKind> {
-        let value = container.shared_with(Root::INDEX, |owner| {
-            Ok(RcThreadSafety::new(root.at().construct(root, owner)?) as RcAnyThreadSafety)
-        })?;
+        let value = container.shared_with(Root::INDEX, |owner| root.at().construct_shared(root, owner, Root::INDEX))?;
         // SAFETY: slot `Root::INDEX` only ever holds values of the registration at path `I`,
         // which provides `T`.
         Ok(Inject(unsafe { downcast_unchecked(value) }))
     }
 }
 
-impl<Root, T, I> DepExec<Root, TransientAt<I>> for InjectTransient<T>
+impl<Root, T: 'static, I> DepExec<Root, TransientAt<I>> for InjectTransient<T>
 where
     Root: At<I>,
     Root::Item: Exec<Root, Provides = T>,
 {
     #[inline]
     fn resolve(root: &Root, container: &Container) -> Result<Self, ResolveErrorKind> {
-        Ok(InjectTransient(root.at().construct(root, container)?))
+        container
+            .transient_with(Root::INDEX, |container| root.at().construct(root, container, Root::INDEX))
+            .map(InjectTransient)
     }
 }
 
@@ -419,10 +435,12 @@ all_the_tuple_pairs!(impl_deps_exec);
 pub(crate) struct Entry {
     /// The leaf inside the boxed linked tree.
     pub(crate) item: *const (),
-    pub(crate) construct: unsafe fn(root: *const (), item: *const (), &Container) -> Result<RcAnyThreadSafety, ResolveErrorKind>,
+    pub(crate) construct:
+        unsafe fn(root: *const (), item: *const (), &Container, index: usize) -> Result<RcAnyThreadSafety, ResolveErrorKind>,
     /// Constructs a fresh value into `out`, which must point to uninitialized memory for the
     /// registration's provided type.
-    pub(crate) transient: unsafe fn(root: *const (), item: *const (), &Container, out: *mut ()) -> Result<(), ResolveErrorKind>,
+    pub(crate) transient:
+        unsafe fn(root: *const (), item: *const (), &Container, index: usize, out: *mut ()) -> Result<(), ResolveErrorKind>,
     /// Runs the registration's finalizer on a value it provided.
     pub(crate) finalize: unsafe fn(item: *const (), value: RcAnyThreadSafety),
 }
@@ -454,6 +472,7 @@ unsafe fn transient_erased<Root, Item>(
     root: *const (),
     item: *const (),
     container: &Container,
+    index: usize,
     out: *mut (),
 ) -> Result<(), ResolveErrorKind>
 where
@@ -461,10 +480,26 @@ where
 {
     // SAFETY: guaranteed by the caller; both pointers come from the same boxed tree.
     let (root, item) = unsafe { (&*root.cast::<Root>(), &*item.cast::<Item>()) };
-    let value = item.construct(root, container)?;
+    let value = item.construct(root, container, index)?;
     // SAFETY: guaranteed by the caller.
     unsafe { out.cast::<Item::Provides>().write(value) };
     Ok(())
+}
+
+impl Entry {
+    /// The entry of a static leaf: construction through `Exec`, finalization through `Finalize`.
+    pub(crate) fn of<Root, Item>(item: &Item) -> Self
+    where
+        Item: Exec<Root> + Finalize,
+        Item::Provides: SendSafety + SyncSafety,
+    {
+        Self {
+            item: core::ptr::from_ref(item).cast(),
+            construct: construct_erased::<Root, Item>,
+            transient: transient_erased::<Root, Item>,
+            finalize: finalize_erased::<Item>,
+        }
+    }
 }
 
 /// # Safety
@@ -473,6 +508,7 @@ unsafe fn construct_erased<Root, Item>(
     root: *const (),
     item: *const (),
     container: &Container,
+    index: usize,
 ) -> Result<RcAnyThreadSafety, ResolveErrorKind>
 where
     Item: Exec<Root>,
@@ -480,7 +516,7 @@ where
 {
     // SAFETY: guaranteed by the caller; both pointers come from the same boxed tree.
     let (root, item) = unsafe { (&*root.cast::<Root>(), &*item.cast::<Item>()) };
-    Ok(RcThreadSafety::new(item.construct(root, container)?) as RcAnyThreadSafety)
+    item.construct_shared(root, container, index)
 }
 
 /// Collects the construction entries of a linked tree in declaration order.
@@ -498,12 +534,7 @@ where
 {
     #[allow(private_interfaces)]
     fn walk(&self, entries: &mut alloc::vec::Vec<Entry>) {
-        entries.push(Entry {
-            item: core::ptr::from_ref(self).cast(),
-            construct: construct_erased::<Root, Self>,
-            transient: transient_erased::<Root, Self>,
-            finalize: finalize_erased::<Self>,
-        });
+        entries.push(Entry::of::<Root, Self>(self));
     }
 }
 
@@ -550,7 +581,7 @@ impl<Root> Exec<Root> for ContainerLeaf {
     type Provides = Container;
 
     #[inline]
-    fn construct(&self, _root: &Root, container: &Container) -> Result<Container, ResolveErrorKind> {
+    fn construct(&self, _root: &Root, container: &Container, _index: usize) -> Result<Container, ResolveErrorKind> {
         Ok(container.clone())
     }
 }
@@ -562,12 +593,7 @@ impl Finalize for ContainerLeaf {
 impl<Root> Walk<Root> for ContainerLeaf {
     #[allow(private_interfaces)]
     fn walk(&self, entries: &mut Vec<Entry>) {
-        entries.push(Entry {
-            item: core::ptr::from_ref(self).cast(),
-            construct: construct_erased::<Root, Self>,
-            transient: transient_erased::<Root, Self>,
-            finalize: finalize_erased::<Self>,
-        });
+        entries.push(Entry::of::<Root, Self>(self));
     }
 }
 
@@ -582,7 +608,126 @@ impl Describe for ContainerLeaf {
             finalizer: None,
             execution: ExecutionKind::Sync,
             source: ValueSource::Container,
+            replaces: false,
             origin: None,
         });
     }
+}
+
+/// Collects the runtime registries nested in a tree, in tree order. Their registrations are
+/// numbered after every static one.
+pub trait CollectRuntime {
+    #[doc(hidden)]
+    fn collect_runtime<'a>(&'a self, _out: &mut Vec<&'a dyn crate::runtime_registry::RuntimeTree>) {}
+}
+
+impl<T, F, D, Fin> CollectRuntime for Reg<T, F, D, Fin> {}
+impl<T, F, D, Fin, DI> CollectRuntime for Linked<T, F, D, Fin, DI> {}
+impl CollectRuntime for Empty {}
+impl CollectRuntime for ContainerLeaf {}
+
+impl<A: CollectRuntime, B: CollectRuntime> CollectRuntime for Node<A, B> {
+    fn collect_runtime<'a>(&'a self, out: &mut Vec<&'a dyn crate::runtime_registry::RuntimeTree>) {
+        self.0.collect_runtime(out);
+        self.1.collect_runtime(out);
+    }
+}
+
+/// The IR request of a linked factory parameter: static edges carry the id rustc resolved.
+pub trait DepExecMeta<Root, I> {
+    fn request() -> DependencyRequest<TypeId>;
+}
+
+impl<Root: At<I>, T: 'static, I> DepExecMeta<Root, SharedAt<I>> for Inject<T> {
+    fn request() -> DependencyRequest<TypeId> {
+        DependencyRequest {
+            target: Target::Id(RegistrationId(u32::try_from(Root::INDEX).expect("too many registrations"))),
+            mode: RequestMode::Shared,
+            type_name: core::any::type_name::<T>(),
+        }
+    }
+}
+
+impl<Root: At<I>, T: 'static, I> DepExecMeta<Root, TransientAt<I>> for InjectTransient<T> {
+    fn request() -> DependencyRequest<TypeId> {
+        DependencyRequest {
+            target: Target::Id(RegistrationId(u32::try_from(Root::INDEX).expect("too many registrations"))),
+            mode: RequestMode::Transient,
+            type_name: core::any::type_name::<T>(),
+        }
+    }
+}
+
+impl<Root, R: DependencyResolver + 'static> DepExecMeta<Root, ByResolver> for R {
+    fn request() -> DependencyRequest<TypeId> {
+        <R as DepMeta>::request()
+    }
+}
+
+/// IR requests of all parameters of a linked factory.
+pub trait DepsExecMeta<Root, I> {
+    fn requests() -> Vec<DependencyRequest<TypeId>>;
+}
+
+macro_rules! impl_deps_exec_meta {
+    ([$($dep:ident $index:ident),*]) => {
+        impl<Root, $($dep: DepExecMeta<Root, $index>, $index,)*> DepsExecMeta<Root, ($($index,)*)> for ($($dep,)*) {
+            fn requests() -> Vec<DependencyRequest<TypeId>> {
+                alloc::vec![$(<$dep as DepExecMeta<Root, $index>>::request()),*]
+            }
+        }
+    };
+}
+
+all_the_tuple_pairs!(impl_deps_exec_meta);
+
+/// Describes a linked tree in the IR. Static edges enter the graph compiler as `Target::Id`.
+pub trait DescribeLinked<Root> {
+    fn describe_linked(&self, out: &mut Vec<Registration<TypeId>>);
+}
+
+impl<Root, T: 'static, F, D, Fin: MaybeFinalizer<T>, DI> DescribeLinked<Root> for Linked<T, F, D, Fin, DI>
+where
+    D: DepsExecMeta<Root, DI>,
+{
+    fn describe_linked(&self, out: &mut Vec<Registration<TypeId>>) {
+        out.push(Registration {
+            key: TypeId::of::<T>(),
+            type_name: core::any::type_name::<T>(),
+            requests: D::requests(),
+            scope: self.meta.scope.into(),
+            cache_provides: self.meta.config.cache_provides,
+            finalizer: Fin::PRESENT.then_some(ExecutionKind::Sync),
+            execution: ExecutionKind::Sync,
+            source: self.meta.source,
+            replaces: false,
+            origin: Some(self.meta.origin),
+        });
+    }
+}
+
+impl<Root, A: DescribeLinked<Root>, B: DescribeLinked<Root>> DescribeLinked<Root> for Node<A, B> {
+    fn describe_linked(&self, out: &mut Vec<Registration<TypeId>>) {
+        self.0.describe_linked(out);
+        self.1.describe_linked(out);
+    }
+}
+
+/// Leaves without factory parameters describe themselves the same way linked or not.
+macro_rules! describe_linked_as_describe {
+    ($($ty:ty $(, $param:ident)*;)*) => {
+        $(impl<Root $(, $param: 'static)*> DescribeLinked<Root> for $ty {
+            fn describe_linked(&self, out: &mut Vec<Registration<TypeId>>) {
+                self.describe(out);
+            }
+        })*
+    };
+}
+
+describe_linked_as_describe! {
+    Empty;
+    ContainerLeaf;
+    crate::runtime_registry::RuntimeNode;
+    crate::boundary::ImportLeaf<T>, T;
+    crate::boundary::ContextLeaf<T>, T;
 }

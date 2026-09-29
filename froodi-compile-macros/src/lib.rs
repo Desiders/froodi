@@ -195,10 +195,9 @@ pub fn registry(input: TokenStream) -> TokenStream {
     let bindings: Vec<_> = (0..extensions.len())
         .map(|index| (format_ident!("__froodi_tree_{index}"), format_ident!("__froodi_scopes_{index}")))
         .collect();
-    let splits = extensions
-        .iter()
-        .zip(&bindings)
-        .map(|(registry, (tree, scopes))| quote!(let (#tree, #scopes) = ::froodi_compile::__private::Registry::into_parts(#registry);));
+    let splits = extensions.iter().zip(&bindings).map(
+        |(registry, (tree, scopes))| quote!(let (#tree, #scopes) = ::froodi_compile::__private::IntoFragment::into_fragment(#registry);),
+    );
     leaves.extend(bindings.iter().map(|(tree, _)| quote!(#tree)));
     let tree = balanced(&leaves);
     let registry = match bindings.first() {

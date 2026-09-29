@@ -3,12 +3,15 @@ use core::any::TypeId;
 
 use core::cmp::Ordering;
 
+#[cfg(feature = "thread_safe")]
+use crate::lock::NodeLocks;
+
 use froodi_compile_core::{compile, CompiledGraph, Diagnostics, ScopeId};
 
 use crate::{
     context::Context,
     errors::{ResolveErrorKind, ScopeErrorKind, ScopeWithErrorKind, TypeInfo},
-    graph::{ContainerLeaf, Describe, Entry, Link, Node, Walk},
+    graph::{CollectRuntime, ContainerLeaf, DescribeLinked, Entry, Link, Node, Walk},
     lock::LocalLock,
     registry::Registry,
     scope::{Scope, ScopeData},
@@ -26,6 +29,10 @@ struct Plan {
     entries: Vec<Entry>,
     /// The scope hierarchy, widest first; indexed by `ScopeId`.
     scopes: Vec<ScopeData>,
+    /// Provided type of every registration, indexed by registration id.
+    type_ids: Vec<TypeId>,
+    #[cfg(feature = "thread_safe")]
+    locks: NodeLocks,
 }
 
 /// The linked form of a registry tree with the container registration appended.
@@ -71,8 +78,9 @@ impl Plan {
     /// Compiles the registry graph and links its tree.
     fn build<Tree, Links>(registry: Registry<Tree>) -> Result<RcThreadSafety<Self>, Diagnostics>
     where
-        Node<Tree, ContainerLeaf>: Link<Node<Tree, ContainerLeaf>, Links> + Describe,
-        Linked<Tree, Links>: Walk<Linked<Tree, Links>> + SendSafety + SyncSafety + 'static,
+        Node<Tree, ContainerLeaf>: Link<Node<Tree, ContainerLeaf>, Links>,
+        Linked<Tree, Links>:
+            Walk<Linked<Tree, Links>> + DescribeLinked<Linked<Tree, Links>> + CollectRuntime + SendSafety + SyncSafety + 'static,
     {
         let mut scopes = registry.scopes;
         scopes.sort_by_key(|scope| scope.priority);
@@ -80,13 +88,24 @@ impl Plan {
         let container = ContainerLeaf {
             scope: *scopes.first().expect("a registry has at least one scope"),
         };
-        let registry = Registry::from_parts(Node(registry.tree, container), scopes.clone());
-        let compiled = compile(registry.graph())?;
-        let tree = alloc::boxed::Box::new(registry.tree.link());
+        let tree = alloc::boxed::Box::new(Node(registry.tree, container).link());
+        let mut graph = froodi_compile_core::Graph::new(scopes.iter().copied().map(Into::into).collect());
+        tree.describe_linked(&mut graph.registrations);
         let mut entries = Vec::new();
         tree.walk(&mut entries);
+        let mut runtime = Vec::new();
+        tree.collect_runtime(&mut runtime);
+        for fragment in runtime {
+            fragment.describe_runtime(&mut graph.registrations);
+            fragment.walk_runtime(&mut entries);
+        }
+        let type_ids = graph.registrations.iter().map(|registration| registration.key).collect();
+        let compiled = compile(graph)?;
         let root = core::ptr::from_ref::<Linked<Tree, Links>>(&tree).cast();
         Ok(RcThreadSafety::new(Self {
+            type_ids,
+            #[cfg(feature = "thread_safe")]
+            locks: NodeLocks::new(entries.len()),
             compiled,
             _tree: tree,
             root,
@@ -132,8 +151,9 @@ impl Container {
     #[must_use]
     pub fn new<Tree, Links>(registry: Registry<Tree>) -> Self
     where
-        Node<Tree, ContainerLeaf>: Link<Node<Tree, ContainerLeaf>, Links> + Describe,
-        Linked<Tree, Links>: Walk<Linked<Tree, Links>> + SendSafety + SyncSafety + 'static,
+        Node<Tree, ContainerLeaf>: Link<Node<Tree, ContainerLeaf>, Links>,
+        Linked<Tree, Links>:
+            Walk<Linked<Tree, Links>> + DescribeLinked<Linked<Tree, Links>> + CollectRuntime + SendSafety + SyncSafety + 'static,
     {
         Self::try_new(registry).unwrap_or_else(|diagnostics| panic!("invalid registry:\n{diagnostics}"))
     }
@@ -145,8 +165,9 @@ impl Container {
     /// violations. Missing and ambiguous providers of static dependencies are compile errors.
     pub fn try_new<Tree, Links>(registry: Registry<Tree>) -> Result<Self, Diagnostics>
     where
-        Node<Tree, ContainerLeaf>: Link<Node<Tree, ContainerLeaf>, Links> + Describe,
-        Linked<Tree, Links>: Walk<Linked<Tree, Links>> + SendSafety + SyncSafety + 'static,
+        Node<Tree, ContainerLeaf>: Link<Node<Tree, ContainerLeaf>, Links>,
+        Linked<Tree, Links>:
+            Walk<Linked<Tree, Links>> + DescribeLinked<Linked<Tree, Links>> + CollectRuntime + SendSafety + SyncSafety + 'static,
     {
         Ok(Self::root(Plan::build(registry)?, |scope| !scope.is_skipped_by_default))
     }
@@ -159,8 +180,9 @@ impl Container {
     #[allow(clippy::needless_pass_by_value)]
     pub fn new_with_start_scope<Tree, Links, S: Scope>(registry: Registry<Tree>, scope: S) -> Self
     where
-        Node<Tree, ContainerLeaf>: Link<Node<Tree, ContainerLeaf>, Links> + Describe,
-        Linked<Tree, Links>: Walk<Linked<Tree, Links>> + SendSafety + SyncSafety + 'static,
+        Node<Tree, ContainerLeaf>: Link<Node<Tree, ContainerLeaf>, Links>,
+        Linked<Tree, Links>:
+            Walk<Linked<Tree, Links>> + DescribeLinked<Linked<Tree, Links>> + CollectRuntime + SendSafety + SyncSafety + 'static,
     {
         let priority = scope.priority();
         let plan = Plan::build(registry).unwrap_or_else(|diagnostics| panic!("invalid registry:\n{diagnostics}"));
@@ -254,7 +276,7 @@ impl Container {
     }
 
     #[inline]
-    fn scope(&self) -> ScopeData {
+    pub(crate) fn scope(&self) -> ScopeData {
         self.inner.plan.scopes[self.inner.level.index()]
     }
 
@@ -310,17 +332,62 @@ impl Container {
         // SAFETY: the registration was found by `Dep`'s `TypeId`, so it provides `Dep`, and the
         // entry belongs to the tree `plan.root` points to.
         unsafe {
-            (entry.transient)(plan.root, entry.item, self, out.as_mut_ptr().cast())?;
+            (entry.transient)(plan.root, entry.item, self, id.index(), out.as_mut_ptr().cast())?;
             Ok(out.assume_init())
         }
     }
 
+    /// `get_transient` semantics for the registration at `index`, which must provide `Dep`.
+    ///
+    /// # Errors
+    /// Returns [`ResolveErrorKind::IncorrectType`] if it provides another type, or the
+    /// construction error.
+    pub(crate) fn transient_at<Dep: 'static>(&self, index: usize) -> Result<Dep, ResolveErrorKind> {
+        let plan = &*self.inner.plan;
+        if plan.type_ids[index] != TypeId::of::<Dep>() {
+            return Err(ResolveErrorKind::IncorrectType {
+                expected: TypeInfo::of::<Dep>(),
+                actual: TypeInfo {
+                    name: plan.compiled.nodes()[index].type_name,
+                    id: plan.type_ids[index],
+                },
+            });
+        }
+        let entry = &plan.entries[index];
+        let mut out = core::mem::MaybeUninit::<Dep>::uninit();
+        // SAFETY: the registration provides `Dep` (checked above) and belongs to this plan.
+        unsafe {
+            (entry.transient)(plan.root, entry.item, self, index, out.as_mut_ptr().cast())?;
+            Ok(out.assume_init())
+        }
+    }
+
+    /// `get_transient` semantics for the registration at `index`: the result of `construct`, a
+    /// direct call to its factory, unless the registration is replaced.
+    pub(crate) fn transient_with<Dep: 'static>(
+        &self,
+        index: usize,
+        construct: impl FnOnce(&Container) -> Result<Dep, ResolveErrorKind>,
+    ) -> Result<Dep, ResolveErrorKind> {
+        match self.inner.plan.compiled.nodes()[index].replaced_by {
+            Some(replacement) => self.transient_at(replacement.index()),
+            None => construct(self),
+        }
+    }
+
+    /// Dependency edges of the registration at `index`, in parameter order.
+    pub(crate) fn edges(&self, index: usize) -> &[froodi_compile_core::CompiledEdge] {
+        &self.inner.plan.compiled.nodes()[index].edges
+    }
+
     /// `get` semantics for the registration at `index`, constructing through its entry.
-    fn shared(&self, index: usize) -> Result<RcAnyThreadSafety, ResolveErrorKind> {
+    pub(crate) fn shared(&self, index: usize) -> Result<RcAnyThreadSafety, ResolveErrorKind> {
         let plan = &*self.inner.plan;
         let entry = &plan.entries[index];
         // SAFETY: the entry was produced by walking the tree `plan.root` points to.
-        self.shared_with(index, |container| unsafe { (entry.construct)(plan.root, entry.item, container) })
+        self.shared_with(index, |container| unsafe {
+            (entry.construct)(plan.root, entry.item, container, index)
+        })
     }
 
     /// `get` semantics for the registration at `index`: the cached value, or the result of
@@ -331,6 +398,9 @@ impl Container {
         index: usize,
         construct: impl FnOnce(&Container) -> Result<RcAnyThreadSafety, ResolveErrorKind>,
     ) -> Result<RcAnyThreadSafety, ResolveErrorKind> {
+        if let Some(replacement) = self.inner.plan.compiled.nodes()[index].replaced_by {
+            return self.shared(replacement.index());
+        }
         if let Some(value) = &self.inner.slots.read()[index] {
             return Ok(value.clone());
         }
@@ -346,6 +416,14 @@ impl Container {
                 });
             }
             Ordering::Equal => {
+                // Serialize construction of this registration across the tree, then look again:
+                // another thread may have cached it meanwhile.
+                #[cfg(feature = "thread_safe")]
+                let _guard = plan.locks.get(index).lock();
+                #[cfg(feature = "thread_safe")]
+                if let Some(value) = &self.inner.slots.read()[index] {
+                    return Ok(value.clone());
+                }
                 let value = construct(self)?;
                 if node.finalizer.is_some() {
                     self.inner.resolved.write().push((index, value.clone()));

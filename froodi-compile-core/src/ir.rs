@@ -123,6 +123,9 @@ pub struct Registration<K> {
     pub finalizer: Option<ExecutionKind>,
     pub execution: ExecutionKind,
     pub source: ValueSource,
+    /// The registration explicitly replaces the other registration of its key, for example a test
+    /// override. Without this flag two registrations of one key are a duplicate.
+    pub replaces: bool,
     pub origin: Option<Origin>,
 }
 
