@@ -11,6 +11,11 @@
 //! factory cannot depend on an async registration: that is a compile error, because the sync
 //! call cannot await.
 
+#![allow(
+    clippy::manual_async_fn,
+    reason = "trait signatures state the `SendSafety` bound on returned futures"
+)]
+
 use alloc::{boxed::Box, vec::Vec};
 use core::{any::TypeId, future::Future, marker::PhantomData, pin::Pin};
 
@@ -350,7 +355,6 @@ where
 {
     type Provides = T;
 
-    #[allow(clippy::manual_async_fn, reason = "the trait's signature states the `SendSafety` bound")]
     fn construct_async<'a>(
         &'a self,
         root: &'a Root,
@@ -464,11 +468,16 @@ macro_rules! impl_async_deps_exec {
 
 all_the_tuple_pairs!(impl_async_deps_exec);
 
+type ConstructAsync =
+    for<'a> unsafe fn(*const (), *const (), &'a Container, usize) -> BoxFuture<'a, Result<RcAnyThreadSafety, ResolveErrorKind>>;
+type TransientAsync =
+    for<'a> unsafe fn(*const (), *const (), &'a Container, usize) -> BoxFuture<'a, Result<BoxAnyThreadSafety, ResolveErrorKind>>;
+
 /// Async construction functions of one registration.
 pub(crate) struct AsyncEntry {
     item: *const (),
-    construct: for<'a> unsafe fn(*const (), *const (), &'a Container, usize) -> BoxFuture<'a, Result<RcAnyThreadSafety, ResolveErrorKind>>,
-    transient: for<'a> unsafe fn(*const (), *const (), &'a Container, usize) -> BoxFuture<'a, Result<BoxAnyThreadSafety, ResolveErrorKind>>,
+    construct: ConstructAsync,
+    transient: TransientAsync,
     finalize: unsafe fn(*const (), RcAnyThreadSafety) -> BoxFuture<'static, ()>,
 }
 
@@ -498,12 +507,12 @@ impl AsyncTable {
 
 /// # Safety
 /// `root` must point to a live `Root`, `item` to a live `Item` inside it.
-unsafe fn construct_async_erased<'a, Root: SyncSafety + 'static, Item>(
+unsafe fn construct_async_erased<Root: SyncSafety + 'static, Item>(
     root: *const (),
     item: *const (),
-    container: &'a Container,
+    container: &Container,
     index: usize,
-) -> BoxFuture<'a, Result<RcAnyThreadSafety, ResolveErrorKind>>
+) -> BoxFuture<'_, Result<RcAnyThreadSafety, ResolveErrorKind>>
 where
     Item: AsyncExec<Root> + SyncSafety + 'static,
     Item::Provides: SendSafety + SyncSafety,
@@ -515,12 +524,12 @@ where
 
 /// # Safety
 /// As [`construct_async_erased`].
-unsafe fn transient_async_erased<'a, Root: SyncSafety + 'static, Item>(
+unsafe fn transient_async_erased<Root: SyncSafety + 'static, Item>(
     root: *const (),
     item: *const (),
-    container: &'a Container,
+    container: &Container,
     index: usize,
-) -> BoxFuture<'a, Result<BoxAnyThreadSafety, ResolveErrorKind>>
+) -> BoxFuture<'_, Result<BoxAnyThreadSafety, ResolveErrorKind>>
 where
     Item: AsyncExec<Root> + SyncSafety + 'static,
     Item::Provides: SendSafety + SyncSafety,
@@ -714,16 +723,15 @@ impl Container {
             let resolved = core::mem::take(&mut *container.inner.resolved.write());
             let plan = &container.inner.plan;
             for (index, value) in resolved.into_iter().rev() {
-                match (&plan.async_table.entries[index], plan.compiled.nodes()[index].finalizer) {
-                    (Some(entry), Some(ExecutionKind::Async)) => {
-                        // SAFETY: `value` was constructed by the registration at `index`.
-                        unsafe { (entry.finalize)(entry.item, value) }.await;
-                    }
-                    _ => {
-                        let entry = &plan.entries[index];
-                        // SAFETY: `value` was constructed by the registration at `index`.
-                        unsafe { (entry.finalize)(entry.item, value) };
-                    }
+                if let (Some(entry), Some(ExecutionKind::Async)) =
+                    (&plan.async_table.entries[index], plan.compiled.nodes()[index].finalizer)
+                {
+                    // SAFETY: `value` was constructed by the registration at `index`.
+                    unsafe { (entry.finalize)(entry.item, value) }.await;
+                } else {
+                    let entry = &plan.entries[index];
+                    // SAFETY: `value` was constructed by the registration at `index`.
+                    unsafe { (entry.finalize)(entry.item, value) };
                 }
             }
             container.inner.reset_slots();
@@ -785,7 +793,7 @@ impl Container {
         if let Some(replacement) = node.replaced_by {
             return self.shared(replacement.index()).await;
         }
-        if let Some(value) = &inner.slots.read()[index] {
+        if let Some(value) = inner.slots.read().get(index) {
             return Ok(value.clone());
         }
         let value = match node.scope.cmp(&inner.level) {
@@ -804,7 +812,7 @@ impl Container {
                 #[cfg(feature = "thread_safe")]
                 let _guard = inner.plan.async_table.locks[index].lock().await;
                 #[cfg(feature = "thread_safe")]
-                if let Some(value) = &inner.slots.read()[index] {
+                if let Some(value) = inner.slots.read().get(index) {
                     return Ok(value.clone());
                 }
                 let value = construct(self).await?;
@@ -815,7 +823,7 @@ impl Container {
             }
         };
         if node.cache_provides {
-            inner.slots.write()[index] = Some(value.clone());
+            inner.slots.write().set(index, value.clone(), inner.plan.entries.len());
         }
         Ok(value)
     }

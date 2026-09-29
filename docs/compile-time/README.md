@@ -34,6 +34,15 @@ runtime factory/application state
 
 A factory can therefore remain an ordinary Rust function or closure, including a captured closure, while its dependency structure is compiled ahead of runtime where possible.
 
+## Status
+
+The prototype runs Froodi-style registries end to end (`froodi-compile/tests/end_to_end.rs`):
+unannotated factories, `registry!` / `async_registry!`, scopes, cache policy, `Context`,
+finalizers, `get` / `get_transient`, runtime registries and declared static/runtime boundaries.
+Every behaviour shared with Froodi is a scenario compiled against both engines
+(`froodi-compile/tests/compat.rs`, `async_compat.rs`). Decisions are ADRs 0001–0006 in
+[decisions/](decisions/); measurements are in [benchmarks.md](benchmarks.md).
+
 ## Documents
 
 - [requirements.md](requirements.md) — project invariants and non-negotiable compatibility constraints.

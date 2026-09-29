@@ -12,7 +12,7 @@ mod graphs;
 mod bench {
     use super::graphs;
 
-    use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
+    use criterion::{criterion_group, BatchSize, BenchmarkId, Criterion};
     use graphs::{compile_engine as direct, compile_engine::indexed, froodi_engine as froodi, Host, Wide, S99, T99};
     use std::{hint::black_box, sync::Arc};
 
@@ -59,6 +59,11 @@ mod bench {
                 let request = app.clone().enter_build().unwrap();
                 black_box(request.get::<S99>().unwrap());
             });
+        });
+
+        each_engine!(group, "enter_build_scope_transition", |engine| |b| {
+            let app = engine::chain(false);
+            b.iter(|| black_box(app.clone().enter_build().unwrap()));
         });
 
         each_engine!(group, "get_transient_chain_100", |engine| |b| {
