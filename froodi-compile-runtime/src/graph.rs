@@ -29,7 +29,7 @@ use crate::{
     inject::{Inject, InjectTransient},
     instantiator::Instantiator,
     scope::ScopeData,
-    thread_safety::{RcAnyThreadSafety, RcThreadSafety, SendSafety, SyncSafety},
+    thread_safety::{downcast_unchecked, RcAnyThreadSafety, RcThreadSafety, SendSafety, SyncSafety},
 };
 
 /// Path step: the leaf itself.
@@ -42,7 +42,6 @@ pub struct R<I>(PhantomData<I>);
 /// A registration before linking.
 pub struct Reg<T, F, D, Fin> {
     pub(crate) factory: F,
-    #[expect(dead_code, reason = "finalizers run when a container closes, issue #61")]
     pub(crate) finalizer: Fin,
     pub(crate) meta: Meta,
     marker: PhantomData<fn() -> (T, D)>,
@@ -213,7 +212,7 @@ pub trait At<I> {
     fn at(&self) -> &Self::Item;
 }
 
-impl<T, F, D, DI> At<Here> for Linked<T, F, D, DI> {
+impl<T, F, D, Fin, DI> At<Here> for Linked<T, F, D, Fin, DI> {
     type Item = Self;
     const INDEX: usize = 0;
 
@@ -256,6 +255,11 @@ pub trait DepIn<Root, I> {}
 
 impl<Root: Has<T, I>, T, I> DepIn<Root, SharedAt<I>> for Inject<T> {}
 
+/// Index of an `InjectTransient<T>` dependency: the path to its provider.
+pub struct TransientAt<I>(PhantomData<I>);
+
+impl<Root: Has<T, I>, T, I> DepIn<Root, TransientAt<I>> for InjectTransient<T> {}
+
 /// Index of a custom resolver parameter: there is nothing to link.
 pub struct ByResolver;
 
@@ -275,12 +279,13 @@ all_the_tuple_pairs!(impl_deps_in);
 type LinkedMarker<T, D, DI> = PhantomData<fn() -> (T, D, DI)>;
 
 /// A registration whose dependency paths `DI` are resolved.
-pub struct Linked<T, F, D, DI> {
+pub struct Linked<T, F, D, Fin, DI> {
     pub(crate) factory: F,
+    pub(crate) finalizer: Fin,
     marker: LinkedMarker<T, D, DI>,
 }
 
-impl<T, F, D, DI> Size for Linked<T, F, D, DI> {
+impl<T, F, D, Fin, DI> Size for Linked<T, F, D, Fin, DI> {
     const SIZE: usize = 1;
 }
 
@@ -296,12 +301,13 @@ impl<Root, T, F, D, Fin, DI> Link<Root, DI> for Reg<T, F, D, Fin>
 where
     D: DepsIn<Root, DI>,
 {
-    type Linked = Linked<T, F, D, DI>;
+    type Linked = Linked<T, F, D, Fin, DI>;
 
     #[inline]
     fn link(self) -> Self::Linked {
         Linked {
             factory: self.factory,
+            finalizer: self.finalizer,
             marker: PhantomData,
         }
     }
@@ -325,7 +331,7 @@ pub trait Exec<Root> {
     fn construct(&self, root: &Root, container: &Container) -> Result<Self::Provides, ResolveErrorKind>;
 }
 
-impl<Root, T: 'static, F, D, DI> Exec<Root> for Linked<T, F, D, DI>
+impl<Root, T: 'static, F, D, Fin, DI> Exec<Root> for Linked<T, F, D, Fin, DI>
 where
     F: Instantiator<D, Provides = T>,
     D: DepsExec<Root, DI>,
@@ -354,14 +360,30 @@ pub trait DepExec<Root, I>: Sized {
     fn resolve(root: &Root, container: &Container) -> Result<Self, ResolveErrorKind>;
 }
 
-impl<Root, T, I> DepExec<Root, SharedAt<I>> for Inject<T>
+impl<Root, T: SendSafety + SyncSafety + 'static, I> DepExec<Root, SharedAt<I>> for Inject<T>
 where
     Root: At<I>,
     Root::Item: Exec<Root, Provides = T>,
 {
     #[inline]
     fn resolve(root: &Root, container: &Container) -> Result<Self, ResolveErrorKind> {
-        Ok(Inject(RcThreadSafety::new(root.at().construct(root, container)?)))
+        let value = container.shared_with(Root::INDEX, |owner| {
+            Ok(RcThreadSafety::new(root.at().construct(root, owner)?) as RcAnyThreadSafety)
+        })?;
+        // SAFETY: slot `Root::INDEX` only ever holds values of the registration at path `I`,
+        // which provides `T`.
+        Ok(Inject(unsafe { downcast_unchecked(value) }))
+    }
+}
+
+impl<Root, T, I> DepExec<Root, TransientAt<I>> for InjectTransient<T>
+where
+    Root: At<I>,
+    Root::Item: Exec<Root, Provides = T>,
+{
+    #[inline]
+    fn resolve(root: &Root, container: &Container) -> Result<Self, ResolveErrorKind> {
+        Ok(InjectTransient(root.at().construct(root, container)?))
     }
 }
 
@@ -395,10 +417,54 @@ all_the_tuple_pairs!(impl_deps_exec);
 
 /// Construction entry of one registration, reachable from the public `get::<T>()` boundary.
 pub(crate) struct Entry {
-    pub(crate) type_id: core::any::TypeId,
     /// The leaf inside the boxed linked tree.
     pub(crate) item: *const (),
     pub(crate) construct: unsafe fn(root: *const (), item: *const (), &Container) -> Result<RcAnyThreadSafety, ResolveErrorKind>,
+    /// Constructs a fresh value into `out`, which must point to uninitialized memory for the
+    /// registration's provided type.
+    pub(crate) transient: unsafe fn(root: *const (), item: *const (), &Container, out: *mut ()) -> Result<(), ResolveErrorKind>,
+    /// Runs the registration's finalizer on a value it provided.
+    pub(crate) finalize: unsafe fn(item: *const (), value: RcAnyThreadSafety),
+}
+
+/// # Safety
+/// `item` must point to a live `Item`, and `value` must have been provided by it.
+unsafe fn finalize_erased<Item: Finalize>(item: *const (), value: RcAnyThreadSafety) {
+    // SAFETY: guaranteed by the caller.
+    unsafe { (*item.cast::<Item>()).finalize(value) };
+}
+
+/// Runs a linked registration's finalizer, if it has one.
+pub trait Finalize {
+    /// # Safety
+    /// `value` must have been provided by this registration.
+    unsafe fn finalize(&self, value: RcAnyThreadSafety);
+}
+
+impl<T: 'static, F, D, Fin: MaybeFinalizer<T>, DI> Finalize for Linked<T, F, D, Fin, DI> {
+    unsafe fn finalize(&self, value: RcAnyThreadSafety) {
+        // SAFETY: the caller guarantees `value` came from this registration, which provides `T`.
+        self.finalizer.finalize(unsafe { downcast_unchecked::<T>(value) });
+    }
+}
+
+/// # Safety
+/// As [`construct_erased`]; `out` must be valid for writing an `Item::Provides`.
+unsafe fn transient_erased<Root, Item>(
+    root: *const (),
+    item: *const (),
+    container: &Container,
+    out: *mut (),
+) -> Result<(), ResolveErrorKind>
+where
+    Item: Exec<Root>,
+{
+    // SAFETY: guaranteed by the caller; both pointers come from the same boxed tree.
+    let (root, item) = unsafe { (&*root.cast::<Root>(), &*item.cast::<Item>()) };
+    let value = item.construct(root, container)?;
+    // SAFETY: guaranteed by the caller.
+    unsafe { out.cast::<Item::Provides>().write(value) };
+    Ok(())
 }
 
 /// # Safety
@@ -424,17 +490,19 @@ pub trait Walk<Root> {
     fn walk(&self, entries: &mut alloc::vec::Vec<Entry>);
 }
 
-impl<Root, T, F, D, DI> Walk<Root> for Linked<T, F, D, DI>
+impl<Root, T, F, D, Fin, DI> Walk<Root> for Linked<T, F, D, Fin, DI>
 where
     Self: Exec<Root, Provides = T>,
     T: SendSafety + SyncSafety + 'static,
+    Fin: MaybeFinalizer<T>,
 {
     #[allow(private_interfaces)]
     fn walk(&self, entries: &mut alloc::vec::Vec<Entry>) {
         entries.push(Entry {
-            type_id: core::any::TypeId::of::<T>(),
             item: core::ptr::from_ref(self).cast(),
             construct: construct_erased::<Root, Self>,
+            transient: transient_erased::<Root, Self>,
+            finalize: finalize_erased::<Self>,
         });
     }
 }
@@ -444,5 +512,77 @@ impl<Root, A: Walk<Root>, B: Walk<Root>> Walk<Root> for Node<A, B> {
     fn walk(&self, entries: &mut alloc::vec::Vec<Entry>) {
         self.0.walk(entries);
         self.1.walk(entries);
+    }
+}
+
+/// The container itself as a registration: root scope, never cached, as in Froodi (caching the
+/// container in its own cache would keep it alive). `Container::new` appends it to every tree.
+pub struct ContainerLeaf {
+    pub(crate) scope: ScopeData,
+}
+
+impl Size for ContainerLeaf {
+    const SIZE: usize = 1;
+}
+
+impl Has<Container, Here> for ContainerLeaf {}
+
+impl At<Here> for ContainerLeaf {
+    type Item = Self;
+    const INDEX: usize = 0;
+
+    #[inline]
+    fn at(&self) -> &Self {
+        self
+    }
+}
+
+impl<Root> Link<Root, ()> for ContainerLeaf {
+    type Linked = Self;
+
+    #[inline]
+    fn link(self) -> Self {
+        self
+    }
+}
+
+impl<Root> Exec<Root> for ContainerLeaf {
+    type Provides = Container;
+
+    #[inline]
+    fn construct(&self, _root: &Root, container: &Container) -> Result<Container, ResolveErrorKind> {
+        Ok(container.clone())
+    }
+}
+
+impl Finalize for ContainerLeaf {
+    unsafe fn finalize(&self, _value: RcAnyThreadSafety) {}
+}
+
+impl<Root> Walk<Root> for ContainerLeaf {
+    #[allow(private_interfaces)]
+    fn walk(&self, entries: &mut Vec<Entry>) {
+        entries.push(Entry {
+            item: core::ptr::from_ref(self).cast(),
+            construct: construct_erased::<Root, Self>,
+            transient: transient_erased::<Root, Self>,
+            finalize: finalize_erased::<Self>,
+        });
+    }
+}
+
+impl Describe for ContainerLeaf {
+    fn describe(&self, out: &mut Vec<Registration<TypeId>>) {
+        out.push(Registration {
+            key: TypeId::of::<Container>(),
+            type_name: core::any::type_name::<Container>(),
+            requests: Vec::new(),
+            scope: self.scope.into(),
+            cache_provides: false,
+            finalizer: None,
+            execution: ExecutionKind::Sync,
+            source: ValueSource::Container,
+            origin: None,
+        });
     }
 }

@@ -158,10 +158,10 @@ fn leaf(scope: &Expr, entry: &Entry) -> TokenStream2 {
     let factory = &entry.factory;
     let source = value_source(factory);
     let origin = origin(factory);
-    let config = entry
-        .config
-        .as_ref()
-        .map_or_else(|| quote!(::core::option::Option::None), |config| quote!(::core::option::Option::Some(#config)));
+    let config = entry.config.as_ref().map_or_else(
+        || quote!(::core::option::Option::None),
+        |config| quote!(::core::option::Option::Some(#config)),
+    );
     let finalizer = entry.finalizer.as_ref().map_or_else(
         || quote!(::froodi_compile::__private::NoFinalizer),
         |finalizer| quote!(::froodi_compile::__private::WithFinalizer(#finalizer)),

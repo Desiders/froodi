@@ -369,3 +369,11 @@ fn records_custom_resolver_requests_without_resolving_them() {
     let edges: Vec<_> = compiled.node(RegistrationId(0)).edges.iter().map(|edge| edge.target).collect();
     assert_eq!(edges, ids(&[1]));
 }
+
+#[test]
+fn exposes_nodes_in_registration_order() {
+    let compiled = compile(graph(vec![reg("A", APP, &[]), reg("B", REQUEST, &[])])).unwrap();
+
+    let names: Vec<_> = compiled.nodes().iter().map(|node| node.type_name).collect();
+    assert_eq!(names, vec!["A", "B"]);
+}

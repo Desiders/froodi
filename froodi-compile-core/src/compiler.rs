@@ -86,6 +86,12 @@ impl<K: Ord> CompiledGraph<K> {
         (0..self.nodes.len()).map(id).filter(move |&to| self.reaches(from, to))
     }
 
+    /// Every node, indexed by registration id.
+    #[must_use]
+    pub fn nodes(&self) -> &[CompiledNode] {
+        &self.nodes
+    }
+
     #[must_use]
     pub fn node(&self, id: RegistrationId) -> &CompiledNode {
         &self.nodes[id.index()]

@@ -15,6 +15,7 @@ pub mod finalizer;
 pub mod graph;
 pub mod inject;
 pub mod instantiator;
+pub(crate) mod lock;
 pub mod registry;
 pub mod scope;
 pub mod thread_safety;
