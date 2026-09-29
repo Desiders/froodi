@@ -34,6 +34,7 @@ mod backend {
     use std::sync;
 
     pub(crate) type RwLockReadGuard<'a, T> = sync::RwLockReadGuard<'a, T>;
+
     pub(crate) type RwLockWriteGuard<'a, T> = sync::RwLockWriteGuard<'a, T>;
 
     pub(crate) struct RwLock<T>(sync::RwLock<T>);

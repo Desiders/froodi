@@ -31,6 +31,7 @@ use crate::{
 
 #[cfg(feature = "thread_safe")]
 type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
+
 #[cfg(not(feature = "thread_safe"))]
 type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + 'a>>;
 
@@ -167,24 +168,30 @@ impl<Out: 'static, Inst, Deps: DependenciesMetadata, Fin: MaybeFinalizer<Out>> D
 }
 
 pub struct AsyncProvider<Out>(PhantomData<fn() -> Out>);
-impl<Out> Size for AsyncProvider<Out> {
+
+unsafe impl<Out> Size for AsyncProvider<Out> {
     const SIZE: usize = 1;
 }
-impl<Out> ProviderPath<Out, Here> for AsyncProvider<Out> {
+
+unsafe impl<Out> ProviderPath<Out, Here> for AsyncProvider<Out> {
     type Provider = Self;
+
     const INDEX: usize = 0;
 }
+
 impl<Out> SupportsExecution<AsyncExecution> for AsyncProvider<Out> {}
-impl<Out, Inst, Deps, Fin> RegistryIndex for AsyncReg<Out, Inst, Deps, Fin> {
+
+unsafe impl<Out, Inst, Deps, Fin> RegistryIndex for AsyncReg<Out, Inst, Deps, Fin> {
     type Index = AsyncProvider<Out>;
 }
 
-impl<Root, Out, Inst, Deps, Fin, Links> Link<Root, Links> for AsyncReg<Out, Inst, Deps, Fin>
+unsafe impl<Root, Out, Inst, Deps, Fin, Links> Link<Root, Links> for AsyncReg<Out, Inst, Deps, Fin>
 where
     Deps: LinkDependencies<Root, Links>,
     Deps::Providers: SupportsExecution<AsyncExecution>,
 {
     type Linked = AsyncLinked<Out, Inst, Deps, Fin>;
+
     const TOPOLOGY: crate::topology::Topology = crate::topology::Topology::leaf(Deps::TARGETS);
 
     #[inline]
@@ -457,6 +464,7 @@ pub(crate) struct AsyncRegistrationExecutor {
 // `Send + Sync` in thread-safe builds; the other fields are plain function pointers.
 #[cfg(feature = "thread_safe")]
 unsafe impl Send for AsyncRegistrationExecutor {}
+
 #[cfg(feature = "thread_safe")]
 unsafe impl Sync for AsyncRegistrationExecutor {}
 

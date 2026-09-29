@@ -13,7 +13,6 @@ use froodi_auto::{entry_getters::__ENTRY_GETTERS, injectable, AutoRegistries as 
 
 #[derive(Debug)]
 struct D;
-
 struct C;
 
 #[injectable]

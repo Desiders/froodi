@@ -7,305 +7,305 @@ error: `scope` block must have a scope
    = note: this error originates in the macro `async_registry` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error: `scope` block must contain at least one entry
-  --> tests/ui/async_registry_errors.rs:19:5
+  --> tests/ui/async_registry_errors.rs:20:5
    |
-19 |     async_registry! { scope(App) [] };
+20 |     async_registry! { scope(App) [] };
    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    |
    = note: this error originates in the macro `async_registry` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error: Missing comma after `scope` block
-  --> tests/ui/async_registry_errors.rs:23:5
+  --> tests/ui/async_registry_errors.rs:25:5
    |
-23 |     async_registry! { scope(App) [ provide(inst) ] provide(App, inst) };
+25 |     async_registry! { scope(App) [ provide(inst) ] provide(App, inst) };
    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    |
    = note: this error originates in the macro `async_registry` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error: `scope(...)` entries must be wrapped in square brackets `[ ... ]`, found `( ... )`
-  --> tests/ui/async_registry_errors.rs:27:5
+  --> tests/ui/async_registry_errors.rs:30:5
    |
-27 |     async_registry! { scope(App) ( provide(inst) ) };
+30 |     async_registry! { scope(App) ( provide(inst) ) };
    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    |
    = note: this error originates in the macro `async_registry` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error: `scope(...)` entries must be wrapped in square brackets `[ ... ]`, found `{ ... }`
-  --> tests/ui/async_registry_errors.rs:31:5
+  --> tests/ui/async_registry_errors.rs:35:5
    |
-31 |     async_registry! { scope(App) { provide(inst) } };
+35 |     async_registry! { scope(App) { provide(inst) } };
    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    |
    = note: this error originates in the macro `async_registry` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error: `scope(...)` accepts exactly one scope
-  --> tests/ui/async_registry_errors.rs:35:5
+  --> tests/ui/async_registry_errors.rs:40:5
    |
-35 |     async_registry! { scope(App, Session) [ provide(inst) ] };
+40 |     async_registry! { scope(App, Session) [ provide(inst) ] };
    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    |
    = note: this error originates in the macro `async_registry` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error: `provide` must have a scope and an instantiator
-  --> tests/ui/async_registry_errors.rs:39:5
+  --> tests/ui/async_registry_errors.rs:45:5
    |
-39 |     async_registry! { provide() };
+45 |     async_registry! { provide() };
    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    |
    = note: this error originates in the macro `async_registry` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error: `provide` must include an instantiator after the scope
-  --> tests/ui/async_registry_errors.rs:43:5
+  --> tests/ui/async_registry_errors.rs:50:5
    |
-43 |     async_registry! { provide(App) };
+50 |     async_registry! { provide(App) };
    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    |
    = note: this error originates in the macro `async_registry` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error: `provide` must include a scope before the instantiator
-  --> tests/ui/async_registry_errors.rs:47:5
+  --> tests/ui/async_registry_errors.rs:55:5
    |
-47 |     async_registry! { provide(, inst) };
+55 |     async_registry! { provide(, inst) };
    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    |
    = note: this error originates in the macro `async_registry` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error: Missing comma after `provide` block
-  --> tests/ui/async_registry_errors.rs:51:5
+  --> tests/ui/async_registry_errors.rs:60:5
    |
-51 |     async_registry! { provide(App, inst) provide(Session, inst) };
+60 |     async_registry! { provide(App, inst) provide(Session, inst) };
    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    |
    = note: this error originates in the macro `async_registry` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error: `extend` macro must be at the last macro invocation
-  --> tests/ui/async_registry_errors.rs:55:5
+  --> tests/ui/async_registry_errors.rs:65:5
    |
-55 |     async_registry! { extend(async_registry!()), provide(App, inst) };
+65 |     async_registry! { extend(async_registry!()), provide(App, inst) };
    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    |
    = note: this error originates in the macro `async_registry` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error: `extend` macro must be called with at least one argument
-  --> tests/ui/async_registry_errors.rs:59:5
+  --> tests/ui/async_registry_errors.rs:70:5
    |
-59 |     async_registry! { extend() };
+70 |     async_registry! { extend() };
    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    |
    = note: this error originates in the macro `async_registry` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error: Missing comma after/in `extend` block or unexpected comma in the block
-  --> tests/ui/async_registry_errors.rs:63:5
+  --> tests/ui/async_registry_errors.rs:75:5
    |
-63 |     async_registry! { extend(async_registry!()) provide(App, inst) };
+75 |     async_registry! { extend(async_registry!()) provide(App, inst) };
    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    |
    = note: this error originates in the macro `async_registry` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error: Unexpected leading or double comma
-  --> tests/ui/async_registry_errors.rs:67:5
+  --> tests/ui/async_registry_errors.rs:80:5
    |
-67 |     async_registry! { , provide(App, inst) };
+80 |     async_registry! { , provide(App, inst) };
    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    |
    = note: this error originates in the macro `async_registry` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error: Duplicate or unexpected comma
-  --> tests/ui/async_registry_errors.rs:71:5
+  --> tests/ui/async_registry_errors.rs:85:5
    |
-71 |     async_registry! { , };
+85 |     async_registry! { , };
    |     ^^^^^^^^^^^^^^^^^^^^^
    |
    = note: this error originates in the macro `async_registry` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error: Unknown syntax: totally bogus
-  --> tests/ui/async_registry_errors.rs:75:5
+  --> tests/ui/async_registry_errors.rs:90:5
    |
-75 |     async_registry! { totally bogus };
+90 |     async_registry! { totally bogus };
    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    |
    = note: this error originates in the macro `async_registry` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error: Unexpected double comma after scope in `provide` entry
-  --> tests/ui/async_registry_errors.rs:79:5
+  --> tests/ui/async_registry_errors.rs:95:5
    |
-79 |     async_registry! { provide(App,, inst) };
+95 |     async_registry! { provide(App,, inst) };
    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    |
    = note: this error originates in the macro `$crate::async_registry_internal` which comes from the expansion of the macro `async_registry` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error: Malformed entries in `scope(...)` block: `provide(inst) provide(inst)`. Entries must be a comma-separated list of `provide(...)` items (e.g. `scope(App) [ provide(a), provide(b) ]`); check for a missing or extra comma, a wrong separator, or an empty `provide()`.
-  --> tests/ui/async_registry_errors.rs:83:5
-   |
-83 |     async_registry! { scope(App) [ provide(inst) provide(inst) ] };
-   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-   |
-   = note: this error originates in the macro `$crate::async_registry_internal` which comes from the expansion of the macro `async_registry` (in Nightly builds, run with -Z macro-backtrace for more info)
+   --> tests/ui/async_registry_errors.rs:100:5
+    |
+100 |     async_registry! { scope(App) [ provide(inst) provide(inst) ] };
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: this error originates in the macro `$crate::async_registry_internal` which comes from the expansion of the macro `async_registry` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error: Unexpected double comma in `provide` entry
-  --> tests/ui/async_registry_errors.rs:87:5
-   |
-87 |     async_registry! { scope(App) [ provide(inst,, config = Config::default()) ] };
-   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-   |
-   = note: this error originates in the macro `$crate::async_registry_internal` which comes from the expansion of the macro `async_registry` (in Nightly builds, run with -Z macro-backtrace for more info)
+   --> tests/ui/async_registry_errors.rs:105:5
+    |
+105 |     async_registry! { scope(App) [ provide(inst,, config = Config::default()) ] };
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: this error originates in the macro `$crate::async_registry_internal` which comes from the expansion of the macro `async_registry` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error: Unexpected double comma after `config` in `provide` entry
-  --> tests/ui/async_registry_errors.rs:91:5
-   |
-91 |     async_registry! { scope(App) [ provide(inst, config = Config::default(),, finalizer = ()) ] };
-   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-   |
-   = note: this error originates in the macro `$crate::async_registry_internal` which comes from the expansion of the macro `async_registry` (in Nightly builds, run with -Z macro-backtrace for more info)
+   --> tests/ui/async_registry_errors.rs:110:5
+    |
+110 |     async_registry! { scope(App) [ provide(inst, config = Config::default(),, finalizer = ()) ] };
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: this error originates in the macro `$crate::async_registry_internal` which comes from the expansion of the macro `async_registry` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error: Unexpected double comma after `finalizer` in `provide` entry
-  --> tests/ui/async_registry_errors.rs:95:5
-   |
-95 |     async_registry! { scope(App) [ provide(inst, finalizer = (),, config = Config::default()) ] };
-   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-   |
-   = note: this error originates in the macro `$crate::async_registry_internal` which comes from the expansion of the macro `async_registry` (in Nightly builds, run with -Z macro-backtrace for more info)
-
-error: Unexpected double comma after entry arguments
-  --> tests/ui/async_registry_errors.rs:99:5
-   |
-99 |     async_registry! { scope(App) [ provide(inst, config = Config::default(), finalizer = (),, x) ] };
-   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-   |
-   = note: this error originates in the macro `$crate::async_registry_internal` which comes from the expansion of the macro `async_registry` (in Nightly builds, run with -Z macro-backtrace for more info)
-
-error: Unexpected double comma after entry arguments
-   --> tests/ui/async_registry_errors.rs:103:5
+   --> tests/ui/async_registry_errors.rs:115:5
     |
-103 |     async_registry! { scope(App) [ provide(inst, finalizer = (), config = Config::default(),, x) ] };
+115 |     async_registry! { scope(App) [ provide(inst, finalizer = (),, config = Config::default()) ] };
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: this error originates in the macro `$crate::async_registry_internal` which comes from the expansion of the macro `async_registry` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: Unexpected double comma after entry arguments
+   --> tests/ui/async_registry_errors.rs:120:5
+    |
+120 |     async_registry! { scope(App) [ provide(inst, config = Config::default(), finalizer = (),, x) ] };
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: this error originates in the macro `$crate::async_registry_internal` which comes from the expansion of the macro `async_registry` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: Unexpected double comma after entry arguments
+   --> tests/ui/async_registry_errors.rs:125:5
+    |
+125 |     async_registry! { scope(App) [ provide(inst, finalizer = (), config = Config::default(),, x) ] };
     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
     |
     = note: this error originates in the macro `$crate::async_registry_internal` which comes from the expansion of the macro `async_registry` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error: Unexpected tokens after the instantiator in a `provide` entry: `garbage`. Expected `provide(instantiator [, config = ...] [, finalizer = ...])`; inside a `scope(...)` block do not pass a scope to `provide`.
-   --> tests/ui/async_registry_errors.rs:107:5
+   --> tests/ui/async_registry_errors.rs:130:5
     |
-107 |     async_registry! { scope(App) [ provide(inst, garbage) ] };
+130 |     async_registry! { scope(App) [ provide(inst, garbage) ] };
     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
     |
     = note: this error originates in the macro `$crate::async_registry_internal` which comes from the expansion of the macro `async_registry` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error: `extend` macro must be at the last macro invocation
-   --> tests/ui/async_registry_errors.rs:111:5
+   --> tests/ui/async_registry_errors.rs:135:5
     |
-111 |     async_registry! { provide(App, inst), extend(async_registry!()), provide(Session, inst) };
+135 |     async_registry! { provide(App, inst), extend(async_registry!()), provide(Session, inst) };
     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
     |
     = note: this error originates in the macro `$crate::async_registry_internal` which comes from the expansion of the macro `async_registry` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error: `extend` macro must be called with at least one argument
-   --> tests/ui/async_registry_errors.rs:115:5
+   --> tests/ui/async_registry_errors.rs:140:5
     |
-115 |     async_registry! { provide(App, inst), extend() };
+140 |     async_registry! { provide(App, inst), extend() };
     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
     |
     = note: this error originates in the macro `$crate::async_registry_internal` which comes from the expansion of the macro `async_registry` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error: Missing comma after/in `extend` block or unexpected comma in the block
-   --> tests/ui/async_registry_errors.rs:119:5
+   --> tests/ui/async_registry_errors.rs:145:5
     |
-119 |     async_registry! { extend(async_registry!()) [ x ] };
+145 |     async_registry! { extend(async_registry!()) [ x ] };
     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
     |
     = note: this error originates in the macro `$crate::async_registry_internal` which comes from the expansion of the macro `async_registry` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error: `scope` block must have a scope
-   --> tests/ui/async_registry_errors.rs:123:5
+   --> tests/ui/async_registry_errors.rs:150:5
     |
-123 |     async_registry! { provide(App, inst), scope() [ provide(inst) ] };
+150 |     async_registry! { provide(App, inst), scope() [ provide(inst) ] };
     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
     |
     = note: this error originates in the macro `$crate::async_registry_internal` which comes from the expansion of the macro `async_registry` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error: `scope` block must contain at least one entry
-   --> tests/ui/async_registry_errors.rs:127:5
+   --> tests/ui/async_registry_errors.rs:155:5
     |
-127 |     async_registry! { provide(App, inst), scope(Session) [] };
+155 |     async_registry! { provide(App, inst), scope(Session) [] };
     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
     |
     = note: this error originates in the macro `$crate::async_registry_internal` which comes from the expansion of the macro `async_registry` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error: `scope(...)` accepts exactly one scope
-   --> tests/ui/async_registry_errors.rs:131:5
+   --> tests/ui/async_registry_errors.rs:160:5
     |
-131 |     async_registry! { provide(App, inst), scope(Session, Request) [ provide(inst) ] };
+160 |     async_registry! { provide(App, inst), scope(Session, Request) [ provide(inst) ] };
     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
     |
     = note: this error originates in the macro `$crate::async_registry_internal` which comes from the expansion of the macro `async_registry` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error: `provide` must have a scope and an instantiator
-   --> tests/ui/async_registry_errors.rs:135:5
+   --> tests/ui/async_registry_errors.rs:165:5
     |
-135 |     async_registry! { provide(App, inst), provide() };
+165 |     async_registry! { provide(App, inst), provide() };
     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
     |
     = note: this error originates in the macro `$crate::async_registry_internal` which comes from the expansion of the macro `async_registry` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error: `provide` must include an instantiator after the scope
-   --> tests/ui/async_registry_errors.rs:139:5
+   --> tests/ui/async_registry_errors.rs:170:5
     |
-139 |     async_registry! { provide(App, inst), provide(Session) };
+170 |     async_registry! { provide(App, inst), provide(Session) };
     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
     |
     = note: this error originates in the macro `$crate::async_registry_internal` which comes from the expansion of the macro `async_registry` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error: `provide` must include a scope before the instantiator
-   --> tests/ui/async_registry_errors.rs:143:5
+   --> tests/ui/async_registry_errors.rs:175:5
     |
-143 |     async_registry! { provide(App, inst), provide(, inst) };
+175 |     async_registry! { provide(App, inst), provide(, inst) };
     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
     |
     = note: this error originates in the macro `$crate::async_registry_internal` which comes from the expansion of the macro `async_registry` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error: Missing comma after `provide` block
-   --> tests/ui/async_registry_errors.rs:147:5
+   --> tests/ui/async_registry_errors.rs:180:5
     |
-147 |     async_registry! { provide(App, inst) [ x ] };
+180 |     async_registry! { provide(App, inst) [ x ] };
     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
     |
     = note: this error originates in the macro `$crate::async_registry_internal` which comes from the expansion of the macro `async_registry` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error: `scope(...)` must be followed by its entries in square brackets `[ ... ]`
-   --> tests/ui/async_registry_errors.rs:151:5
+   --> tests/ui/async_registry_errors.rs:185:5
     |
-151 |     async_registry! { scope(App) };
+185 |     async_registry! { scope(App) };
     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
     |
     = note: this error originates in the macro `$crate::async_registry_internal` which comes from the expansion of the macro `async_registry` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error: Unknown syntax: frobnicate (x)
-   --> tests/ui/async_registry_errors.rs:155:5
+   --> tests/ui/async_registry_errors.rs:190:5
     |
-155 |     async_registry! { frobnicate(x) };
+190 |     async_registry! { frobnicate(x) };
     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
     |
     = note: this error originates in the macro `$crate::async_registry_internal` which comes from the expansion of the macro `async_registry` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error: `scope(...)` entries must be wrapped in square brackets `[ ... ]`, found `( ... )`
-   --> tests/ui/async_registry_errors.rs:159:5
+   --> tests/ui/async_registry_errors.rs:195:5
     |
-159 |     async_registry! { scope(App) [ provide(inst) ], scope(Session) ( provide(inst) ) };
+195 |     async_registry! { scope(App) [ provide(inst) ], scope(Session) ( provide(inst) ) };
     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
     |
     = note: this error originates in the macro `$crate::async_registry` which comes from the expansion of the macro `async_registry` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error: Unexpected leading or double comma
-   --> tests/ui/async_registry_errors.rs:163:5
+   --> tests/ui/async_registry_errors.rs:200:5
     |
-163 |     async_registry! { provide(App, inst),, provide(Session, inst) };
+200 |     async_registry! { provide(App, inst),, provide(Session, inst) };
     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
     |
     = note: this error originates in the macro `$crate::async_registry` which comes from the expansion of the macro `async_registry` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error: Unknown syntax: bogus
-   --> tests/ui/async_registry_errors.rs:167:5
+   --> tests/ui/async_registry_errors.rs:205:5
     |
-167 |     async_registry_internal! { bogus };
+205 |     async_registry_internal! { bogus };
     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
     |
     = note: this error originates in the macro `async_registry_internal` (in Nightly builds, run with -Z macro-backtrace for more info)

@@ -74,8 +74,10 @@ fn reports_a_cycle_among_static_edges_with_its_path() {
 #[test]
 fn custom_resolver_compositions_keep_runtime_cycle_validation() {
     struct Opaque;
+
     impl froodi_compile::DependencyResolver for Opaque {
         type Error = froodi_compile::ResolveErrorKind;
+
         fn resolve(_: &Container) -> Result<Self, Self::Error> {
             Ok(Self)
         }

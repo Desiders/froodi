@@ -5,7 +5,6 @@
 use froodi_compile::{ir::RequestMode, registry, Container, DefaultScope::*, DependencyResolver, InstantiateErrorKind, ResolveErrorKind};
 
 struct Counter(u64);
-
 /// Reads another registration through the public container API, like Froodi's `MapInject`.
 struct DoubledCounter(u64);
 

@@ -12,10 +12,8 @@ use froodi::{
 // `Provided` is never registered in any registry; resolvable ONLY via Context.
 #[derive(PartialEq, Eq, Debug)]
 struct Provided(u32);
-
 #[derive(PartialEq, Eq, Debug)]
 struct Marker(u32);
-
 struct Other(u32);
 
 fn registry_without_provided() -> froodi::Registry {

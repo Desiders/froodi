@@ -358,9 +358,7 @@ mod tests {
     struct Greeter {
         counters: Counters,
     }
-
     struct SessionGreeter;
-
     struct Unregistered;
 
     fn build_container(counters: &Counters) -> Container {

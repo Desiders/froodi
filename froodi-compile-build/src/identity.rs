@@ -24,6 +24,7 @@ struct PathSpelling {
 
 fn paths(ty: &str) -> Vec<PathSpelling> {
     struct Paths(Vec<PathSpelling>);
+
     impl Visit<'_> for Paths {
         fn visit_path(&mut self, path: &syn::Path) {
             let names: Vec<_> = path.segments.iter().map(|segment| segment.ident.to_string()).collect();

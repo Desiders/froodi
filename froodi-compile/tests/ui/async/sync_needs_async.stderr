@@ -11,12 +11,12 @@ error[E0277]: this registration cannot be constructed synchronously
    | |______^ a sync instantiator depends on it
    |
    = note: a sync instantiator may not depend on an async registration; make the dependent instantiator async
-help: the trait `SupportsExecution<froodi_compile_runtime::graph::SyncExecution>` is not implemented for `AsyncProvider<Config>`
-      but trait `SupportsExecution<froodi_compile_runtime::graph::AsyncExecution>` is implemented for it
+help: the trait `SupportsExecution<SyncExecution>` is not implemented for `AsyncProvider<Config>`
+      but trait `SupportsExecution<AsyncExecution>` is implemented for it
   --> $WORKSPACE/froodi-compile-runtime/src/async_impl/mod.rs
    |
    | impl<Out> SupportsExecution<AsyncExecution> for AsyncProvider<Out> {}
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-   = help: for that trait implementation, expected `froodi_compile_runtime::graph::AsyncExecution`, found `froodi_compile_runtime::graph::SyncExecution`
-   = note: required for `(AsyncProvider<Config>,)` to implement `froodi_compile_runtime::graph::SupportsExecution<froodi_compile_runtime::graph::SyncExecution>`
-   = note: required for `froodi_compile::__private::Reg<Database, {closure@$DIR/tests/ui/async/sync_needs_async.rs:10:34: 10:67}, (froodi_compile::Inject<Config>,), froodi_compile::__private::NoFinalizer>` to implement `froodi_compile_runtime::graph::Link<froodi_compile::__private::Node<froodi_compile::__private::Node<AsyncProvider<Config>, froodi_compile_runtime::graph::Provider<Database>>, froodi_compile_runtime::graph::Provider<froodi_compile::Container>>, (froodi_compile_runtime::graph::LinkedInject<froodi_compile_runtime::graph::L<froodi_compile_runtime::graph::L<froodi_compile_runtime::graph::Here>>>,)>`
+   = help: for that trait implementation, expected `AsyncExecution`, found `SyncExecution`
+   = note: required for `(AsyncProvider<Config>,)` to implement `SupportsExecution<SyncExecution>`
+   = note: required for `froodi_compile::__private::Reg<Database, {closure@$DIR/tests/ui/async/sync_needs_async.rs:10:34: 10:67}, (froodi_compile::Inject<Config>,), froodi_compile::__private::NoFinalizer>` to implement `Link<Node<Node<AsyncProvider<Config>, Provider<Database>>, Provider<froodi_compile::Container>>, (LinkedInject<L<L<Here>>>,)>`

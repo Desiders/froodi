@@ -58,6 +58,7 @@ struct Narrow;
 fn wide() -> Result<Wide, InstantiateErrorKind> {
     Ok(Wide)
 }
+
 fn narrow() -> Result<Narrow, InstantiateErrorKind> {
     Ok(Narrow)
 }

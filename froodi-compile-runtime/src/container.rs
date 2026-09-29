@@ -70,6 +70,7 @@ impl Slots {
 
 // Both phases include the implicit container provider.
 pub(crate) type ProviderIndex<Tree> = <Node<Tree, ContainerLeaf> as RegistryIndex>::Index;
+
 pub(crate) type Linked<Tree, Links> = <Node<Tree, ContainerLeaf> as Link<ProviderIndex<Tree>, Links>>::Linked;
 
 impl Inner {
@@ -182,6 +183,7 @@ impl Plan {
 // `Send + Sync` in thread-safe builds; executors hold plain function pointers.
 #[cfg(feature = "thread_safe")]
 unsafe impl Send for Plan {}
+
 #[cfg(feature = "thread_safe")]
 unsafe impl Sync for Plan {}
 
