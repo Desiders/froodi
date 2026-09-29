@@ -64,56 +64,63 @@ experiment may change.
 
 ## 3. Registration is the core graph unit
 
-The graph should be built around registrations rather than only Rust types.
-
-Conceptually:
-
-```text
-Registration
-    id
-    provided binding
-    factory slot
-    dependency requests
-    scope
-    config
-    finalizer
-    execution kind
-    source origin
-```
-
-A dependency request preserves its mode:
+The graph is built around registrations, not types. The IR lives in `froodi-compile-core`
+(`ir.rs`):
 
 ```text
-DependencyRequest
-    target
-    mode = shared/scoped | transient | other supported resolver mode
+Graph<K>
+    registrations: Vec<Registration<K>>     declaration order = RegistrationId
+    scopes: Vec<ScopeKey>                    the whole hierarchy (Scopes::all())
+
+Registration<K>
+    key: K                   binding key of the provided type (TypeId in the runtime)
+    type_name                diagnostics only
+    requests: Vec<DependencyRequest<K>>
+    scope: ScopeKey          priority, name, skipped_by_default
+    cache_provides: bool     Config, independent of the scope
+    finalizer: Option<ExecutionKind>
+    execution: ExecutionKind Sync | Async
+    source: ValueSource      Factory | Instance | Context | Runtime | Container
+    origin: Option<Origin>   the instantiator expression, file, line, column
+
+DependencyRequest<K>
+    target: Target<K>        Id(RegistrationId) resolved by rustc | Key(K) resolved by the compiler
+    mode: RequestMode        Shared (Inject) | Transient (InjectTransient) | Resolver (custom DependencyResolver)
+    type_name                diagnostics only
 ```
 
-This is necessary to preserve `Inject<T>` vs `InjectTransient<T>`.
+`Inject<T>` and `InjectTransient<T>` stay distinct edges. A custom `DependencyResolver` is
+recorded as a `Resolver` request: it is user code reading the container at runtime, so it has no
+static target, creates no edge and is never reported as missing. Froodi's own graph treats it the
+same way: its key never matches a registration.
 
-## 4. Separate static structure from runtime values
+`Registry::graph()` produces this IR from any registry, in declaration order, with extended
+fragments numbered after local registrations. The output is deterministic
+(`froodi-compile/tests/ir.rs`).
 
-A compiled registration may conceptually look like:
+## 4. Static structure and runtime values
+
+A registration is a typed leaf of the registry tree:
 
 ```text
-registration 12
-    provides Repository
-    scope = Request
-    dependencies = [Database via Inject]
-    factory slot = 12
+Reg<Provides, Factory, Deps, Finalizer>
+    factory: Factory         the function item, closure or instance(value) wrapper, stored inline
+    finalizer: Finalizer     NoFinalizer (zero-sized) | WithFinalizer<F>
+    meta: scope, Config, value source, origin
 ```
 
-The graph information may be static.
+The leaf's position in the tree is its factory slot. Its type carries the whole static structure
+(`Provides`, `Deps`); its value carries the runtime state (the factory, a captured environment,
+an instance). Nothing is erased when a registration is created (ADR 0001).
 
-The actual value stored in `factory slot 12` may be a function item, closure, captured closure, or `instance(value)` wrapper.
+## 5. `Instantiator<Deps>` is the bridge
 
-This is the key mechanism that may let Froodi retain current factory ergonomics while still compiling topology.
-
-## 5. `Instantiator<Deps>` as a possible bridge
-
-The existing `Instantiator<Deps>` abstraction should be reused or adapted if experiments show that it can expose enough type information for dependencies, provided type, and error type while retaining the concrete factory value.
-
-This is preferred over inventing a new mandatory provider declaration language.
+`Instantiator<Deps>` keeps Froodi's shape: `Provides`, `Error`, `instantiate(&mut self, Deps)`.
+Its blanket impl covers functions and closures of up to sixteen parameters. Generic code bounded
+by `F: Instantiator<Deps>` knows the dependency tuple, the provided type and the error type
+without calling the factory (`froodi-compile/tests/factory_model.rs`). The runtime-set
+`dependencies()` method of Froodi's trait is gone: parameter types describe themselves
+(`DepMeta`), and linking resolves them.
 
 ## 6. Registry frontend remains undecided
 
@@ -166,21 +173,36 @@ A likely direction may combine macro-generated typed descriptors with graph comp
 
 ## 7. Graph compiler responsibilities
 
-For static registrations, the compiler should aim to precompute:
+Checks are split between rustc and the graph compiler (ADR 0003).
+
+rustc, while linking the registry tree in `Container::new`:
 
 ```text
-registration indexing
-dependency topology
-missing binding validation
-duplicate/ambiguous registration validation
-cycle detection
-scope accessibility validation
-reachability
-dependency ordering
-structural finalization relationships
+which registration each Inject<T> / InjectTransient<T> targets
+missing provider of a static dependency        compile error
+ambiguous provider of a static dependency      compile error (E0283)
+cycle among static edges                       compile error (E0275, trait overflow)
 ```
 
-The graph compiler should produce deterministic output.
+The cycle error is a side effect of direct calls between factories: proving that the factories
+can call each other never terminates. It rejects the registry, but its message is rustc's
+overflow report, not a dependency path (`froodi-compile/tests/ui/cycle.stderr`).
+
+`froodi-compile-core::compile`, once, when `Container::try_new` / `Container::new` builds a
+container:
+
+```text
+duplicate bindings no factory depends on
+dependency cycles that reach it, whatever the mode   (Froodi rule)
+dependency on a narrower scope                       (Froodi rule)
+scopes outside the hierarchy
+requests rustc did not resolve (Target::Key)
+registration indexing, construction order, reachability
+```
+
+Diagnostics name the registrations involved with their source locations, and render missing
+bindings and cycles as dependency trees. `Container::new` panics with them, as Froodi's
+`registry!` panics on a failed validation; `Container::try_new` returns them.
 
 ## 8. Runtime execution levels
 

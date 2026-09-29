@@ -1,0 +1,28 @@
+error[E0275]: overflow evaluating the requirement `Inject<B>: DepExec<Node<Linked<A, fn(Inject<...>) -> ... {make_a}, ..., ...>, ...>, ...>`
+  --> tests/ui/cycle.rs:15:22
+   |
+15 |       let _container = Container::new(registry! {
+   |  ______________________^
+16 | |         scope(App) [
+17 | |             provide(make_a),
+18 | |             provide(make_b),
+19 | |         ],
+20 | |     });
+   | |______^
+   |
+   = note: required for `(Inject<B>,)` to implement `DepsExec<Node<Linked<A, fn(Inject<B>) -> Result<A, InstantiateErrorKind> {make_a}, (Inject<B>,), (SharedAt<R<Here>>,)>, Linked<B, fn(Inject<A>) -> Result<B, InstantiateErrorKind> {make_b}, (Inject<A>,), (SharedAt<L<Here>>,)>>, (SharedAt<R<Here>>,)>`
+   = note: required for `Linked<A, fn(Inject<B>) -> Result<A, InstantiateErrorKind> {make_a}, (Inject<B>,), (SharedAt<R<Here>>,)>` to implement `Exec<Node<Linked<A, fn(Inject<B>) -> Result<A, InstantiateErrorKind> {make_a}, (Inject<B>,), (SharedAt<R<Here>>,)>, Linked<B, fn(Inject<A>) -> Result<B, InstantiateErrorKind> {make_b}, (Inject<A>,), (SharedAt<L<Here>>,)>>>`
+   = note: required for `Inject<A>` to implement `DepExec<Node<Linked<A, fn(Inject<B>) -> Result<A, InstantiateErrorKind> {make_a}, (Inject<B>,), (SharedAt<R<Here>>,)>, Linked<B, fn(Inject<A>) -> Result<B, InstantiateErrorKind> {make_b}, (Inject<A>,), (SharedAt<L<Here>>,)>>, SharedAt<L<Here>>>`
+   = note: 2 redundant requirements hidden
+   = note: required for `Linked<B, fn(Inject<A>) -> Result<B, InstantiateErrorKind> {make_b}, (Inject<A>,), (SharedAt<L<Here>>,)>` to implement `Exec<Node<Linked<A, fn(Inject<B>) -> Result<A, InstantiateErrorKind> {make_a}, (Inject<B>,), (SharedAt<R<Here>>,)>, Linked<B, fn(Inject<A>) -> Result<B, InstantiateErrorKind> {make_b}, (Inject<A>,), (SharedAt<L<Here>>,)>>>`
+   = note: required for `Linked<B, fn(Inject<A>) -> Result<B, InstantiateErrorKind> {make_b}, (Inject<A>,), (SharedAt<L<Here>>,)>` to implement `Walk<Node<Linked<A, fn(Inject<B>) -> Result<A, InstantiateErrorKind> {make_a}, (Inject<B>,), (SharedAt<R<Here>>,)>, Linked<B, fn(Inject<A>) -> Result<B, InstantiateErrorKind> {make_b}, (Inject<A>,), (SharedAt<L<Here>>,)>>>`
+   = note: 1 redundant requirement hidden
+   = note: required for `Node<Linked<A, fn(Inject<B>) -> Result<A, InstantiateErrorKind> {make_a}, (Inject<B>,), (SharedAt<R<Here>>,)>, Linked<B, fn(Inject<A>) -> Result<B, InstantiateErrorKind> {make_b}, (Inject<A>,), (SharedAt<L<Here>>,)>>` to implement `Walk<Node<Linked<A, fn(Inject<B>) -> Result<A, InstantiateErrorKind> {make_a}, (Inject<B>,), (SharedAt<R<Here>>,)>, Linked<B, fn(Inject<A>) -> Result<B, InstantiateErrorKind> {make_b}, (Inject<A>,), (SharedAt<L<Here>>,)>>>`
+note: required by a bound in `froodi_compile::Container::new`
+  --> $WORKSPACE/froodi-compile-runtime/src/container.rs
+   |
+   |     pub fn new<Tree, Links>(registry: Registry<Tree>) -> Self
+   |            --- required by a bound in this associated function
+...
+   |         Tree::Linked: Walk<Tree::Linked> + SendSafety + SyncSafety + 'static,
+   |                       ^^^^^^^^^^^^^^^^^^ required by this bound in `Container::new`

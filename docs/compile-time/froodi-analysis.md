@@ -58,33 +58,24 @@ factory execution
 
 ## 2. `Instantiator<Deps>` is a major architectural asset
 
-Froodi's factory model already separates factory behavior from registration.
+Confirmed from source (`froodi/src/instantiator.rs`):
 
-A factory can be a normal function or closure whose type participates in an `Instantiator<Deps>` implementation.
+- `Instantiator<Deps>: Clone + 'static` has `type Provides`, `type Error: Into<InstantiateErrorKind>`,
+  `fn instantiate(&mut self, Deps)` and `fn dependencies() -> BTreeSet<Dependency>`.
+- A blanket impl covers `F: FnMut(T1..Tn) -> Result<R, E> + Clone + 'static` for up to sixteen
+  parameters, each `Ti: DependencyResolver`. So `Deps` is always the parameter tuple, and named
+  functions, closures and captured closures all implement it without annotations.
+- `instance(value)` is `move || Ok(value.clone())`: a captured closure with no dependencies.
+- At registration Froodi erases the factory into a boxed service
+  (`boxed_instantiator`): `Box<dyn Service<Container, Box<dyn Any>>>`. Each call clones the
+  factory, resolves `Deps` from the container, calls it and boxes the result as `Box<dyn Any>`.
+- `dependencies()` reports each parameter's `DependencyResolver::type_info()`; for `Inject<T>`
+  and `InjectTransient<T>` that is `T`, for any other resolver it is the resolver type itself.
 
-The relevant information is conceptually:
-
-```text
-Deps
-Provides
-Error
-```
-
-This is useful because a compile-time engine may be able to know the dependency shape from types while retaining the concrete factory value at runtime.
-
-That matters for captured closures.
-
-Conceptual split:
-
-```text
-factory type / dependency structure
-    compile-time useful
-
-factory value / captured environment
-    runtime state
-```
-
-This should be investigated before inventing a new provider API.
+What generic code bounded by `F: Instantiator<Deps>` knows statically, for every factory kind:
+the parameter tuple, the provided type and the error type. What stays runtime: the factory value,
+including a captured environment. The experimental engine keeps the trait and stores the factory
+value in a typed registration instead of a boxed service (ADR 0001).
 
 ## 3. Factory declaration is separate from registration
 
@@ -125,26 +116,19 @@ instance(value)
 
 Froodi dependency edges are not just type references.
 
-Two especially important forms are:
-
-```rust
-Inject<T>
-InjectTransient<T>
-```
-
-Conceptually:
-
 ```text
-Inject<T>
-    -> get<T>()-like semantics
-
-InjectTransient<T>
-    -> get_transient<T>()-like semantics
+Inject<T>            DependencyResolver::resolve -> container.get::<T>()
+InjectTransient<T>   DependencyResolver::resolve -> container.get_transient::<T>()
+custom resolver      arbitrary code over &Container
 ```
 
-Therefore the compile-time graph should preserve dependency request mode rather than flattening every edge to a plain type relation.
+Custom resolvers exist in Froodi itself: `MapInject<T>` in the dptree integration reads `T` from
+a `DependencyMap` the container provides. Their real dependencies are invisible from the type.
+Froodi's graph validation cannot see them either: the key it records is the resolver type, which
+no registration provides, so cycle and scope checks skip the edge.
 
-Custom `DependencyResolver` support should also be inspected before freezing the IR.
+The experimental IR therefore has three request modes: `Shared`, `Transient`, and `Resolver`
+for custom resolvers, which is recorded but never resolved or reported missing.
 
 ## 5. `get<T>()` and `get_transient<T>()` are separate operations
 
@@ -346,3 +330,19 @@ It should be benchmarked rather than assumed.
 8. How much runtime overhead disappears with `NodeId` alone?
 9. Are generated typed factory calls worth their compile-time/code-size cost?
 10. Can static and dynamic registrations coexist behind one `Container` without weakening static guarantees?
+
+## 14. Registry validation and duplicates in current Froodi
+
+From `froodi/src/registry.rs` and its tests:
+
+- `registry!` calls `Registry::validate()` and unwraps it, so an invalid registry panics where it
+  is built. `validate` checks cycles over every dependency and that no registration depends on a
+  narrower scope (`detect_unreachable_scopes`).
+- A missing dependency is not validated. It surfaces as `ResolveErrorKind::NoInstantiator` when
+  resolved. One reason: a child container's `Context` can supply values no registration provides.
+- Entries live in a `BTreeMap<TypeInfo, InstantiatorData>`. A later registration of the same type
+  replaces the earlier one, and `extend` (always the last clause) overrides local entries. Tests
+  pin this: `test_registry_extend_later_registry_overrides_duplicate_entry`,
+  `test_registry_extend_overrides_duplicate_entry_from_previous_macro_invocation`.
+- Every registry carries an entry for `Container` itself, in the root scope, with
+  `cache_provides = false`, because caching the container in its own cache would keep it alive.

@@ -7,3 +7,6 @@
 
 pub use froodi_compile_macros::registry;
 pub use froodi_compile_runtime::*;
+
+/// The registration IR and graph compiler.
+pub use froodi_compile_core as ir;

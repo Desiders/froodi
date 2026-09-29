@@ -219,6 +219,9 @@ fn resolve_edges<K: Ord>(registrations: &[Registration<K>], keys: &[(K, Registra
     for (index, registration) in registrations.iter().enumerate() {
         let mut node_edges = Vec::with_capacity(registration.requests.len());
         for (request_index, request) in registration.requests.iter().enumerate() {
+            if request.mode == RequestMode::Resolver {
+                continue;
+            }
             let target = match &request.target {
                 Target::Id(id) => {
                     assert!(id.index() < registrations.len(), "request targets a registration outside the graph");

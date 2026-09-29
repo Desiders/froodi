@@ -1,9 +1,11 @@
 use alloc::vec::Vec;
 use core::any::TypeId;
 
+use froodi_compile_core::{compile, Diagnostics};
+
 use crate::{
     errors::{ResolveErrorKind, TypeInfo},
-    graph::{Entry, Link, Walk},
+    graph::{Describe, Entry, Link, Walk},
     registry::Registry,
     thread_safety::{BoxAnyThreadSafety, RcThreadSafety, SendSafety, SyncSafety},
 };
@@ -30,24 +32,42 @@ pub struct Container {
 }
 
 impl Container {
+    /// Builds the container of a registry.
+    ///
+    /// # Panics
+    /// Panics with the rendered diagnostics if the registry graph is invalid; see [`Self::try_new`].
     #[must_use]
     pub fn new<Tree, Links>(registry: Registry<Tree>) -> Self
     where
-        Tree: Link<Tree, Links>,
+        Tree: Link<Tree, Links> + Describe,
         Tree::Linked: Walk<Tree::Linked> + SendSafety + SyncSafety + 'static,
     {
+        Self::try_new(registry).unwrap_or_else(|diagnostics| panic!("invalid registry:\n{diagnostics}"))
+    }
+
+    /// Builds the container of a registry after compiling its graph.
+    ///
+    /// # Errors
+    /// Returns the graph compiler's diagnostics: duplicates no factory depends on, cycles, scope
+    /// violations. Missing and ambiguous providers of static dependencies are compile errors.
+    pub fn try_new<Tree, Links>(registry: Registry<Tree>) -> Result<Self, Diagnostics>
+    where
+        Tree: Link<Tree, Links> + Describe,
+        Tree::Linked: Walk<Tree::Linked> + SendSafety + SyncSafety + 'static,
+    {
+        let _compiled = compile(registry.graph())?;
         let tree = alloc::boxed::Box::new(registry.tree.link());
         let mut entries = Vec::new();
         tree.walk(&mut entries);
         entries.sort_by_key(|entry| entry.type_id);
         let root = core::ptr::from_ref::<Tree::Linked>(&tree).cast();
-        Self {
+        Ok(Self {
             plan: RcThreadSafety::new(Plan {
                 _tree: tree,
                 root,
                 entries,
             }),
-        }
+        })
     }
 
     /// Gets a scoped dependency from the container.

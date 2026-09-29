@@ -9,7 +9,9 @@ pub(crate) mod macros;
 pub mod config;
 pub mod container;
 pub mod context;
+pub mod dependency_resolver;
 pub mod errors;
+pub mod finalizer;
 pub mod graph;
 pub mod inject;
 pub mod instantiator;
@@ -20,16 +22,20 @@ pub mod thread_safety;
 pub use config::Config;
 pub use container::Container;
 pub use context::Context;
+pub use dependency_resolver::DependencyResolver;
 pub use errors::{
     InstantiateErrorKind, InstantiatorErrorKind, InstantiatorResult, ResolveErrorKind, ScopeErrorKind, ScopeWithErrorKind, TypeInfo,
 };
-pub use inject::Inject;
-pub use instantiator::Instantiator;
+pub use finalizer::Finalizer;
+pub use inject::{Inject, InjectTransient};
+pub use instantiator::{instance, Instantiator};
 pub use registry::Registry;
 pub use scope::{DefaultScope, Scope, ScopeData, Scopes};
 
 #[doc(hidden)]
 pub mod __private {
-    pub use crate::graph::{Node, Reg};
+    pub use crate::finalizer::{NoFinalizer, WithFinalizer};
+    pub use crate::graph::{Empty, Node, Reg};
     pub use crate::registry::{reg, Registry};
+    pub use froodi_compile_core::{Origin, ValueSource};
 }

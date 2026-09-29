@@ -23,6 +23,9 @@ RUNTIME ONLY
 
 OPEN
     requires research before committing to a design
+
+CHANGED
+    public behavior differs from Froodi; the row names the ADR that explains why
 ```
 
 ## Matrix
@@ -37,19 +40,19 @@ OPEN
 | `enter` | Preserve | Static scope relationships can be precomputed | Child container state | PRESERVE |
 | `enter_build` / `with_scope` / `build` | Preserve where practical | Scope validation may move earlier | Builder/runtime scope selection | PRESERVE |
 | `close` | Preserve | Structural finalizer relationships may be compiled | Which values were instantiated; actual finalization | PRESERVE |
-| `registry!` | Preserve syntax aggressively | Candidate compiler frontend/composition root | Factory values | EXPERIMENT |
+| `registry!` | Preserve syntax aggressively | Proc macro builds a typed registration tree; rustc links it (ADR 0001, 0003) | Factory values | PRESERVE: same clauses, same tests pass on both engines (`compat.rs`) |
 | `async_registry!` | Preserve | Same graph model with async execution metadata | Futures/runtime values | OPEN |
-| `provide(scope, factory)` | Preserve | Compile registration metadata | Concrete factory value | PRESERVE |
-| `scope(scope) [ provide(...) ]` | Preserve | Compile scope metadata | Runtime scope state | PRESERVE |
-| `config = ...` | Preserve | Compile config metadata where possible | Runtime expression/value if needed | PRESERVE |
-| `finalizer = ...` | Preserve | Attach finalizer metadata to registration | Actual finalizer execution | PRESERVE |
-| `extend(...)` | Preserve | Compile/merge static registry fragments where possible | Dynamic fragments if any | EXPERIMENT |
-| `instance(value)` | Preserve | Static topology: provides T, no DI deps | Actual `value` | PRESERVE |
-| Named function factory | Preserve unannotated use | Infer through typed registration/`Instantiator<Deps>` | Function value | PRESERVE |
-| Inline closure | Preserve | Typed registration/macro frontend | Closure value | EXPERIMENT |
-| Captured closure | Preserve | Compile dependency shape if possible | Captured environment | EXPERIMENT |
-| `Instantiator<Deps>` | Prefer preserving core abstraction | Potential bridge from typed factory to graph metadata | Factory invocation/state | EXPERIMENT |
-| `DependencyResolver` | Preserve extension semantics where feasible | Dependency mode may become graph metadata | Custom resolver runtime work if required | OPEN |
+| `provide(scope, factory)` | Preserve | Scope stored in the typed leaf; described in the IR | Concrete factory value | PRESERVE |
+| `scope(scope) [ provide(...) ]` | Preserve | Same | Runtime scope state | PRESERVE |
+| `config = ...` | Preserve | `Config` stored per registration; `cache_provides` in the IR, independent of scope | Runtime expression evaluated once, at registration | PRESERVE |
+| `finalizer = ...` | Preserve | Finalizer stored in the leaf's type (`WithFinalizer`); presence in the IR; `NoFinalizer` is zero-sized | Actual finalizer execution | PRESERVE (execution: #61) |
+| `extend(...)` | Preserve | Fragment trees nest into one tree; rustc links across fragments | Factory values of every fragment | CHANGED (ADR 0003): a type provided twice and depended on is a compile error instead of "last one wins"; replacement becomes explicit (#62) |
+| `instance(value)` | Preserve | Leaf with no dependencies; IR source `Instance` | Actual `value` | PRESERVE |
+| Named function factory | Preserve unannotated use | `Instantiator<Deps>` exposes deps, provided type, error | Zero-sized function item | PRESERVE |
+| Inline closure | Preserve | Same as named function; parameter types annotated as in Froodi | Closure value | PRESERVE |
+| Captured closure | Preserve | Dependency shape from its type | Captured environment stored inline, not boxed | PRESERVE |
+| `Instantiator<Deps>` | Prefer preserving core abstraction | Kept: `Provides`, `Error`, `instantiate`; `dependencies()` replaced by parameter metadata | Factory invocation/state | CHANGED (ADR 0001): hand-written impls drop `dependencies()` |
+| `DependencyResolver` | Preserve extension semantics where feasible | Custom resolvers are `Resolver` requests: recorded, never linked | Resolver code runs against the container | PRESERVE: same trait shape (`resolve(&Container)`); `Inject`/`InjectTransient` are static edges, not resolvers |
 | `Inject<T>` | Preserve | Static shared/scoped edge | Cache/value state | PRESERVE |
 | `InjectTransient<T>` | Preserve | Static transient edge | Fresh factory invocation | PRESERVE |
 | `Config::cache_provides` | Preserve | Precompile cache policy | Actual cache contents | PRESERVE |
