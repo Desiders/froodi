@@ -785,7 +785,7 @@ impl Container {
         if let Some(replacement) = node.replaced_by {
             return self.shared(replacement.index()).await;
         }
-        if let Some(value) = &inner.slots.read()[index] {
+        if let Some(value) = inner.slots.read().get(index) {
             return Ok(value.clone());
         }
         let value = match node.scope.cmp(&inner.level) {
@@ -804,7 +804,7 @@ impl Container {
                 #[cfg(feature = "thread_safe")]
                 let _guard = inner.plan.async_table.locks[index].lock().await;
                 #[cfg(feature = "thread_safe")]
-                if let Some(value) = &inner.slots.read()[index] {
+                if let Some(value) = inner.slots.read().get(index) {
                     return Ok(value.clone());
                 }
                 let value = construct(self).await?;
@@ -815,7 +815,7 @@ impl Container {
             }
         };
         if node.cache_provides {
-            inner.slots.write()[index] = Some(value.clone());
+            inner.slots.write().set(index, value.clone(), inner.plan.entries.len());
         }
         Ok(value)
     }

@@ -44,6 +44,31 @@ pub(crate) type AsyncTable = crate::async_impl::AsyncTable;
 #[cfg(not(feature = "async"))]
 pub(crate) type AsyncTable = ();
 
+/// Cached values by registration id. The vector is allocated on the first write, so entering a
+/// scope that caches nothing costs no allocation.
+#[derive(Default)]
+pub(crate) struct Slots(Vec<Option<RcAnyThreadSafety>>);
+
+impl Slots {
+    #[inline]
+    pub(crate) fn get(&self, index: usize) -> Option<&RcAnyThreadSafety> {
+        self.0.get(index)?.as_ref()
+    }
+
+    #[inline]
+    pub(crate) fn set(&mut self, index: usize, value: RcAnyThreadSafety, len: usize) {
+        if self.0.is_empty() {
+            self.0.resize(len, None);
+        }
+        self.0[index] = Some(value);
+    }
+
+    #[inline]
+    pub(crate) fn clear(&mut self) {
+        self.0.clear();
+    }
+}
+
 /// The linked form of a registry tree with the container registration appended.
 pub(crate) type Linked<Tree, Links> = <Node<Tree, ContainerLeaf> as Link<Node<Tree, ContainerLeaf>, Links>>::Linked;
 
@@ -71,7 +96,7 @@ impl Inner {
     /// Clears the cache back to the context values.
     pub(crate) fn reset_slots(&self) {
         let mut slots = self.slots.write();
-        slots.iter_mut().for_each(|slot| *slot = None);
+        slots.clear();
         self.plan.fill_from_context(&mut slots, &self.context);
     }
 }
@@ -84,10 +109,10 @@ impl Drop for Inner {
 
 impl Plan {
     /// A context value of a registered type answers `get` before the factory, as in Froodi.
-    fn fill_from_context(&self, slots: &mut [Option<RcAnyThreadSafety>], context: &Context) {
+    fn fill_from_context(&self, slots: &mut Slots, context: &Context) {
         for (type_id, value) in &context.map {
             if let Some(id) = self.compiled.lookup(type_id) {
-                slots[id.index()] = Some(value.clone());
+                slots.set(id.index(), value.clone(), self.entries.len());
             }
         }
     }
@@ -173,7 +198,7 @@ pub(crate) struct Inner {
     /// Position of this container's scope in the hierarchy.
     pub(crate) level: ScopeId,
     /// Cached values by registration id.
-    pub(crate) slots: LocalLock<Vec<Option<RcAnyThreadSafety>>>,
+    pub(crate) slots: LocalLock<Slots>,
     /// Context values visible in this container: the parent's, overridden by its own.
     pub(crate) context: Context,
     /// Values constructed here whose registration has a finalizer, in construction order.
@@ -301,7 +326,7 @@ impl Container {
         if let Some(context) = context {
             visible.map.extend(context.map.iter().map(|(id, value)| (*id, value.clone())));
         }
-        let mut slots = alloc::vec![None; plan.entries.len()];
+        let mut slots = Slots::default();
         plan.fill_from_context(&mut slots, &visible);
         Self {
             inner: RcThreadSafety::new(Inner {
@@ -468,7 +493,7 @@ impl Container {
         if let Some(replacement) = self.inner.plan.compiled.nodes()[index].replaced_by {
             return self.shared(replacement.index());
         }
-        if let Some(value) = &self.inner.slots.read()[index] {
+        if let Some(value) = self.inner.slots.read().get(index) {
             return Ok(value.clone());
         }
         let plan = &*self.inner.plan;
@@ -488,7 +513,7 @@ impl Container {
                 #[cfg(feature = "thread_safe")]
                 let _guard = plan.locks.get(index).lock();
                 #[cfg(feature = "thread_safe")]
-                if let Some(value) = &self.inner.slots.read()[index] {
+                if let Some(value) = self.inner.slots.read().get(index) {
                     return Ok(value.clone());
                 }
                 let value = construct(self)?;
@@ -499,7 +524,7 @@ impl Container {
             }
         };
         if node.cache_provides {
-            self.inner.slots.write()[index] = Some(value.clone());
+            self.inner.slots.write().set(index, value.clone(), plan.entries.len());
         }
         Ok(value)
     }
