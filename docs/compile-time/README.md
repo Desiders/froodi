@@ -59,7 +59,7 @@ External DI systems are implementation references. They must not redefine Froodi
 
 ## Development isolation
 
-The experimental implementation should initially live in new crates, for example:
+The experimental implementation lives in new crates:
 
 ```text
 froodi-compile
@@ -69,7 +69,7 @@ froodi-compile-macros
 froodi-compile-build
 ```
 
-These names and crate boundaries are provisional.
+[architecture.md](architecture.md) describes what each crate holds.
 
 The important boundary is:
 
@@ -79,7 +79,8 @@ existing Froodi implementation
 experimental compile-time implementation
 ```
 
-No old/new engine integration layer should be built during this stage unless required by a dedicated integration phase later.
+The two engines share no code. `froodi-compile/tests/compat.rs` compiles the same scenarios
+against both to catch API drift.
 
 ## Documentation policy
 
