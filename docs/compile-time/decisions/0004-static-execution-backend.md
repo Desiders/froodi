@@ -83,6 +83,9 @@ it again at the boundary.
 - Container construction costs about 45% more than Froodi's (graph compilation and tables),
   once per container tree.
 - Direct calls would be 7–11% faster on cold chains and 35% faster on long transient chains.
+- A change to a registry's shape costs seconds of type checking in the application crate: about
+  2.4 s for a 100-deep chain and 12 s for 500 registrations, against Froodi's 0.3–0.85 s. Editing a
+  provider's body costs the same as in Froodi (`benchmarks.md`, build costs).
 
 ### Compatibility impact
 
@@ -98,3 +101,5 @@ None.
 
 - Moving graph compilation out of `Container::new` for registries that are fully static, to
   close the construction gap.
+- Profiling where the type checker spends the build time of large registries (`-Zself-profile`)
+  and reducing the size of the tree's types.

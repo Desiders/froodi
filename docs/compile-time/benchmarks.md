@@ -203,6 +203,7 @@ cargo bench -p froodi-compile --features direct-edges --bench compare -- /direct
 | `get_transient`, 100-deep transient chain | 6.9 µs | 5.7 µs | 4.4 µs | 2.8 µs |
 | first `get`, 16-wide factory | 528 ns | 460 ns | 501 ns | 447 ns |
 | `enter_build` + captured closure | 164 ns | 119 ns | 119 ns | 126 ns |
+| `enter_build`, no resolution | 111 ns | 82 ns | 82 ns | — |
 | first `get` through a `runtime::<T>()` boundary | — | — | 308 ns | 311 ns |
 
 Attribution: per-edge cost on a cold 100-deep chain falls from about 196 ns (Froodi: `TypeId`
@@ -212,7 +213,46 @@ call). Cached `get` is dominated by the single boundary lookup in every engine. 
 construction is higher because the graph is compiled and the tables are built there
 (ADR 0004).
 
-## 10. Runtime-work accounting of the prototype
+## 10. Results: build costs
+
+Source: `froodi-compile/benches/support/build_costs.py`. Each variant is a binary crate outside the
+workspace depending on the engines by path, with its own target directory; medians of 3 runs;
+24-core Ryzen 9 7900X, rustc 1.97.1, `mold` linker, dev profile with `debug = "line-tables-only"`.
+
+"App crate" rebuilds only the application after `cargo clean -p <app>`; "full graph" rebuilds
+every crate. Edits are measured on a debug build and reverted between runs. `chain` is a 100-deep
+dependency chain, `flat` 500 independent registrations.
+
+| Measurement | chain / Froodi | chain / table | chain / direct | flat / Froodi | flat / table | flat / direct |
+|---|---|---|---|---|---|---|
+| clean debug, full graph | 2.48 s | 3.94 s | 13.82 s | 2.71 s | 13.54 s | 13.59 s |
+| clean debug, app crate | 0.94 s | 2.43 s | 12.07 s | 1.16 s | 12.02 s | 12.05 s |
+| clean release, full graph | 5.14 s | 5.03 s | 14.92 s | 4.88 s | 15.38 s | 15.51 s |
+| clean release, app crate | 3.59 s | 3.45 s | 13.26 s | 3.29 s | 13.88 s | 13.90 s |
+| edit: provider body | 0.13 s | 0.15 s | 0.17 s | 0.20 s | 0.46 s | 0.46 s |
+| edit: provider signature | 0.76 s | 2.39 s | 12.09 s | 0.85 s | 12.60 s | 12.57 s |
+| edit: remove an unused registration | 0.33 s | 2.32 s | 11.71 s | 0.83 s | 11.88 s | 11.95 s |
+| edit: add a registration | 0.34 s | 2.37 s | 11.92 s | 0.85 s | 12.00 s | 12.17 s |
+| expanded source | 45.6 kB | 96.7 kB | 96.7 kB | 163 kB | 463 kB | 463 kB |
+| release binary | 1.75 MB | 2.62 MB | 3.69 MB | 1.44 MB | 12.27 MB | 12.27 MB |
+| release binary, stripped | 1.39 MB | 0.68 MB | 0.95 MB | 0.91 MB | 0.94 MB | 0.94 MB |
+
+In the chain/direct column, the two registration edits and the sizes come from a second run of
+the same script; everything else comes from the first.
+
+What the numbers say:
+
+- Editing a provider's body costs the same in every engine: the registry does not change.
+- Any change to the registry's shape rebuilds the application crate's graph linking. On a
+  100-deep chain that is about 2.4 s against Froodi's 0.3–0.8 s; on 500 flat registrations about
+  12 s against 0.85 s.
+- On the flat registry the table and direct backends cost the same, so the time goes to linking
+  and to the size of the tree's types, not to the edges.
+- Release builds of the chain cost the same as Froodi's; the flat registry costs about 10 s more.
+- Unstripped binaries grow with the size of the registry's type names (12 MB for 500
+  registrations); stripped binaries are the same size as Froodi's or smaller.
+
+## 11. Runtime-work accounting of the prototype
 
 What the final prototype still does at runtime, per issue #64. "Build" is `Container::new`, once
 per container tree; "resolution" is every `get` / `get_transient`.
@@ -233,13 +273,16 @@ per container tree; "resolution" is every `get` / `get_transient`.
 | finalizer bookkeeping | resolution: push to the container's list when a finalized value is built; close walks it | same |
 | `Context` propagation | child creation: context values of registered types written into slots | same |
 
-## 11. Conclusions
+## 12. Conclusions
 
 - The compile-time engine removes per-edge type lookup, map lookup and downcast checks from
   static graphs, and resolves cold and transient chains 1.6–2.6 times faster than current Froodi.
 - Cached resolution is on par: both engines pay one boundary lookup.
 - Container construction is about 45% more expensive, because graph compilation moved there from
   `registry!` and gained checks Froodi does not make.
+- The price is paid at build time: a change to a registry's shape costs seconds of type
+  checking, growing with the number of registrations (about 12 s for 500 against Froodi's
+  0.85 s).
 - Among the backends, table edges (A+) are selected: direct calls (B) are faster by 7–35% but hit
   rustc's recursion limit on ordinary depths; typed storage (C) was not worth its cost
   (ADR 0004).

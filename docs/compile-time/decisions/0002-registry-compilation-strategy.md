@@ -104,6 +104,9 @@ key linking. No `build.rs` step.
 ### Negative
 
 - Ambiguity errors are rustc's E0283 text.
+- A change to a registry's shape costs seconds of type checking in the application crate: about
+  2.4 s for a 100-deep chain and 12 s for 500 registrations, against Froodi's 0.3–0.85 s. Editing a
+  provider's body costs the same as in Froodi (`benchmarks.md`, build costs).
 - Cycle and scope checks run at container construction, not at compile time; a const-evaluated
   check would be reported by `cargo build` but not `cargo check`, because it runs after
   monomorphization.
