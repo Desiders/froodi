@@ -18,7 +18,7 @@
 use alloc::vec::Vec;
 use core::{any::TypeId, marker::PhantomData};
 
-use froodi_compile_core::{DependencyRequest, ExecutionKind, Origin, Registration, RequestMode, Target, ValueSource};
+use froodi_compile_core::{DependencyRequest, ExecutionKind, Origin, Registration, RegistrationId, RequestMode, Target, ValueSource};
 
 use crate::{
     config::Config,
@@ -29,7 +29,7 @@ use crate::{
     inject::{Inject, InjectTransient},
     instantiator::Instantiator,
     scope::ScopeData,
-    thread_safety::{RcAnyThreadSafety, RcThreadSafety, SendSafety, SyncSafety},
+    thread_safety::{downcast_unchecked, RcAnyThreadSafety, RcThreadSafety, SendSafety, SyncSafety},
 };
 
 /// Path step: the leaf itself.
@@ -42,7 +42,6 @@ pub struct R<I>(PhantomData<I>);
 /// A registration before linking.
 pub struct Reg<T, F, D, Fin> {
     pub(crate) factory: F,
-    #[expect(dead_code, reason = "finalizers run when a container closes, issue #61")]
     pub(crate) finalizer: Fin,
     pub(crate) meta: Meta,
     marker: PhantomData<fn() -> (T, D)>,
@@ -50,7 +49,7 @@ pub struct Reg<T, F, D, Fin> {
 
 /// What `registry!` knows about a registration besides its factory.
 #[derive(Clone, Copy)]
-pub(crate) struct Meta {
+pub struct Meta {
     pub(crate) scope: ScopeData,
     pub(crate) source: ValueSource,
     pub(crate) origin: Origin,
@@ -170,6 +169,7 @@ impl<T: 'static, F, D: DepsMeta, Fin: MaybeFinalizer<T>> Describe for Reg<T, F, 
             finalizer: Fin::PRESENT.then_some(ExecutionKind::Sync),
             execution: ExecutionKind::Sync,
             source: self.meta.source,
+            replaces: false,
             origin: Some(self.meta.origin),
         });
     }
@@ -213,7 +213,7 @@ pub trait At<I> {
     fn at(&self) -> &Self::Item;
 }
 
-impl<T, F, D, DI> At<Here> for Linked<T, F, D, DI> {
+impl<T, F, D, Fin, DI> At<Here> for Linked<T, F, D, Fin, DI> {
     type Item = Self;
     const INDEX: usize = 0;
 
@@ -256,6 +256,11 @@ pub trait DepIn<Root, I> {}
 
 impl<Root: Has<T, I>, T, I> DepIn<Root, SharedAt<I>> for Inject<T> {}
 
+/// Index of an `InjectTransient<T>` dependency: the path to its provider.
+pub struct TransientAt<I>(PhantomData<I>);
+
+impl<Root: Has<T, I>, T, I> DepIn<Root, TransientAt<I>> for InjectTransient<T> {}
+
 /// Index of a custom resolver parameter: there is nothing to link.
 pub struct ByResolver;
 
@@ -275,12 +280,14 @@ all_the_tuple_pairs!(impl_deps_in);
 type LinkedMarker<T, D, DI> = PhantomData<fn() -> (T, D, DI)>;
 
 /// A registration whose dependency paths `DI` are resolved.
-pub struct Linked<T, F, D, DI> {
+pub struct Linked<T, F, D, Fin, DI> {
     pub(crate) factory: F,
+    pub(crate) finalizer: Fin,
+    pub(crate) meta: Meta,
     marker: LinkedMarker<T, D, DI>,
 }
 
-impl<T, F, D, DI> Size for Linked<T, F, D, DI> {
+impl<T, F, D, Fin, DI> Size for Linked<T, F, D, Fin, DI> {
     const SIZE: usize = 1;
 }
 
@@ -296,12 +303,14 @@ impl<Root, T, F, D, Fin, DI> Link<Root, DI> for Reg<T, F, D, Fin>
 where
     D: DepsIn<Root, DI>,
 {
-    type Linked = Linked<T, F, D, DI>;
+    type Linked = Linked<T, F, D, Fin, DI>;
 
     #[inline]
     fn link(self) -> Self::Linked {
         Linked {
             factory: self.factory,
+            finalizer: self.finalizer,
+            meta: self.meta,
             marker: PhantomData,
         }
     }
@@ -317,15 +326,33 @@ impl<Root, A: Link<Root, LA>, B: Link<Root, LB>, LA, LB> Link<Root, (LA, LB)> fo
 }
 
 /// Constructs the value of a linked registration inside the linked tree `Root`.
+#[diagnostic::on_unimplemented(
+    message = "this registration cannot be constructed synchronously",
+    label = "a sync factory depends on it",
+    note = "a sync factory may not depend on an async registration; make the dependent factory async"
+)]
 pub trait Exec<Root> {
     type Provides: 'static;
 
     /// # Errors
     /// Returns the error of a dependency or of the factory.
-    fn construct(&self, root: &Root, container: &Container) -> Result<Self::Provides, ResolveErrorKind>;
+    fn construct(&self, root: &Root, container: &Container, index: usize) -> Result<Self::Provides, ResolveErrorKind>;
+
+    /// The shared form of the value for `get` semantics. A registration that stands for another
+    /// one returns that registration's value instead of a new allocation.
+    ///
+    /// # Errors
+    /// Returns the error of a dependency or of the factory.
+    #[inline]
+    fn construct_shared(&self, root: &Root, container: &Container, index: usize) -> Result<RcAnyThreadSafety, ResolveErrorKind>
+    where
+        Self::Provides: SendSafety + SyncSafety,
+    {
+        Ok(RcThreadSafety::new(self.construct(root, container, index)?) as RcAnyThreadSafety)
+    }
 }
 
-impl<Root, T: 'static, F, D, DI> Exec<Root> for Linked<T, F, D, DI>
+impl<Root, T: 'static, F, D, Fin, DI> Exec<Root> for Linked<T, F, D, Fin, DI>
 where
     F: Instantiator<D, Provides = T>,
     D: DepsExec<Root, DI>,
@@ -333,7 +360,7 @@ where
     type Provides = T;
 
     #[inline]
-    fn construct(&self, root: &Root, container: &Container) -> Result<T, ResolveErrorKind> {
+    fn construct(&self, root: &Root, container: &Container, _index: usize) -> Result<T, ResolveErrorKind> {
         let dependencies =
             D::resolve(root, container).map_err(|err| ResolveErrorKind::Instantiator(InstantiatorErrorKind::Deps(err.into())))?;
         self.factory
@@ -354,14 +381,80 @@ pub trait DepExec<Root, I>: Sized {
     fn resolve(root: &Root, container: &Container) -> Result<Self, ResolveErrorKind>;
 }
 
-impl<Root, T, I> DepExec<Root, SharedAt<I>> for Inject<T>
+/// A leaf that provides `T` synchronously. The bound is shallow: it names the leaf, not its
+/// dependencies, so proving it never walks the dependency graph.
+#[diagnostic::on_unimplemented(
+    message = "this registration cannot be constructed synchronously",
+    label = "a sync factory depends on it",
+    note = "a sync factory may not depend on an async registration; make the dependent factory async"
+)]
+pub trait SyncProvider<T> {}
+
+impl<T, F, D, Fin, DI> SyncProvider<T> for Linked<T, F, D, Fin, DI> {}
+impl SyncProvider<Container> for ContainerLeaf {}
+impl<T> SyncProvider<T> for crate::boundary::ImportLeaf<T> {}
+impl<T> SyncProvider<T> for crate::boundary::ContextLeaf<T> {}
+
+/// Table edges (default): the dependency is constructed through the construction table at the
+/// registration id rustc resolved. No `TypeId`, map or downcast check is involved, and the bounds
+/// do not chain through the dependency graph, so graph depth is unlimited.
+#[cfg(not(feature = "direct-edges"))]
+impl<Root, T: SendSafety + SyncSafety + 'static, I> DepExec<Root, SharedAt<I>> for Inject<T>
+where
+    Root: At<I>,
+    Root::Item: SyncProvider<T>,
+{
+    #[inline]
+    fn resolve(_root: &Root, container: &Container) -> Result<Self, ResolveErrorKind> {
+        let value = container.shared(Root::INDEX)?;
+        // SAFETY: slot `Root::INDEX` only ever holds values of the registration at path `I`,
+        // which provides `T`.
+        Ok(Inject(unsafe { downcast_unchecked(value) }))
+    }
+}
+
+#[cfg(not(feature = "direct-edges"))]
+impl<Root, T: 'static, I> DepExec<Root, TransientAt<I>> for InjectTransient<T>
+where
+    Root: At<I>,
+    Root::Item: SyncProvider<T>,
+{
+    #[inline]
+    fn resolve(_root: &Root, container: &Container) -> Result<Self, ResolveErrorKind> {
+        // SAFETY: the registration at `Root::INDEX` provides `T`.
+        unsafe { container.transient_unchecked::<T>(Root::INDEX) }.map(InjectTransient)
+    }
+}
+
+/// Direct edges (`direct-edges`): the dependency's factory is called directly and can be
+/// inlined. Proving the bounds walks every dependency chain, which exceeds rustc's default
+/// recursion limit on chains of about forty edges.
+#[cfg(feature = "direct-edges")]
+impl<Root, T: SendSafety + SyncSafety + 'static, I> DepExec<Root, SharedAt<I>> for Inject<T>
 where
     Root: At<I>,
     Root::Item: Exec<Root, Provides = T>,
 {
     #[inline]
     fn resolve(root: &Root, container: &Container) -> Result<Self, ResolveErrorKind> {
-        Ok(Inject(RcThreadSafety::new(root.at().construct(root, container)?)))
+        let value = container.shared_with(Root::INDEX, |owner| root.at().construct_shared(root, owner, Root::INDEX))?;
+        // SAFETY: slot `Root::INDEX` only ever holds values of the registration at path `I`,
+        // which provides `T`.
+        Ok(Inject(unsafe { downcast_unchecked(value) }))
+    }
+}
+
+#[cfg(feature = "direct-edges")]
+impl<Root, T: 'static, I> DepExec<Root, TransientAt<I>> for InjectTransient<T>
+where
+    Root: At<I>,
+    Root::Item: Exec<Root, Provides = T>,
+{
+    #[inline]
+    fn resolve(root: &Root, container: &Container) -> Result<Self, ResolveErrorKind> {
+        container
+            .transient_with(Root::INDEX, |container| root.at().construct(root, container, Root::INDEX))
+            .map(InjectTransient)
     }
 }
 
@@ -395,10 +488,73 @@ all_the_tuple_pairs!(impl_deps_exec);
 
 /// Construction entry of one registration, reachable from the public `get::<T>()` boundary.
 pub(crate) struct Entry {
-    pub(crate) type_id: core::any::TypeId,
     /// The leaf inside the boxed linked tree.
     pub(crate) item: *const (),
-    pub(crate) construct: unsafe fn(root: *const (), item: *const (), &Container) -> Result<RcAnyThreadSafety, ResolveErrorKind>,
+    pub(crate) construct:
+        unsafe fn(root: *const (), item: *const (), &Container, index: usize) -> Result<RcAnyThreadSafety, ResolveErrorKind>,
+    /// Constructs a fresh value into `out`, which must point to uninitialized memory for the
+    /// registration's provided type.
+    pub(crate) transient:
+        unsafe fn(root: *const (), item: *const (), &Container, index: usize, out: *mut ()) -> Result<(), ResolveErrorKind>,
+    /// Runs the registration's finalizer on a value it provided.
+    pub(crate) finalize: unsafe fn(item: *const (), value: RcAnyThreadSafety),
+}
+
+/// # Safety
+/// `item` must point to a live `Item`, and `value` must have been provided by it.
+unsafe fn finalize_erased<Item: Finalize>(item: *const (), value: RcAnyThreadSafety) {
+    // SAFETY: guaranteed by the caller.
+    unsafe { (*item.cast::<Item>()).finalize(value) };
+}
+
+/// Runs a linked registration's finalizer, if it has one.
+pub trait Finalize {
+    /// # Safety
+    /// `value` must have been provided by this registration.
+    unsafe fn finalize(&self, value: RcAnyThreadSafety);
+}
+
+impl<T: 'static, F, D, Fin: MaybeFinalizer<T>, DI> Finalize for Linked<T, F, D, Fin, DI> {
+    unsafe fn finalize(&self, value: RcAnyThreadSafety) {
+        // SAFETY: the caller guarantees `value` came from this registration, which provides `T`.
+        self.finalizer.finalize(unsafe { downcast_unchecked::<T>(value) });
+    }
+}
+
+/// # Safety
+/// As [`construct_erased`]; `out` must be valid for writing an `Item::Provides`.
+unsafe fn transient_erased<Root, Item>(
+    root: *const (),
+    item: *const (),
+    container: &Container,
+    index: usize,
+    out: *mut (),
+) -> Result<(), ResolveErrorKind>
+where
+    Item: Exec<Root>,
+{
+    // SAFETY: guaranteed by the caller; both pointers come from the same boxed tree.
+    let (root, item) = unsafe { (&*root.cast::<Root>(), &*item.cast::<Item>()) };
+    let value = item.construct(root, container, index)?;
+    // SAFETY: guaranteed by the caller.
+    unsafe { out.cast::<Item::Provides>().write(value) };
+    Ok(())
+}
+
+impl Entry {
+    /// The entry of a static leaf: construction through `Exec`, finalization through `Finalize`.
+    pub(crate) fn of<Root, Item>(item: &Item) -> Self
+    where
+        Item: Exec<Root> + Finalize,
+        Item::Provides: SendSafety + SyncSafety,
+    {
+        Self {
+            item: core::ptr::from_ref(item).cast(),
+            construct: construct_erased::<Root, Item>,
+            transient: transient_erased::<Root, Item>,
+            finalize: finalize_erased::<Item>,
+        }
+    }
 }
 
 /// # Safety
@@ -407,6 +563,7 @@ unsafe fn construct_erased<Root, Item>(
     root: *const (),
     item: *const (),
     container: &Container,
+    index: usize,
 ) -> Result<RcAnyThreadSafety, ResolveErrorKind>
 where
     Item: Exec<Root>,
@@ -414,7 +571,7 @@ where
 {
     // SAFETY: guaranteed by the caller; both pointers come from the same boxed tree.
     let (root, item) = unsafe { (&*root.cast::<Root>(), &*item.cast::<Item>()) };
-    Ok(RcThreadSafety::new(item.construct(root, container)?) as RcAnyThreadSafety)
+    item.construct_shared(root, container, index)
 }
 
 /// Collects the construction entries of a linked tree in declaration order.
@@ -424,18 +581,15 @@ pub trait Walk<Root> {
     fn walk(&self, entries: &mut alloc::vec::Vec<Entry>);
 }
 
-impl<Root, T, F, D, DI> Walk<Root> for Linked<T, F, D, DI>
+impl<Root, T, F, D, Fin, DI> Walk<Root> for Linked<T, F, D, Fin, DI>
 where
     Self: Exec<Root, Provides = T>,
     T: SendSafety + SyncSafety + 'static,
+    Fin: MaybeFinalizer<T>,
 {
     #[allow(private_interfaces)]
     fn walk(&self, entries: &mut alloc::vec::Vec<Entry>) {
-        entries.push(Entry {
-            type_id: core::any::TypeId::of::<T>(),
-            item: core::ptr::from_ref(self).cast(),
-            construct: construct_erased::<Root, Self>,
-        });
+        entries.push(Entry::of::<Root, Self>(self));
     }
 }
 
@@ -445,4 +599,190 @@ impl<Root, A: Walk<Root>, B: Walk<Root>> Walk<Root> for Node<A, B> {
         self.0.walk(entries);
         self.1.walk(entries);
     }
+}
+
+/// The container itself as a registration: root scope, never cached, as in Froodi (caching the
+/// container in its own cache would keep it alive). `Container::new` appends it to every tree.
+pub struct ContainerLeaf {
+    pub(crate) scope: ScopeData,
+}
+
+impl Size for ContainerLeaf {
+    const SIZE: usize = 1;
+}
+
+impl Has<Container, Here> for ContainerLeaf {}
+
+impl At<Here> for ContainerLeaf {
+    type Item = Self;
+    const INDEX: usize = 0;
+
+    #[inline]
+    fn at(&self) -> &Self {
+        self
+    }
+}
+
+impl<Root> Link<Root, ()> for ContainerLeaf {
+    type Linked = Self;
+
+    #[inline]
+    fn link(self) -> Self {
+        self
+    }
+}
+
+impl<Root> Exec<Root> for ContainerLeaf {
+    type Provides = Container;
+
+    #[inline]
+    fn construct(&self, _root: &Root, container: &Container, _index: usize) -> Result<Container, ResolveErrorKind> {
+        Ok(container.clone())
+    }
+}
+
+impl Finalize for ContainerLeaf {
+    unsafe fn finalize(&self, _value: RcAnyThreadSafety) {}
+}
+
+impl<Root> Walk<Root> for ContainerLeaf {
+    #[allow(private_interfaces)]
+    fn walk(&self, entries: &mut Vec<Entry>) {
+        entries.push(Entry::of::<Root, Self>(self));
+    }
+}
+
+impl Describe for ContainerLeaf {
+    fn describe(&self, out: &mut Vec<Registration<TypeId>>) {
+        out.push(Registration {
+            key: TypeId::of::<Container>(),
+            type_name: core::any::type_name::<Container>(),
+            requests: Vec::new(),
+            scope: self.scope.into(),
+            cache_provides: false,
+            finalizer: None,
+            execution: ExecutionKind::Sync,
+            source: ValueSource::Container,
+            replaces: false,
+            origin: None,
+        });
+    }
+}
+
+/// Collects the runtime registries nested in a tree, in tree order. Their registrations are
+/// numbered after every static one.
+pub trait CollectRuntime {
+    #[doc(hidden)]
+    fn collect_runtime<'a>(&'a self, _out: &mut Vec<&'a dyn crate::runtime_registry::RuntimeTree>) {}
+}
+
+impl<T, F, D, Fin> CollectRuntime for Reg<T, F, D, Fin> {}
+impl<T, F, D, Fin, DI> CollectRuntime for Linked<T, F, D, Fin, DI> {}
+impl CollectRuntime for Empty {}
+impl CollectRuntime for ContainerLeaf {}
+
+impl<A: CollectRuntime, B: CollectRuntime> CollectRuntime for Node<A, B> {
+    fn collect_runtime<'a>(&'a self, out: &mut Vec<&'a dyn crate::runtime_registry::RuntimeTree>) {
+        self.0.collect_runtime(out);
+        self.1.collect_runtime(out);
+    }
+}
+
+/// The IR request of a linked factory parameter: static edges carry the id rustc resolved.
+pub trait DepExecMeta<Root, I> {
+    fn request() -> DependencyRequest<TypeId>;
+}
+
+impl<Root: At<I>, T: 'static, I> DepExecMeta<Root, SharedAt<I>> for Inject<T> {
+    fn request() -> DependencyRequest<TypeId> {
+        DependencyRequest {
+            target: Target::Id(RegistrationId(u32::try_from(Root::INDEX).expect("too many registrations"))),
+            mode: RequestMode::Shared,
+            type_name: core::any::type_name::<T>(),
+        }
+    }
+}
+
+impl<Root: At<I>, T: 'static, I> DepExecMeta<Root, TransientAt<I>> for InjectTransient<T> {
+    fn request() -> DependencyRequest<TypeId> {
+        DependencyRequest {
+            target: Target::Id(RegistrationId(u32::try_from(Root::INDEX).expect("too many registrations"))),
+            mode: RequestMode::Transient,
+            type_name: core::any::type_name::<T>(),
+        }
+    }
+}
+
+impl<Root, R: DependencyResolver + 'static> DepExecMeta<Root, ByResolver> for R {
+    fn request() -> DependencyRequest<TypeId> {
+        <R as DepMeta>::request()
+    }
+}
+
+/// IR requests of all parameters of a linked factory.
+pub trait DepsExecMeta<Root, I> {
+    fn requests() -> Vec<DependencyRequest<TypeId>>;
+}
+
+macro_rules! impl_deps_exec_meta {
+    ([$($dep:ident $index:ident),*]) => {
+        impl<Root, $($dep: DepExecMeta<Root, $index>, $index,)*> DepsExecMeta<Root, ($($index,)*)> for ($($dep,)*) {
+            fn requests() -> Vec<DependencyRequest<TypeId>> {
+                alloc::vec![$(<$dep as DepExecMeta<Root, $index>>::request()),*]
+            }
+        }
+    };
+}
+
+all_the_tuple_pairs!(impl_deps_exec_meta);
+
+/// Describes a linked tree in the IR. Static edges enter the graph compiler as `Target::Id`.
+pub trait DescribeLinked<Root> {
+    fn describe_linked(&self, out: &mut Vec<Registration<TypeId>>);
+}
+
+impl<Root, T: 'static, F, D, Fin: MaybeFinalizer<T>, DI> DescribeLinked<Root> for Linked<T, F, D, Fin, DI>
+where
+    D: DepsExecMeta<Root, DI>,
+{
+    fn describe_linked(&self, out: &mut Vec<Registration<TypeId>>) {
+        out.push(Registration {
+            key: TypeId::of::<T>(),
+            type_name: core::any::type_name::<T>(),
+            requests: D::requests(),
+            scope: self.meta.scope.into(),
+            cache_provides: self.meta.config.cache_provides,
+            finalizer: Fin::PRESENT.then_some(ExecutionKind::Sync),
+            execution: ExecutionKind::Sync,
+            source: self.meta.source,
+            replaces: false,
+            origin: Some(self.meta.origin),
+        });
+    }
+}
+
+impl<Root, A: DescribeLinked<Root>, B: DescribeLinked<Root>> DescribeLinked<Root> for Node<A, B> {
+    fn describe_linked(&self, out: &mut Vec<Registration<TypeId>>) {
+        self.0.describe_linked(out);
+        self.1.describe_linked(out);
+    }
+}
+
+/// Leaves without factory parameters describe themselves the same way linked or not.
+macro_rules! describe_linked_as_describe {
+    ($($ty:ty $(, $param:ident)*;)*) => {
+        $(impl<Root $(, $param: 'static)*> DescribeLinked<Root> for $ty {
+            fn describe_linked(&self, out: &mut Vec<Registration<TypeId>>) {
+                self.describe(out);
+            }
+        })*
+    };
+}
+
+describe_linked_as_describe! {
+    Empty;
+    ContainerLeaf;
+    crate::runtime_registry::RuntimeNode;
+    crate::boundary::ImportLeaf<T>, T;
+    crate::boundary::ContextLeaf<T>, T;
 }

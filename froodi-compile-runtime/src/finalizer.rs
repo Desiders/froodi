@@ -19,6 +19,9 @@ where
 /// without a finalizer stores nothing.
 pub trait MaybeFinalizer<Dep> {
     const PRESENT: bool;
+
+    /// Runs the finalizer on a clone of itself, as Froodi does.
+    fn finalize(&self, dependency: RcThreadSafety<Dep>);
 }
 
 #[doc(hidden)]
@@ -27,6 +30,9 @@ pub struct NoFinalizer;
 
 impl<Dep> MaybeFinalizer<Dep> for NoFinalizer {
     const PRESENT: bool = false;
+
+    #[inline]
+    fn finalize(&self, _dependency: RcThreadSafety<Dep>) {}
 }
 
 #[doc(hidden)]
@@ -35,4 +41,9 @@ pub struct WithFinalizer<F>(pub F);
 
 impl<Dep, F: Finalizer<Dep>> MaybeFinalizer<Dep> for WithFinalizer<F> {
     const PRESENT: bool = true;
+
+    #[inline]
+    fn finalize(&self, dependency: RcThreadSafety<Dep>) {
+        self.0.clone().finalize(dependency);
+    }
 }

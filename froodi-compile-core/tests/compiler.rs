@@ -33,6 +33,7 @@ fn reg(key: &'static str, scope: ScopeKey, deps: &[(&'static str, RequestMode)])
         finalizer: None,
         execution: ExecutionKind::Sync,
         source: ValueSource::Factory,
+        replaces: false,
         origin: None,
     }
 }
@@ -368,4 +369,76 @@ fn records_custom_resolver_requests_without_resolving_them() {
 
     let edges: Vec<_> = compiled.node(RegistrationId(0)).edges.iter().map(|edge| edge.target).collect();
     assert_eq!(edges, ids(&[1]));
+}
+
+#[test]
+fn exposes_nodes_in_registration_order() {
+    let compiled = compile(graph(vec![reg("A", APP, &[]), reg("B", REQUEST, &[])])).unwrap();
+
+    let names: Vec<_> = compiled.nodes().iter().map(|node| node.type_name).collect();
+    assert_eq!(names, vec!["A", "B"]);
+}
+
+fn boundary(key: &'static str, scope: ScopeKey) -> Registration<&'static str> {
+    let mut registration = reg(key, scope, &[(key, Shared)]);
+    registration.source = ValueSource::Runtime;
+    registration
+}
+
+#[test]
+fn links_a_runtime_boundary_to_the_real_provider() {
+    let compiled = compile(graph(vec![
+        boundary("Plugin", APP),
+        reg("Host", APP, &[("Plugin", Shared)]),
+        reg("Plugin", APP, &[]),
+    ]))
+    .unwrap();
+
+    assert_eq!(compiled.node(RegistrationId(0)).edges[0].target, RegistrationId(2));
+    assert_eq!(compiled.node(RegistrationId(1)).edges[0].target, RegistrationId(2));
+    assert_eq!(compiled.lookup(&"Plugin"), Some(RegistrationId(2)));
+}
+
+#[test]
+fn reports_a_runtime_boundary_nothing_provides() {
+    let err = compile(graph(vec![boundary("Plugin", APP)])).unwrap_err();
+
+    assert!(matches!(err.0.as_slice(), [Diagnostic::MissingBinding { missing: "Plugin", .. }]));
+}
+
+fn replacement(key: &'static str, scope: ScopeKey) -> Registration<&'static str> {
+    let mut registration = reg(key, scope, &[]);
+    registration.replaces = true;
+    registration
+}
+
+#[test]
+fn an_explicit_replacement_takes_over_its_key_and_the_edges_to_it() {
+    let compiled = compile(graph(vec![
+        reg("Config", APP, &[]),
+        with_id_request(reg("Database", APP, &[]), 0),
+        replacement("Config", APP),
+    ]))
+    .unwrap();
+
+    assert_eq!(compiled.lookup(&"Config"), Some(RegistrationId(2)));
+    assert_eq!(compiled.node(RegistrationId(1)).edges[0].target, RegistrationId(2));
+    assert_eq!(compiled.node(RegistrationId(0)).replaced_by, Some(RegistrationId(2)));
+}
+
+#[test]
+fn renders_where_each_step_of_a_path_is_registered() {
+    let mut a = reg("A", APP, &[("B", Shared)]);
+    a.origin = Some(Origin {
+        expr: "make_a",
+        file: "src/app.rs",
+        line: 3,
+        column: 17,
+    });
+    let err = compile(graph(vec![a, reg("B", APP, &[("A", Shared)])])).unwrap_err();
+
+    assert_eq!(
+        err.to_string(),
+        "error: dependency cycle\n\nA  [`make_a` at src/app.rs:3:17]\n└── B\n    └── A  [`make_a` at src/app.rs:3:17]"
+    );
 }

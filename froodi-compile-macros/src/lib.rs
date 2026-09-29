@@ -140,10 +140,33 @@ fn value_source(factory: &Expr) -> TokenStream2 {
     }
 }
 
+/// A short label for the factory expression: a path as written, `f(..)` for a call, `closure`
+/// for a closure. A span covers only the first token of an expression on stable Rust, so the
+/// label is built from the syntax tree.
+fn label(factory: &Expr) -> String {
+    let path = |path: &syn::Path| {
+        path.segments
+            .iter()
+            .map(|segment| segment.ident.to_string())
+            .collect::<Vec<_>>()
+            .join("::")
+    };
+    match factory {
+        Expr::Path(expr) => path(&expr.path),
+        Expr::Call(call) => match &*call.func {
+            Expr::Path(func) => format!("{}(..)", path(&func.path)),
+            _ => String::from("call"),
+        },
+        Expr::Closure(_) => String::from("closure"),
+        Expr::Block(_) => String::from("block"),
+        _ => String::from("expression"),
+    }
+}
+
 /// Where the factory expression is written. Used only in diagnostics.
 fn origin(factory: &Expr) -> TokenStream2 {
     let span = factory.span();
-    let expr = span.source_text().unwrap_or_else(|| quote!(#factory).to_string());
+    let expr = label(factory);
     quote_spanned! {span=>
         ::froodi_compile::__private::Origin {
             expr: #expr,
@@ -154,24 +177,37 @@ fn origin(factory: &Expr) -> TokenStream2 {
     }
 }
 
-fn leaf(scope: &Expr, entry: &Entry) -> TokenStream2 {
+fn leaf(constructor: &TokenStream2, scope: &Expr, entry: &Entry) -> TokenStream2 {
     let factory = &entry.factory;
     let source = value_source(factory);
     let origin = origin(factory);
-    let config = entry
-        .config
-        .as_ref()
-        .map_or_else(|| quote!(::core::option::Option::None), |config| quote!(::core::option::Option::Some(#config)));
+    let config = entry.config.as_ref().map_or_else(
+        || quote!(::core::option::Option::None),
+        |config| quote!(::core::option::Option::Some(#config)),
+    );
     let finalizer = entry.finalizer.as_ref().map_or_else(
         || quote!(::froodi_compile::__private::NoFinalizer),
         |finalizer| quote!(::froodi_compile::__private::WithFinalizer(#finalizer)),
     );
-    quote!(::froodi_compile::__private::reg(#scope, #factory, #config, #finalizer, #source, #origin))
+    quote!(#constructor(#scope, #factory, #config, #finalizer, #source, #origin))
 }
 
+/// `registry! { ... }`: sync factories.
 #[proc_macro]
 pub fn registry(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as RegistryInput);
+    expand(&input, &quote!(::froodi_compile::__private::reg))
+}
+
+/// `async_registry! { ... }`: the same syntax with async factories. Sync registrations join
+/// through `extend(registry! { ... })`.
+#[proc_macro]
+pub fn async_registry(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as RegistryInput);
+    expand(&input, &quote!(::froodi_compile::__private::async_reg))
+}
+
+fn expand(input: &RegistryInput, constructor: &TokenStream2) -> TokenStream {
     let mut leaves = Vec::new();
     let mut scopes = Vec::new();
     let mut extensions = Vec::new();
@@ -186,7 +222,7 @@ pub fn registry(input: TokenStream) -> TokenStream {
         };
         scopes.push(scope);
         for entry in entries {
-            leaves.push(leaf(scope, entry));
+            leaves.push(leaf(constructor, scope, entry));
         }
     }
 
@@ -195,10 +231,9 @@ pub fn registry(input: TokenStream) -> TokenStream {
     let bindings: Vec<_> = (0..extensions.len())
         .map(|index| (format_ident!("__froodi_tree_{index}"), format_ident!("__froodi_scopes_{index}")))
         .collect();
-    let splits = extensions
-        .iter()
-        .zip(&bindings)
-        .map(|(registry, (tree, scopes))| quote!(let (#tree, #scopes) = ::froodi_compile::__private::Registry::into_parts(#registry);));
+    let splits = extensions.iter().zip(&bindings).map(
+        |(registry, (tree, scopes))| quote!(let (#tree, #scopes) = ::froodi_compile::__private::IntoFragment::into_fragment(#registry);),
+    );
     leaves.extend(bindings.iter().map(|(tree, _)| quote!(#tree)));
     let tree = balanced(&leaves);
     let registry = match bindings.first() {

@@ -58,6 +58,9 @@ fn write_tree(f: &mut Formatter<'_>, path: &[PathStep], tail: Option<&str>) -> f
             write!(f, "\n{indent}└── {}", short(step.type_name))?;
             indent.push_str("    ");
         }
+        if let Some(origin) = step.origin {
+            write!(f, "  [{origin}]")?;
+        }
     }
     if let Some(tail) = tail {
         write!(f, "\n{indent}{tail}")?;

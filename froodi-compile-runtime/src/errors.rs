@@ -73,6 +73,8 @@ pub enum ResolveErrorKind {
     IncorrectType { expected: TypeInfo, actual: TypeInfo },
     #[error("{type_info} is registered as a context value, but the context of scope {scope} does not contain it")]
     NoContextValue { type_info: TypeInfo, scope: &'static str },
+    #[error("{type_info} has an async factory; resolve it through the async container")]
+    AsyncOnly { type_info: TypeInfo },
     #[error(transparent)]
     Instantiator(InstantiatorErrorKind<Box<ResolveErrorKind>, InstantiateErrorKind>),
 }

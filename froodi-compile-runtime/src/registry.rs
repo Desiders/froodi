@@ -4,10 +4,9 @@ use core::any::TypeId;
 use froodi_compile_core::{Graph, Origin, ValueSource};
 
 use crate::{
+    boundary::Provide,
     config::Config,
-    finalizer::MaybeFinalizer,
-    graph::{Describe, Empty, Meta, Reg},
-    instantiator::Instantiator,
+    graph::{CollectRuntime, Describe, Empty, Meta},
     scope::{DefaultScope, Scope, ScopeData, Scopes},
 };
 
@@ -60,10 +59,15 @@ impl<Tree> Registry<Tree> {
     #[must_use]
     pub fn graph(&self) -> Graph<TypeId>
     where
-        Tree: Describe,
+        Tree: Describe + CollectRuntime,
     {
         let mut graph = Graph::new(self.scopes.iter().copied().map(Into::into).collect());
         self.tree.describe(&mut graph.registrations);
+        let mut runtime = Vec::new();
+        self.tree.collect_runtime(&mut runtime);
+        for tree in runtime {
+            tree.describe_runtime(&mut graph.registrations);
+        }
         graph
     }
 }
@@ -71,20 +75,18 @@ impl<Tree> Registry<Tree> {
 /// One `provide(...)` item.
 #[doc(hidden)]
 #[inline]
-pub fn reg<S: Scope, F, D, Fin>(
+pub fn reg<S: Scope, P, D, Fin>(
     scope: S,
-    factory: F,
+    provider: P,
     config: Option<Config>,
     finalizer: Fin,
     source: ValueSource,
     origin: Origin,
-) -> Reg<F::Provides, F, D, Fin>
+) -> P::Leaf
 where
-    F: Instantiator<D>,
-    Fin: MaybeFinalizer<F::Provides>,
+    P: Provide<D, Fin>,
 {
-    Reg::new(
-        factory,
+    provider.into_leaf(
         finalizer,
         Meta {
             scope: scope.into(),
