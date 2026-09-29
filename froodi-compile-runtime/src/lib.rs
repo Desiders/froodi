@@ -22,6 +22,10 @@ pub(crate) mod runtime_registry;
 pub(crate) mod scope;
 pub mod thread_safety;
 
+#[cfg(feature = "compile-bench")]
+#[doc(hidden)]
+pub mod compile_bench;
+
 #[cfg(feature = "async")]
 pub mod async_impl;
 

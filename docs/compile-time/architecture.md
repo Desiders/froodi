@@ -35,22 +35,36 @@ The macro builds a balanced tree to keep registry traversal bounds shallow.
 
 | Abstraction | Role |
 |---|---|
-| `ProviderPath<T, Path>` | Proves an unlinked provider of `T`; rustc infers `Path` |
-| `RegistrationPath<Path>` | Exposes the linked registration type and constant index |
-| `LinkDependency` / `LinkDependencies` | Infers provider paths for instantiator parameters |
-| `LinkedInject<Path>` / `LinkedInjectTransient<Path>` | Carries a path and its dependency mode |
-| `Linked<Out, Inst, Deps, Fin, Links>` | Stores a registration with linked parameters |
-| `LinkedDependencyMetadata` / `LinkedDependenciesMetadata` | Converts paths to IR requests containing IDs |
+| `RegistryIndex` | Projects the value tree to a type-only tree of provided types and execution kinds |
+| `ProviderPath<T, Path>` | Proves the provider and exposes its declaration-order index |
+| `LinkDependency` / `LinkDependencies` | Infers paths and materializes requests with `RegistrationId` targets |
+| `LinkedInject<Path>` / `LinkedInjectTransient<Path>` | Temporary inference witnesses used only by linking |
+| `SupportsExecution` | Rejects sync dependencies on async registrations while linking |
+| `Linked<Out, Inst, Deps, Fin>` | Owns the instantiator and materialized dependency requests; no paths |
+| `CollectRegistrations` | Moves stored requests into the graph IR without consulting the registry root |
 | `ConstructRegistration` | Invokes the instantiator with resolved parameters |
-| `ResolveLinkedDependency` / `ResolveLinkedDependencies` | Resolves parameters through indexed executors |
-| `CollectExecutors` | Collects executors in registration order |
+| `ResolveLinkedDependency` / `ResolveLinkedDependencies` | Consumes compiled edges in parameter order |
+| `CollectExecutors` | Collects executors specialized only for each registration type |
 
-Provider lookup and linked index lookup remain separate: merging them introduced
-redundant trait errors for missing registrations. Neither performs runtime tree
-traversal. `SyncProvider` checks that a target supports synchronous construction
-without recursively requiring construction of its dependencies. Async counterparts
-use the same shallow bounds, so dependency depth does not determine trait-resolution
-depth.
+`RegistryIndex::Index` mirrors the balanced value tree using `Provider<Out>` and
+`AsyncProvider<Out>` leaves. It omits instantiator, dependency and finalizer types.
+Runtime fragments contribute an empty index; import/context declarations and the
+implicit container remain visible providers. No index value is allocated.
+
+The type-level phase ends in `Link::link`: the inferred path becomes an ID in a
+stored dependency request. `Root`, `Path` and `Links` occur only in linking
+obligations and functions. They are absent from linked registration types,
+metadata description, construction, executor collection and erased function
+signatures. The constructor helper alias `Linked<Tree, Links>` is only an associated
+type projection; its resolved value type has no witness parameters. The temporary
+`Providers` tuple checks execution support after path inference, keeping async-provider
+errors distinct from missing-provider errors. The remaining `Out`, `Inst`, `Deps` and `Fin` types are needed to
+invoke the concrete instantiator/finalizer with the correct Rust values.
+
+Provider existence and index lookup now share `ProviderPath`. There is no second
+projection over the linked tree and no runtime tree traversal. Sync and async
+linking use shallow execution checks; dependency depth does not determine
+trait-resolution depth.
 
 Custom `DependencyResolver` parameters use `ByResolver` and `RequestMode::Resolver`.
 They run user code against the container and have no statically validated target.
@@ -79,17 +93,22 @@ redirect matching registrations while preserving the provided Rust type.
 ## Indexed execution
 
 `Plan::build_with` boxes the linked tree before collecting executor pointers.
-Static registrations precede runtime fragments in matching graph/table order.
+Materialized request vectors move into the IR before executor collection; the
+linked leaves retain no allocated copy after compilation. Static registrations
+precede runtime fragments in matching graph/table order.
 Each `RegistrationId` selects a `RegistrationExecutor` containing:
 
 - an erased pointer to the concrete registration;
-- specialized construction and transient-construction functions;
+- construction and transient-construction functions specialized only for the registration;
 - a matching finalizer function.
 
 This is the boundary between heterogeneous Rust registration types and the
 homogeneous runtime table. Both public requests and dependency edges use it.
-Public `get<T>()` first maps `TypeId` to an ID. Static edges already carry constant
-IDs, allowing unchecked cached-value casts and typed transient output storage.
+Public `get<T>()` first maps `TypeId` to an ID. Static edges carry IDs materialized during linking.
+Dispatch passes the selected registration's compiled edge slice to its executor,
+allowing unchecked cached-value casts and typed transient output storage without a
+`TypeId` lookup. Custom resolver parameters
+consume no compiled edge; repeated requests retain their parameter order.
 Runtime edges use IDs linked at startup and checked casts. Async construction uses
 an indexed async table; its erased transient output is checked when extracted.
 
@@ -101,9 +120,10 @@ The source contract lives beside `RegistrationExecutor` in
 - The boxed tree and owned runtime fragments remain live at stable addresses until
   all executors and borrowing futures are gone. `Plan` drops tables before storage.
 - Each registration pointer stays paired with functions specialized for its exact
-  registration type and, where used, the same concrete `Root` type.
+  registration type. No executor stores or accepts a registry-root pointer.
 - IDs consistently index graph nodes, executors, type metadata and cache slots.
   Redirects select a complete target executor; graph changes must preserve this pairing.
+  Compiled edges retain parameter order, count and exact provided types, excluding custom resolvers.
 - A slot for a registration providing `T` contains exactly `T`, permitting unchecked
   casts. Runtime, replacement, import, context and ancestor-cache paths preserve that type.
 - Sync transient output points to aligned, writable, uninitialized storage for the
@@ -133,3 +153,6 @@ Finalizers run newest first for values constructed through `get`, including when
 caching is disabled. Async finalizers require explicit `close().await`.
 Thread safety follows Froodi's feature selection (`Arc` and locks, or
 `Rc`/`RefCell`); `lock-spin` supports `no_std + alloc` builds.
+
+The [materialization decision](decisions/materialized-registration-ids.md) records
+the trade-offs; [benchmarks](benchmarks.md) compare the stages and provider-index experiment.

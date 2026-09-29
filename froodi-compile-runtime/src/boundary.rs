@@ -4,17 +4,14 @@
 use alloc::vec::Vec;
 use core::{any::TypeId, marker::PhantomData};
 
-use froodi_compile_core::{DependencyRequest, ExecutionKind, Origin, Registration, RequestMode, Target, ValueSource};
+use froodi_compile_core::{CompiledEdge, DependencyRequest, ExecutionKind, Origin, Registration, RequestMode, Target, ValueSource};
 
 use crate::{
     config::Config,
     container::Container,
     errors::{ResolveErrorKind, TypeInfo},
     finalizer::{MaybeFinalizer, NoFinalizer},
-    graph::{
-        CollectExecutors, CollectRuntime, ConstructRegistration, Describe, Finalize, Here, Link, Meta, ProviderPath, Reg,
-        RegistrationExecutor, RegistrationPath, Size,
-    },
+    graph::{CollectExecutors, CollectRuntime, ConstructRegistration, Describe, Finalize, Link, Meta, Reg, RegistrationExecutor},
     instantiator::Instantiator,
     scope::ScopeData,
     thread_safety::{RcAnyThreadSafety, SendSafety, SyncSafety},
@@ -71,17 +68,6 @@ pub struct ImportLeaf<T> {
     marker: PhantomData<fn() -> T>,
 }
 
-impl<T> Size for ImportLeaf<T> {
-    const SIZE: usize = 1;
-}
-
-impl<T> ProviderPath<T, Here> for ImportLeaf<T> {}
-
-impl<T> RegistrationPath<Here> for ImportLeaf<T> {
-    type Registration = Self;
-    const INDEX: usize = 0;
-}
-
 impl<Root, T> Link<Root, ()> for ImportLeaf<T> {
     type Linked = Self;
 
@@ -93,22 +79,18 @@ impl<Root, T> Link<Root, ()> for ImportLeaf<T> {
 
 impl<T> CollectRuntime for ImportLeaf<T> {}
 
-fn provider(container: &Container, index: usize) -> usize {
-    container.edges(index)[0].target.index()
-}
-
-impl<Root, T: 'static> ConstructRegistration<Root> for ImportLeaf<T> {
+impl<T: 'static> ConstructRegistration for ImportLeaf<T> {
     type Provides = T;
 
-    fn construct(&self, _root: &Root, container: &Container, index: usize) -> Result<T, ResolveErrorKind> {
-        container.get_transient_at::<T>(provider(container, index))
+    fn construct(&self, container: &Container, edges: &[CompiledEdge]) -> Result<T, ResolveErrorKind> {
+        container.get_transient_at::<T>(edges[0].target.index())
     }
 
-    fn construct_inject(&self, _root: &Root, container: &Container, index: usize) -> Result<RcAnyThreadSafety, ResolveErrorKind>
+    fn construct_inject(&self, container: &Container, edges: &[CompiledEdge]) -> Result<RcAnyThreadSafety, ResolveErrorKind>
     where
         T: SendSafety + SyncSafety,
     {
-        container.get_at(provider(container, index))
+        container.get_at(edges[0].target.index())
     }
 }
 
@@ -116,10 +98,10 @@ impl<T> Finalize for ImportLeaf<T> {
     unsafe fn finalize(&self, _value: RcAnyThreadSafety) {}
 }
 
-impl<Root, T: SendSafety + SyncSafety + 'static> CollectExecutors<Root> for ImportLeaf<T> {
+impl<T: SendSafety + SyncSafety + 'static> CollectExecutors for ImportLeaf<T> {
     #[allow(private_interfaces)]
     fn collect_executors(&self, executors: &mut Vec<RegistrationExecutor>) {
-        executors.push(RegistrationExecutor::of::<Root, Self>(self));
+        executors.push(RegistrationExecutor::of::<Self>(self));
     }
 }
 
@@ -173,17 +155,6 @@ pub struct ContextLeaf<T> {
     marker: PhantomData<fn() -> T>,
 }
 
-impl<T> Size for ContextLeaf<T> {
-    const SIZE: usize = 1;
-}
-
-impl<T> ProviderPath<T, Here> for ContextLeaf<T> {}
-
-impl<T> RegistrationPath<Here> for ContextLeaf<T> {
-    type Registration = Self;
-    const INDEX: usize = 0;
-}
-
 impl<Root, T> Link<Root, ()> for ContextLeaf<T> {
     type Linked = Self;
 
@@ -195,10 +166,10 @@ impl<Root, T> Link<Root, ()> for ContextLeaf<T> {
 
 impl<T> CollectRuntime for ContextLeaf<T> {}
 
-impl<Root, T: 'static> ConstructRegistration<Root> for ContextLeaf<T> {
+impl<T: 'static> ConstructRegistration for ContextLeaf<T> {
     type Provides = T;
 
-    fn construct(&self, _root: &Root, container: &Container, _index: usize) -> Result<T, ResolveErrorKind> {
+    fn construct(&self, container: &Container, _edges: &[CompiledEdge]) -> Result<T, ResolveErrorKind> {
         Err(ResolveErrorKind::NoContextValue {
             type_info: TypeInfo::of::<T>(),
             scope: container.scope().name,
@@ -210,10 +181,10 @@ impl<T> Finalize for ContextLeaf<T> {
     unsafe fn finalize(&self, _value: RcAnyThreadSafety) {}
 }
 
-impl<Root, T: SendSafety + SyncSafety + 'static> CollectExecutors<Root> for ContextLeaf<T> {
+impl<T: SendSafety + SyncSafety + 'static> CollectExecutors for ContextLeaf<T> {
     #[allow(private_interfaces)]
     fn collect_executors(&self, executors: &mut Vec<RegistrationExecutor>) {
-        executors.push(RegistrationExecutor::of::<Root, Self>(self));
+        executors.push(RegistrationExecutor::of::<Self>(self));
     }
 }
 
