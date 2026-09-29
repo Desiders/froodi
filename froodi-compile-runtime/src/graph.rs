@@ -15,13 +15,20 @@
 //!
 //! The tree is balanced so trait resolution depth grows with `log2(n)`, not `n`.
 
-use core::marker::PhantomData;
+use alloc::vec::Vec;
+use core::{any::TypeId, marker::PhantomData};
+
+use froodi_compile_core::{DependencyRequest, ExecutionKind, Origin, Registration, RequestMode, Target, ValueSource};
 
 use crate::{
+    config::Config,
     container::Container,
+    dependency_resolver::DependencyResolver,
     errors::{InstantiatorErrorKind, ResolveErrorKind},
-    inject::Inject,
+    finalizer::MaybeFinalizer,
+    inject::{Inject, InjectTransient},
     instantiator::Instantiator,
+    scope::ScopeData,
     thread_safety::{RcAnyThreadSafety, RcThreadSafety, SendSafety, SyncSafety},
 };
 
@@ -33,19 +40,58 @@ pub struct L<I>(PhantomData<I>);
 pub struct R<I>(PhantomData<I>);
 
 /// A registration before linking.
-pub struct Reg<T, F, D> {
+pub struct Reg<T, F, D, Fin> {
     pub(crate) factory: F,
+    #[expect(dead_code, reason = "finalizers run when a container closes, issue #61")]
+    pub(crate) finalizer: Fin,
+    pub(crate) meta: Meta,
     marker: PhantomData<fn() -> (T, D)>,
 }
 
-impl<T, F, D> Reg<T, F, D> {
+/// What `registry!` knows about a registration besides its factory.
+#[derive(Clone, Copy)]
+pub(crate) struct Meta {
+    pub(crate) scope: ScopeData,
+    pub(crate) source: ValueSource,
+    pub(crate) origin: Origin,
+    pub(crate) config: Config,
+}
+
+impl<T, F, D, Fin> Reg<T, F, D, Fin> {
     #[inline]
-    pub(crate) const fn new(factory: F) -> Self {
+    pub(crate) const fn new(factory: F, finalizer: Fin, meta: Meta) -> Self {
         Self {
             factory,
+            finalizer,
+            meta,
             marker: PhantomData,
         }
     }
+}
+
+/// A tree without registrations: `registry!()`.
+pub struct Empty;
+
+impl Size for Empty {
+    const SIZE: usize = 0;
+}
+
+impl Describe for Empty {
+    fn describe(&self, _out: &mut Vec<Registration<TypeId>>) {}
+}
+
+impl<Root> Link<Root, ()> for Empty {
+    type Linked = Empty;
+
+    #[inline]
+    fn link(self) -> Empty {
+        self
+    }
+}
+
+impl<Root> Walk<Root> for Empty {
+    #[allow(private_interfaces)]
+    fn walk(&self, _entries: &mut Vec<Entry>) {}
 }
 
 /// An inner node of the registration tree.
@@ -56,7 +102,87 @@ pub trait Size {
     const SIZE: usize;
 }
 
-impl<T, F, D> Size for Reg<T, F, D> {
+/// Dependency requests of one factory parameter, for the registration IR.
+pub trait DepMeta {
+    fn request() -> DependencyRequest<TypeId>;
+}
+
+impl<T: 'static> DepMeta for Inject<T> {
+    fn request() -> DependencyRequest<TypeId> {
+        DependencyRequest {
+            target: Target::Key(TypeId::of::<T>()),
+            mode: RequestMode::Shared,
+            type_name: core::any::type_name::<T>(),
+        }
+    }
+}
+
+impl<T: 'static> DepMeta for InjectTransient<T> {
+    fn request() -> DependencyRequest<TypeId> {
+        DependencyRequest {
+            target: Target::Key(TypeId::of::<T>()),
+            mode: RequestMode::Transient,
+            type_name: core::any::type_name::<T>(),
+        }
+    }
+}
+
+impl<R: DependencyResolver + 'static> DepMeta for R {
+    fn request() -> DependencyRequest<TypeId> {
+        DependencyRequest {
+            target: Target::Key(TypeId::of::<R>()),
+            mode: RequestMode::Resolver,
+            type_name: core::any::type_name::<R>(),
+        }
+    }
+}
+
+/// Dependency requests of all factory parameters.
+pub trait DepsMeta {
+    fn requests() -> Vec<DependencyRequest<TypeId>>;
+}
+
+macro_rules! impl_deps_meta {
+    ([$($dep:ident),*]) => {
+        impl<$($dep: DepMeta,)*> DepsMeta for ($($dep,)*) {
+            fn requests() -> Vec<DependencyRequest<TypeId>> {
+                alloc::vec![$($dep::request()),*]
+            }
+        }
+    };
+}
+
+all_the_tuples!(impl_deps_meta);
+
+/// Describes the registrations of a tree in the registration IR, in declaration order.
+pub trait Describe {
+    fn describe(&self, out: &mut Vec<Registration<TypeId>>);
+}
+
+impl<T: 'static, F, D: DepsMeta, Fin: MaybeFinalizer<T>> Describe for Reg<T, F, D, Fin> {
+    fn describe(&self, out: &mut Vec<Registration<TypeId>>) {
+        out.push(Registration {
+            key: TypeId::of::<T>(),
+            type_name: core::any::type_name::<T>(),
+            requests: D::requests(),
+            scope: self.meta.scope.into(),
+            cache_provides: self.meta.config.cache_provides,
+            finalizer: Fin::PRESENT.then_some(ExecutionKind::Sync),
+            execution: ExecutionKind::Sync,
+            source: self.meta.source,
+            origin: Some(self.meta.origin),
+        });
+    }
+}
+
+impl<A: Describe, B: Describe> Describe for Node<A, B> {
+    fn describe(&self, out: &mut Vec<Registration<TypeId>>) {
+        self.0.describe(out);
+        self.1.describe(out);
+    }
+}
+
+impl<T, F, D, Fin> Size for Reg<T, F, D, Fin> {
     const SIZE: usize = 1;
 }
 
@@ -72,7 +198,7 @@ impl<A: Size, B: Size> Size for Node<A, B> {
 )]
 pub trait Has<T, I> {}
 
-impl<T, F, D> Has<T, Here> for Reg<T, F, D> {}
+impl<T, F, D, Fin> Has<T, Here> for Reg<T, F, D, Fin> {}
 
 impl<T, I, A: Has<T, I>, B> Has<T, L<I>> for Node<A, B> {}
 
@@ -121,9 +247,19 @@ impl<I, A: Size, B: At<I>> At<R<I>> for Node<A, B> {
 pub struct SharedAt<I>(PhantomData<I>);
 
 /// A factory parameter that can be linked against the registry tree `Root`.
+#[diagnostic::on_unimplemented(
+    message = "no registration provides the factory parameter `{Self}`",
+    label = "this registry has no `provide(...)` for the type inside `{Self}`",
+    note = "register a factory or `instance(...)` for it, or `extend(...)` a registry that does"
+)]
 pub trait DepIn<Root, I> {}
 
 impl<Root: Has<T, I>, T, I> DepIn<Root, SharedAt<I>> for Inject<T> {}
+
+/// Index of a custom resolver parameter: there is nothing to link.
+pub struct ByResolver;
+
+impl<Root, R: DependencyResolver> DepIn<Root, ByResolver> for R {}
 
 /// All parameters of a factory, linked against `Root`.
 pub trait DepsIn<Root, I> {}
@@ -156,7 +292,7 @@ pub trait Link<Root, Links> {
     fn link(self) -> Self::Linked;
 }
 
-impl<Root, T, F, D, DI> Link<Root, DI> for Reg<T, F, D>
+impl<Root, T, F, D, Fin, DI> Link<Root, DI> for Reg<T, F, D, Fin>
 where
     D: DepsIn<Root, DI>,
 {
@@ -208,6 +344,10 @@ where
 }
 
 /// Resolves one factory parameter at its linked path.
+#[diagnostic::on_unimplemented(
+    message = "no registration provides the factory parameter `{Self}`",
+    label = "this registry has no `provide(...)` for the type inside `{Self}`"
+)]
 pub trait DepExec<Root, I>: Sized {
     /// # Errors
     /// Returns the error of resolving the dependency.
@@ -222,6 +362,13 @@ where
     #[inline]
     fn resolve(root: &Root, container: &Container) -> Result<Self, ResolveErrorKind> {
         Ok(Inject(RcThreadSafety::new(root.at().construct(root, container)?)))
+    }
+}
+
+impl<Root, R: DependencyResolver> DepExec<Root, ByResolver> for R {
+    #[inline]
+    fn resolve(_root: &Root, container: &Container) -> Result<Self, ResolveErrorKind> {
+        R::resolve(container).map_err(Into::into)
     }
 }
 

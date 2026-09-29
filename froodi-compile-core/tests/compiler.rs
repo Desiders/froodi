@@ -357,3 +357,15 @@ fn compiles_the_same_graph_to_the_same_output() {
     assert_eq!(compile(make()).unwrap(), compile(make()).unwrap());
     assert_eq!(compile(make()).unwrap().order(), ids(&[3, 1, 2, 0]));
 }
+
+#[test]
+fn records_custom_resolver_requests_without_resolving_them() {
+    let compiled = compile(graph(vec![
+        reg("A", APP, &[("MapInject<Update>", RequestMode::Resolver), ("B", Shared)]),
+        reg("B", APP, &[]),
+    ]))
+    .unwrap();
+
+    let edges: Vec<_> = compiled.node(RegistrationId(0)).edges.iter().map(|edge| edge.target).collect();
+    assert_eq!(edges, ids(&[1]));
+}

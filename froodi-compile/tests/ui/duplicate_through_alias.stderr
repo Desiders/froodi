@@ -1,0 +1,51 @@
+error[E0283]: type annotations needed
+  --> tests/ui/duplicate_through_alias.rs:16:22
+   |
+16 |     let _container = Container::new(registry! {
+   |                      ^^^^^^^^^^^^^^ cannot infer type of the type parameter `Links` declared on the associated function `new`
+   |
+   = note: multiple `impl`s satisfying `Node<Reg<settings::Config, {closure@$DIR/tests/ui/duplicate_through_alias.rs:18:21: 18:23}, (), froodi_compile::finalizer::NoFinalizer>, Node<Reg<settings::Config, {closure@$DIR/tests/ui/duplicate_through_alias.rs:19:21: 19:23}, (), froodi_compile::finalizer::NoFinalizer>, Reg<Consumer, fn(Inject<settings::Config>) -> Result<Consumer, InstantiateErrorKind> {make_consumer}, (Inject<settings::Config>,), froodi_compile::finalizer::NoFinalizer>>>: Has<settings::Config, _>` found in the `froodi_compile_runtime` crate:
+           - impl<T, I, A, B> Has<T, L<I>> for Node<A, B>
+             where A: Has<T, I>;
+           - impl<T, I, A, B> Has<T, R<I>> for Node<A, B>
+             where B: Has<T, I>;
+   = note: required for `Inject<settings::Config>` to implement `DepIn<Node<Reg<settings::Config, {closure@$DIR/tests/ui/duplicate_through_alias.rs:18:21: 18:23}, (), froodi_compile::finalizer::NoFinalizer>, Node<Reg<settings::Config, {closure@$DIR/tests/ui/duplicate_through_alias.rs:19:21: 19:23}, (), froodi_compile::finalizer::NoFinalizer>, Reg<Consumer, fn(Inject<settings::Config>) -> Result<Consumer, InstantiateErrorKind> {make_consumer}, (Inject<settings::Config>,), froodi_compile::finalizer::NoFinalizer>>>, SharedAt<_>>`
+   = note: required for `(Inject<settings::Config>,)` to implement `DepsIn<Node<Reg<settings::Config, {closure@$DIR/tests/ui/duplicate_through_alias.rs:18:21: 18:23}, (), froodi_compile::finalizer::NoFinalizer>, Node<Reg<settings::Config, {closure@$DIR/tests/ui/duplicate_through_alias.rs:19:21: 19:23}, (), froodi_compile::finalizer::NoFinalizer>, Reg<Consumer, fn(Inject<settings::Config>) -> Result<Consumer, InstantiateErrorKind> {make_consumer}, (Inject<settings::Config>,), froodi_compile::finalizer::NoFinalizer>>>, (SharedAt<_>,)>`
+   = note: required for `Reg<Consumer, fn(Inject<settings::Config>) -> Result<Consumer, InstantiateErrorKind> {make_consumer}, (Inject<settings::Config>,), froodi_compile::finalizer::NoFinalizer>` to implement `Link<Node<Reg<settings::Config, {closure@$DIR/tests/ui/duplicate_through_alias.rs:18:21: 18:23}, (), froodi_compile::finalizer::NoFinalizer>, Node<Reg<settings::Config, {closure@$DIR/tests/ui/duplicate_through_alias.rs:19:21: 19:23}, (), froodi_compile::finalizer::NoFinalizer>, Reg<Consumer, fn(Inject<settings::Config>) -> Result<Consumer, InstantiateErrorKind> {make_consumer}, (Inject<settings::Config>,), froodi_compile::finalizer::NoFinalizer>>>, (SharedAt<_>,)>`
+help: consider specifying the generic arguments
+   |
+16 |     let _container = Container::new::<_, ((), ((), (SharedAt<I>,)))>(registry! {
+   |                                    +++++++++++++++++++++++++++++++++
+
+error[E0283]: type annotations needed
+  --> tests/ui/duplicate_through_alias.rs:16:22
+   |
+16 |       let _container = Container::new(registry! {
+   |  ______________________^
+17 | |         scope(App) [
+18 | |             provide(|| Ok::<settings::Config, InstantiateErrorKind>(settings::Config)),
+19 | |             provide(|| Ok::<Alias, InstantiateErrorKind>(Alias {})),
+20 | |             provide(make_consumer),
+21 | |         ],
+22 | |     });
+   | |______^ cannot infer type for struct `Node<Linked<settings::Config, {closure@$DIR/tests/ui/duplicate_through_alias.rs:18:21: 18:23}, (), ()>, Node<Linked<settings::Config, {closure@$DIR/tests/ui/duplicate_through_alias.rs:19:21: 19:23}, (), ()>, Linked<Consumer, fn(Inject<settings::Config>) -> Result<Consumer, InstantiateErrorKind> {make_consumer}, (Inject<settings::Config>,), (SharedAt<_>,)>>>`
+   |
+   = note: multiple `impl`s satisfying `Node<Linked<settings::Config, {closure@$DIR/tests/ui/duplicate_through_alias.rs:18:21: 18:23}, (), ()>, Node<Linked<settings::Config, {closure@$DIR/tests/ui/duplicate_through_alias.rs:19:21: 19:23}, (), ()>, Linked<Consumer, fn(Inject<settings::Config>) -> Result<Consumer, InstantiateErrorKind> {make_consumer}, (Inject<settings::Config>,), (SharedAt<_>,)>>>: At<_>` found in the `froodi_compile_runtime` crate:
+           - impl<I, A, B> At<L<I>> for Node<A, B>
+             where A: At<I>;
+           - impl<I, A, B> At<R<I>> for Node<A, B>
+             where A: Size, B: At<I>;
+   = note: required for `Inject<settings::Config>` to implement `DepExec<Node<Linked<settings::Config, {closure@$DIR/tests/ui/duplicate_through_alias.rs:18:21: 18:23}, (), ()>, Node<Linked<settings::Config, {closure@$DIR/tests/ui/duplicate_through_alias.rs:19:21: 19:23}, (), ()>, Linked<Consumer, fn(Inject<settings::Config>) -> Result<Consumer, InstantiateErrorKind> {make_consumer}, (Inject<settings::Config>,), (SharedAt<_>,)>>>, SharedAt<_>>`
+   = note: required for `(Inject<settings::Config>,)` to implement `DepsExec<Node<Linked<settings::Config, {closure@$DIR/tests/ui/duplicate_through_alias.rs:18:21: 18:23}, (), ()>, Node<Linked<settings::Config, {closure@$DIR/tests/ui/duplicate_through_alias.rs:19:21: 19:23}, (), ()>, Linked<Consumer, fn(Inject<settings::Config>) -> Result<Consumer, InstantiateErrorKind> {make_consumer}, (Inject<settings::Config>,), (SharedAt<_>,)>>>, (SharedAt<_>,)>`
+   = note: required for `Linked<Consumer, fn(Inject<settings::Config>) -> Result<Consumer, InstantiateErrorKind> {make_consumer}, (Inject<settings::Config>,), (SharedAt<_>,)>` to implement `Exec<Node<Linked<settings::Config, {closure@$DIR/tests/ui/duplicate_through_alias.rs:18:21: 18:23}, (), ()>, Node<Linked<settings::Config, {closure@$DIR/tests/ui/duplicate_through_alias.rs:19:21: 19:23}, (), ()>, Linked<Consumer, fn(Inject<settings::Config>) -> Result<Consumer, InstantiateErrorKind> {make_consumer}, (Inject<settings::Config>,), (SharedAt<_>,)>>>>`
+   = note: required for `Linked<Consumer, fn(Inject<settings::Config>) -> Result<Consumer, InstantiateErrorKind> {make_consumer}, (Inject<settings::Config>,), (SharedAt<_>,)>` to implement `Walk<Node<Linked<settings::Config, {closure@$DIR/tests/ui/duplicate_through_alias.rs:18:21: 18:23}, (), ()>, Node<Linked<settings::Config, {closure@$DIR/tests/ui/duplicate_through_alias.rs:19:21: 19:23}, (), ()>, Linked<Consumer, fn(Inject<settings::Config>) -> Result<Consumer, InstantiateErrorKind> {make_consumer}, (Inject<settings::Config>,), (SharedAt<_>,)>>>>`
+   = note: 2 redundant requirements hidden
+   = note: required for `Node<Linked<settings::Config, {closure@$DIR/tests/ui/duplicate_through_alias.rs:18:21: 18:23}, (), ()>, Node<Linked<settings::Config, {closure@$DIR/tests/ui/duplicate_through_alias.rs:19:21: 19:23}, (), ()>, Linked<Consumer, fn(Inject<settings::Config>) -> Result<Consumer, InstantiateErrorKind> {make_consumer}, (Inject<settings::Config>,), (SharedAt<_>,)>>>` to implement `Walk<Node<Linked<settings::Config, {closure@$DIR/tests/ui/duplicate_through_alias.rs:18:21: 18:23}, (), ()>, Node<Linked<settings::Config, {closure@$DIR/tests/ui/duplicate_through_alias.rs:19:21: 19:23}, (), ()>, Linked<Consumer, fn(Inject<settings::Config>) -> Result<Consumer, InstantiateErrorKind> {make_consumer}, (Inject<settings::Config>,), (SharedAt<_>,)>>>>`
+note: required by a bound in `froodi_compile::Container::new`
+  --> $WORKSPACE/froodi-compile-runtime/src/container.rs
+   |
+   |     pub fn new<Tree, Links>(registry: Registry<Tree>) -> Self
+   |            --- required by a bound in this associated function
+...
+   |         Tree::Linked: Walk<Tree::Linked> + SendSafety + SyncSafety + 'static,
+   |                       ^^^^^^^^^^^^^^^^^^ required by this bound in `Container::new`
