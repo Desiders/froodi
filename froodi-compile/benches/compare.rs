@@ -61,6 +61,11 @@ mod bench {
             });
         });
 
+        each_engine!(group, "enter_build_scope_transition", |engine| |b| {
+            let app = engine::chain(false);
+            b.iter(|| black_box(app.clone().enter_build().unwrap()));
+        });
+
         each_engine!(group, "get_transient_chain_100", |engine| |b| {
             let container = engine::transient_chain();
             b.iter(|| black_box(container.get_transient::<T99>().unwrap()));
