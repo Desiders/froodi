@@ -2,9 +2,8 @@
 
 ## Status
 
-This is a **working architecture**, not a final ADR.
-
-Several implementation mechanisms still require experiments, especially around `registry!`, type identity, build staging, and cross-crate composition.
+This document describes the experimental engine as implemented. Decisions and their evidence
+live in the ADRs under `decisions/`.
 
 ## 1. Architectural objective
 
@@ -122,54 +121,24 @@ without calling the factory (`froodi-compile/tests/factory_model.rs`). The runti
 `dependencies()` method of Froodi's trait is gone: parameter types describe themselves
 (`DepMeta`), and linking resolves them.
 
-## 6. Registry frontend remains undecided
+## 6. Registry frontend
 
-Candidate approaches:
+`registry!` and `async_registry!` are proc macros in `froodi-compile-macros` (ADR 0002). They
+parse Froodi's clauses and emit a balanced tree of typed leaves:
 
-### Procedural `registry!`
+```text
+registry! { scope(App) [ provide(a), provide(b) ], provide(Request, c), extend(r) }
+    ->
+Registry::from_tree(Node(Node(reg(App, a, ..), reg(App, b, ..)), Node(reg(Request, c, ..), r_tree)), [App, Request])
+```
 
-Pros:
-- sees full registration syntax;
-- can generate source metadata/glue;
-- good diagnostics for syntax-level concerns.
+The macro never needs a type: the provided type and the parameters come from the factory's
+`Instantiator<Deps>` impl. It records each registration's origin (the expression, file, line,
+column) for diagnostics and recognises `instance(...)` to mark the value source. A balanced tree
+keeps trait resolution depth at `log2(n)`: 500 registrations need no `recursion_limit`.
 
-Unknowns:
-- semantic knowledge about arbitrary instantiator expressions;
-- cross-crate composition;
-- interaction with runtime-captured closure values.
-
-### Typed macro expansion
-
-Pros:
-- rustc sees concrete factory types;
-- may preserve `Instantiator<Deps>` information naturally;
-- no separate source-language parser.
-
-Risks:
-- large nested types;
-- trait solver cost;
-- difficult diagnostics;
-- monomorphization/build-time growth.
-
-### `build.rs` hybrid
-
-Pros:
-- explicit global graph compilation/code generation;
-- natural place for graph algorithms.
-
-Risks:
-- Cargo staging;
-- metadata transport;
-- potential duplicate parsing;
-- current-crate semantic information is unavailable before crate compilation.
-
-### Fundle-like compiler/type-system encoding
-
-Potentially valuable if it lets rustc validate actual Rust types and generate static calls without a complex separate semantic frontend.
-
-### Hybrid
-
-A likely direction may combine macro-generated typed descriptors with graph compilation/code generation, but no approach should be selected without prototypes.
+`extend(...)` accepts a typed registry, whose tree joins the outer tree, or a
+`RuntimeRegistry`, which joins as an opaque node (ADR 0005).
 
 ## 7. Graph compiler responsibilities
 
@@ -181,19 +150,19 @@ rustc, while linking the registry tree in `Container::new`:
 which registration each Inject<T> / InjectTransient<T> targets
 missing provider of a static dependency        compile error
 ambiguous provider of a static dependency      compile error (E0283)
-cycle among static edges                       compile error (E0275, trait overflow)
+sync factory depending on an async one         compile error
 ```
 
-The cycle error is a side effect of direct calls between factories: proving that the factories
-can call each other never terminates. It rejects the registry, but its message is rustc's
-overflow report, not a dependency path (`froodi-compile/tests/ui/cycle.stderr`).
+With the `direct-edges` feature a cycle among static edges is also a compile error: proving that
+the factories can call each other never terminates, and rustc reports a trait overflow instead
+of a dependency path. With the default table edges the cycle reaches the graph compiler.
 
 `froodi-compile-core::compile`, once, when `Container::try_new` / `Container::new` builds a
 container:
 
 ```text
 duplicate bindings no factory depends on
-dependency cycles that reach it, whatever the mode   (Froodi rule)
+dependency cycles, whatever the request mode          (Froodi rule)
 dependency on a narrower scope                       (Froodi rule)
 scopes outside the hierarchy
 requests rustc did not resolve (Target::Key)
@@ -204,129 +173,97 @@ Diagnostics name the registrations involved with their source locations, and ren
 bindings and cycles as dependency trees. `Container::new` panics with them, as Froodi's
 `registry!` panics on a failed validation; `Container::try_new` returns them.
 
-## 8. Runtime execution levels
+## 8. Execution
 
-### Level A — compiled indexed plan
-
-```text
-public get<T>()
-    ↓
-registration lookup
-    ↓
-NodeId
-    ↓
-dependency NodeIds
-    ↓
-runtime factory slot
-```
-
-Some erasure may remain.
-
-### Level B — generated typed factory edges
+`Container::new` links the tree (rustc proves every static edge), describes the linked tree in
+the IR with the ids rustc resolved, compiles the graph, and builds one construction table per
+registration in declaration order:
 
 ```text
-public get<T>()
-    ↓
-generated/static dispatch
-    ↓
-generated direct resolver/factory calls
+Entry
+    item       pointer to the leaf inside the boxed tree
+    construct  fn(root, item, &Container, id) -> Rc<dyn Any>     `get` path
+    transient  fn(root, item, &Container, id, out)                `get_transient` path
+    finalize   fn(item, Rc<dyn Any>)
 ```
 
-Static dependency edges can potentially avoid `TypeId`, map lookup, dyn dispatch, and `Any/downcast`.
+Three edge kinds exist (ADR 0004):
 
-### Level C — generated typed storage
+```text
+table edge (default)      static Inject<T>: container.shared(ID) with ID a constant from rustc;
+                          the value is cast without a check, the slot's type is fixed
+direct edge (direct-edges) static Inject<T>: the provider's factory is called directly
+indexed edge              runtime registries: ids linked by key at startup, value downcast checked
+```
 
-Scope/cache state may be represented as generated typed fields.
+Table edges keep trait bounds shallow, so graph depth is unlimited and cycles reach the graph
+compiler. Direct edges let rustc inline the call but make it prove every dependency chain; at
+about forty edges this exceeds the default recursion limit and rustc stops with an internal
+compiler error.
 
-This should only be adopted if benchmarks justify the extra compiler/code-size complexity.
-
-## 9. Public dispatch vs internal static edges
-
-One promising design is:
+## 9. Public dispatch and internal edges
 
 ```text
 container.get::<T>()
-    ↓
-one type-based/public dispatch
-    ↓
-compiled node/generated resolver
-    ↓
-internal dependency edges use NodeId/direct calls
+    one TypeId -> id lookup in the compiled graph (binary search)
+    cache slot of id in this container, or construction
+internal edges
+    no TypeId, no map, no downcast check (static) / one downcast check (runtime registries)
 ```
 
-This preserves ergonomic public lookup without paying the same dynamic lookup cost on every dependency edge.
+## 10. Scope and runtime model
 
-Whether `TypeId` remains at this outer boundary is an implementation detail to benchmark.
-
-## 10. Scope/runtime model
-
-Even with a compiled graph, runtime must maintain:
+A container has a scope level, a parent and per-registration cache slots:
 
 ```text
-current scope/container
-parent/child relationship
-cache contents
-Context
-which registrations were instantiated
-finalizer state
-factory runtime values
+Container -> Inner
+    plan       shared by every container of one tree: compiled graph, linked tree, tables,
+               one construction lock per registration (thread_safe)
+    level      position of the scope in the sorted hierarchy
+    slots      Vec<Option<Rc<dyn Any>>> by registration id
+    context    Context values visible here: the parent's, overridden by its own
+    resolved   values constructed here that have a finalizer, in order
+    parent, close_parent
 ```
 
-The compiler should precompute scope ownership/accessibility where possible.
+`get` on a registration owned by a wider scope resolves in that ancestor and keeps a copy in the
+current cache, as Froodi does; a narrower scope is `NoAccessible`. `cache_provides` decides only
+whether a slot is written. Context values of registered types are written into the slots when a
+container is created; unregistered ones answer `get` from the context map. `get_transient` builds
+in the owning container and ignores the cache and the context.
 
-Caching remains controlled independently through Froodi's configuration semantics.
+Thread safety follows Froodi's features: `Rc`/`RefCell` without `thread_safe`, `Arc` and the
+selected lock backend with it; `no_std + alloc` builds with `lock-spin`.
 
 ## 11. Registry fragments
 
-The preferred composition model is not one monolithic global component.
-
-Investigate fragments that carry:
-
-```text
-static registration metadata
-+
-runtime factory values
-```
-
-and can be combined through Froodi-like `extend(...)`.
-
-Composition should trigger graph validation across fragments when the result remains statically analyzable.
+Typed fragments nest into one tree and are linked by rustc across fragments. A fragment that
+must be named is erased into a `RuntimeRegistry` and linked by key when the container is built
+(ADR 0005).
 
 ## 12. Static/runtime coexistence
 
-The future architecture should allow:
+The boundary is declared in the composition (ADR 0006): `runtime::<T>()` and `context::<T>()`
+registrations, runtime registries, and `replacing()` for overrides. A static dependency on a
+type only a runtime registry provides does not compile without a declaration.
+
+## 13. Async and finalizers
+
+`async_registry!` builds the same tree with async leaves; the IR marks them `Async`. The async
+container wraps the sync one and adds an async construction table. Async factories await static
+dependencies directly; futures are boxed at the `get` boundary and when resolving in an
+ancestor. Finalizers run newest first on `close`; async ones only on `close().await`. A sync
+factory depending on an async registration is a compile error.
+
+## 14. Decisions
 
 ```text
-static registrations
-+
-runtime registrations
+ADR 0001  factory model: Instantiator<Deps>, factory values stored in typed leaves
+ADR 0002  registry frontend: proc macro building a typed tree, linked by rustc
+ADR 0003  type identity: rustc; the graph compiler compares keys only where rustc cannot link
+ADR 0004  static execution backend
+ADR 0005  registry fragment composition
+ADR 0006  static/runtime boundary
 ```
 
-behind one Froodi-like `Container`.
-
-Static guarantees must remain explicit.
-
-A missing static dependency must not silently fall through to an arbitrary runtime registry unless the composition explicitly models that boundary.
-
-Do not introduce a new `Dynamic<T>` public wrapper until experiments demonstrate that registration-level metadata is insufficient.
-
-## 13. Async/finalizers
-
-The same graph representation should eventually describe sync factory, async factory, sync finalizer, and async finalizer.
-
-Do not create unrelated sync and async graph systems.
-
-## 14. Open architectural decisions
-
-The following require ADRs after experiments:
-
-1. `registry!` compilation mechanism.
-2. How `Instantiator<Deps>` is reused/adapted.
-3. Type identity and rustc validation strategy.
-4. Whether `build.rs` is required.
-5. Static plan vs generated typed edges.
-6. Whether typed generated storage is worthwhile.
-7. Registry-fragment representation.
-8. Explicit static/runtime boundary semantics.
-9. Cross-crate metadata/composition.
-10. How `froodi-auto` feeds the static engine.
+Open: how `froodi-auto` feeds the static engine, and integration into Froodi itself.

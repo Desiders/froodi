@@ -212,15 +212,17 @@ of registrations, and `Has<T, I>` finds the provider of `T` by type with the pat
 
 Fundle's zero-cost path relies on eager construction. Froodi keeps lazy scoped resolution, so an
 edge still needs a cache check. What carries over is the edge itself: after linking, an
-`Inject<T>` parameter resolves through a path rustc already chose, so the call to the provider's
-factory is a monomorphized direct call.
+`Inject<T>` parameter resolves through a registration id rustc already chose, so no `TypeId`,
+map or downcast check is needed on the edge.
 
-One limit appears that Fundle does not have. When every edge is a direct call, proving that the
-whole tree can execute makes rustc walk dependency chains. If providers are declared after their
-dependents, a chain of about one hundred edges exceeds the default `recursion_limit`. Declared in
-the other order, a chain of 500 compiles. Fundle avoids this because its bounds never chain. An
-indexed backend, where edges go through a table of construction functions, has no such chain; the
-choice between the two belongs to the static execution backend decision (#59).
+One limit appears that Fundle does not have. When every edge is a direct call to the provider's
+factory, proving that the tree can execute makes rustc walk each dependency chain. In a
+standalone prototype a chain of about one hundred edges exceeded the default `recursion_limit`
+when providers were declared after their dependents. In the engine, with scopes, caching and
+finalizers in the bounds, a chain of about forty-five edges made rustc stop with an internal
+compiler error while resolving instances, in either declaration order. Fundle avoids this because
+its bounds never chain. Calling the dependency through the construction table at its constant id
+keeps the bounds shallow; the choice between the two is ADR 0004.
 
 ### Build pipeline
 
@@ -235,8 +237,12 @@ after rustc type-checks the crate.
 Fundle crosses crates by nesting a public struct and listing forwarded types by hand. A Froodi
 registry fragment is a value whose type is the registration tree. Nesting one tree inside another
 keeps every registration visible to `Has`, which searches the whole tree, so composition needs no
-forwarding list. How fragments are named across function and crate boundaries belongs to the
-registry composition work (#62).
+forwarding list.
+
+The difference shows at function boundaries. A Fundle bundle has a name the user wrote; a Froodi
+tree type is unnameable, and an `impl Trait` return type hides the structure `Has` needs. Froodi
+therefore erases fragments that must be named into a `RuntimeRegistry`, linked by key when the
+container is built, and keeps statically checked reuse to `macro_rules!` producers (ADR 0005).
 
 ## 5. Conclusion
 

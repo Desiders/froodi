@@ -346,3 +346,78 @@ From `froodi/src/registry.rs` and its tests:
   `test_registry_extend_overrides_duplicate_entry_from_previous_macro_invocation`.
 - Every registry carries an entry for `Container` itself, in the root scope, with
   `cache_provides = false`, because caching the container in its own cache would keep it alive.
+
+## 15. Runtime-work accounting
+
+Classes, as in issue #58:
+
+```text
+A  fully compile-time            rustc or the macro does it; nothing remains at runtime
+B  structure precomputed          done once when the container is built; runtime keeps state
+C  inherently runtime             depends on values or on what was resolved
+D  depends on registration mode   differs between static and runtime registrations
+```
+
+| Operation | Current Froodi | Compile-time engine | Class |
+|---|---|---|---|
+| Registry construction | `BTreeMap` of boxed services, built when `registry!` runs | typed tree value, no allocation per registration (factories stored inline) | A |
+| Dependency metadata | `BTreeSet<Dependency>` per registration | parameter types; IR built once at container construction | A (static) / B |
+| Registry merging (`extend`) | map union, later entries win | tree nesting at compile time; runtime fragments appended by id | A / D |
+| Missing binding | found on resolution (`NoInstantiator`) | compile error for static edges; startup diagnostic for runtime registries | A / D |
+| Duplicate binding | silently replaced | compile error when depended on; startup diagnostic otherwise | A / B |
+| Cycle validation | DFS over the map when `registry!` runs | graph compiler, once per container tree | B |
+| Scope validation | when `registry!` runs | graph compiler, once per container tree | B |
+| `TypeInfo`/`TypeId` lookup | per `get` and per dependency edge | once per public `get`; none on static edges | B |
+| Dependency resolver traversal | `Deps::resolve(&container)` → `container.get::<T>()` per edge | table call by constant id (static), id by key at startup (runtime) | A / D |
+| Factory dispatch | `Box<dyn Service>` call | construction table call; direct call with `direct-edges` | B |
+| `Any`/downcast | per resolution | none on static edges; one check on runtime edges and at the `get` boundary | A / D |
+| Scope traversal | parent walk to the owning priority | parent walk to the owning level (precomputed per node) | B / C |
+| Cache lookup | `BTreeMap<TypeInfo, Rc<dyn Any>>` per container | `Vec` slot by id | C (state) |
+| Per-type construction lock | `TypeId`-keyed lock map, created lazily | one lock per registration, allocated with the plan | B |
+| Finalizer bookkeeping | resolved list per container, finalizer looked up by type | resolved list per container, finalizer by id | C |
+| Context propagation | context map merged into each child's cache | visible context per container; registered types written into slots | C |
+
+What moves to compile time is the graph's structure. What stays runtime is state: which values
+exist, in which container, with which finalizers pending, and the context each container sees.
+
+## 16. Scopes, cache and context (confirmed from `froodi/src/container.rs`)
+
+- `Container::new` starts at the widest scope and descends through the scopes skipped by
+  default, keeping each as the parent of the next (`build_root`). `new_with_start_scope` stops at
+  the requested priority.
+- A child built by `enter()` / `with_scope` / `with_context` descends from the next scope; the
+  first new level keeps its parent open (`close_parent = false`), intermediate levels close their
+  parent.
+- `get` checks the container's cache, then walks to the registration's owning scope, resolves
+  there, and caches the result in the requesting container too when `cache_provides` is set.
+- A registration of a narrower scope fails with `NoAccessible`.
+- A child's cache starts as a copy of the parent's cache map plus the new context; context values
+  therefore answer `get` for any type, registered or not, and take precedence over factories.
+- `get_transient` walks to the owning scope and builds there; it ignores cache and context.
+- `close` runs the finalizers of values constructed in that container, newest first, then resets
+  the cache to the container's context, and closes the parent when `close_parent` is set.
+  `Drop` calls `close`.
+- The container itself is registered in the root scope with `cache_provides = false`, so
+  `get::<Container>()` returns the root container.
+
+Differences in the compile-time engine: a child does not copy the parent's cache at creation, it
+resolves wider values through the parent when first asked. The observable result differs only
+after a parent is closed while a child is still in use: Froodi's child keeps the parent's values
+it had copied, the new engine's child resolves them again.
+
+## 17. Finalizers and async (confirmed from `froodi/src/async_impl`)
+
+- `async_registry!` builds an async registry; sync registries join it through `extend`, and the
+  async container embeds a sync container that it falls back to for types the async registry
+  lacks. An async factory can depend on sync registrations; a sync factory cannot reach async
+  ones.
+- Async factories and finalizers are functions returning futures. Froodi boxes every async
+  factory and finalizer call.
+- `close().await` awaits async finalizers newest first, then closes the embedded sync container.
+  `Drop` of an async container does not run async finalizers; Froodi logs a warning with the
+  number of pending finalizers.
+- A value whose construction failed is not in the resolved list, but the dependencies it built
+  are, so they are finalized on close.
+
+The compile-time engine keeps one graph for both: async leaves sit in the same tree and IR, and
+the async container shares all state with the sync one.
