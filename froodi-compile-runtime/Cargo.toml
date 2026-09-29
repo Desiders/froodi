@@ -22,6 +22,9 @@ lock-spin = ["thread_safe", "dep:spin"]
 
 async = ["std", "dep:tokio"]
 
+# Static edges call the provider's factory directly instead of through the construction table.
+direct-edges = []
+
 [dependencies]
 anyhow = { version = "1.0", default-features = false }
 froodi-compile-core = { path = "../froodi-compile-core" }

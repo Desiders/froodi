@@ -12,27 +12,19 @@ error[E0277]: this registration cannot be constructed synchronously
 12 | |     });
    | |_____^ a sync factory depends on it
    |
-   = help: the trait `froodi_compile_runtime::graph::Exec<froodi_compile::__private::Node<froodi_compile::__private::Node<AsyncLinked<Config, {async closure@$DIR/tests/ui/async/sync_needs_async.rs:8:30: 8:38}, (), froodi_compile::__private::NoFinalizer, ()>, froodi_compile_runtime::graph::Linked<Database, {closure@$DIR/tests/ui/async/sync_needs_async.rs:10:34: 10:67}, (Inject<Config>,), froodi_compile::__private::NoFinalizer, (froodi_compile_runtime::graph::SharedAt<froodi_compile_runtime::graph::L<froodi_compile_runtime::graph::L<froodi_compile_runtime::graph::Here>>>,)>>, froodi_compile_runtime::graph::ContainerLeaf>>` is not implemented for `AsyncLinked<Config, {async closure@$DIR/tests/ui/async/sync_needs_async.rs:8:30: 8:38}, (), froodi_compile::__private::NoFinalizer, ()>`
+   = help: the trait `froodi_compile_runtime::graph::SyncProvider<Config>` is not implemented for `AsyncLinked<Config, {async closure@$DIR/tests/ui/async/sync_needs_async.rs:8:30: 8:38}, (), froodi_compile::__private::NoFinalizer, ()>`
    = note: a sync factory may not depend on an async registration; make the dependent factory async
-help: the following other types implement trait `froodi_compile_runtime::graph::Exec<Root>`
+help: the following other types implement trait `froodi_compile_runtime::graph::SyncProvider<T>`
   --> $WORKSPACE/froodi-compile-runtime/src/graph.rs
    |
-   | / impl<Root, T: 'static, F, D, Fin, DI> Exec<Root> for Linked<T, F, D, Fin, DI>
-   | | where
-   | |     F: Instantiator<D, Provides = T>,
-   | |     D: DepsExec<Root, DI>,
-   | |__________________________^ `froodi_compile_runtime::graph::Linked<T, F, D, Fin, DI>`
-...
-   |   impl<Root> Exec<Root> for ContainerLeaf {
-   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `froodi_compile_runtime::graph::ContainerLeaf`
-   |
-  ::: $WORKSPACE/froodi-compile-runtime/src/boundary.rs
-   |
-   |   impl<Root, T: 'static> Exec<Root> for ImportLeaf<T> {
-   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `froodi_compile_runtime::boundary::ImportLeaf<T>`
-...
-   |   impl<Root, T: 'static> Exec<Root> for ContextLeaf<T> {
-   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `froodi_compile_runtime::boundary::ContextLeaf<T>`
+   | impl<T, F, D, Fin, DI> SyncProvider<T> for Linked<T, F, D, Fin, DI> {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `froodi_compile_runtime::graph::Linked<T, F, D, Fin, DI>` implements `froodi_compile_runtime::graph::SyncProvider<T>`
+   | impl SyncProvider<Container> for ContainerLeaf {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `froodi_compile_runtime::graph::ContainerLeaf` implements `froodi_compile_runtime::graph::SyncProvider<froodi_compile::Container>`
+   | impl<T> SyncProvider<T> for crate::boundary::ImportLeaf<T> {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `froodi_compile_runtime::boundary::ImportLeaf<T>` implements `froodi_compile_runtime::graph::SyncProvider<T>`
+   | impl<T> SyncProvider<T> for crate::boundary::ContextLeaf<T> {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `froodi_compile_runtime::boundary::ContextLeaf<T>` implements `froodi_compile_runtime::graph::SyncProvider<T>`
    = note: required for `Inject<Config>` to implement `froodi_compile_runtime::graph::DepExec<froodi_compile::__private::Node<froodi_compile::__private::Node<AsyncLinked<Config, {async closure@$DIR/tests/ui/async/sync_needs_async.rs:8:30: 8:38}, (), froodi_compile::__private::NoFinalizer, ()>, froodi_compile_runtime::graph::Linked<Database, {closure@$DIR/tests/ui/async/sync_needs_async.rs:10:34: 10:67}, (Inject<Config>,), froodi_compile::__private::NoFinalizer, (froodi_compile_runtime::graph::SharedAt<froodi_compile_runtime::graph::L<froodi_compile_runtime::graph::L<froodi_compile_runtime::graph::Here>>>,)>>, froodi_compile_runtime::graph::ContainerLeaf>, froodi_compile_runtime::graph::SharedAt<froodi_compile_runtime::graph::L<froodi_compile_runtime::graph::L<froodi_compile_runtime::graph::Here>>>>`
    = note: required for `(Inject<Config>,)` to implement `froodi_compile_runtime::graph::DepsExec<froodi_compile::__private::Node<froodi_compile::__private::Node<AsyncLinked<Config, {async closure@$DIR/tests/ui/async/sync_needs_async.rs:8:30: 8:38}, (), froodi_compile::__private::NoFinalizer, ()>, froodi_compile_runtime::graph::Linked<Database, {closure@$DIR/tests/ui/async/sync_needs_async.rs:10:34: 10:67}, (Inject<Config>,), froodi_compile::__private::NoFinalizer, (froodi_compile_runtime::graph::SharedAt<froodi_compile_runtime::graph::L<froodi_compile_runtime::graph::L<froodi_compile_runtime::graph::Here>>>,)>>, froodi_compile_runtime::graph::ContainerLeaf>, (froodi_compile_runtime::graph::SharedAt<froodi_compile_runtime::graph::L<froodi_compile_runtime::graph::L<froodi_compile_runtime::graph::Here>>>,)>`
    = note: required for `froodi_compile_runtime::graph::Linked<Database, {closure@$DIR/tests/ui/async/sync_needs_async.rs:10:34: 10:67}, (Inject<Config>,), froodi_compile::__private::NoFinalizer, (froodi_compile_runtime::graph::SharedAt<froodi_compile_runtime::graph::L<froodi_compile_runtime::graph::L<froodi_compile_runtime::graph::Here>>>,)>` to implement `froodi_compile_runtime::graph::Exec<froodi_compile::__private::Node<froodi_compile::__private::Node<AsyncLinked<Config, {async closure@$DIR/tests/ui/async/sync_needs_async.rs:8:30: 8:38}, (), froodi_compile::__private::NoFinalizer, ()>, froodi_compile_runtime::graph::Linked<Database, {closure@$DIR/tests/ui/async/sync_needs_async.rs:10:34: 10:67}, (Inject<Config>,), froodi_compile::__private::NoFinalizer, (froodi_compile_runtime::graph::SharedAt<froodi_compile_runtime::graph::L<froodi_compile_runtime::graph::L<froodi_compile_runtime::graph::Here>>>,)>>, froodi_compile_runtime::graph::ContainerLeaf>>`

@@ -41,3 +41,22 @@ fn new_panics_with_the_rendered_diagnostics() {
         ],
     });
 }
+
+struct A;
+struct B;
+
+/// With `direct-edges`, a cycle among static edges is rejected at compile time by a trait
+/// overflow instead.
+#[cfg(not(feature = "direct-edges"))]
+#[test]
+fn reports_a_cycle_among_static_edges_with_its_path() {
+    let result = Container::try_new(registry! {
+        scope(App) [
+            provide(|Inject(_b): Inject<B>| Ok::<_, InstantiateErrorKind>(A)),
+            provide(|Inject(_a): Inject<A>| Ok::<_, InstantiateErrorKind>(B)),
+        ],
+    });
+
+    let diagnostics = result.err().expect("the cycle is reported");
+    assert_eq!(diagnostics.to_string(), "error: dependency cycle\n\nA\n└── B\n    └── A");
+}

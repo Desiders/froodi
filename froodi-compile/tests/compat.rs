@@ -565,6 +565,23 @@ macro_rules! scenario {
             }
 
             #[test]
+            fn get_transient_respects_scopes_and_builds_in_the_owning_container() {
+                let app = Container::new(registry! {
+                    provide(App, make_config),
+                    provide(App, make_database),
+                    provide(Request, || Ok::<_, InstantiateErrorKind>((0_u8, 0_u16))),
+                });
+                assert!(matches!(app.get_transient::<(u8, u16)>(), Err(ResolveErrorKind::NoAccessible { .. })));
+
+                // A request-level context value of Config does not reach an App-owned transient build.
+                let mut context = $engine::Context::new();
+                context.insert(Config { url: "context" });
+                let request = app.enter().with_context(context).build().unwrap();
+                assert_eq!(request.get_transient::<Database>().unwrap().url, "postgres://localhost");
+                assert_eq!(request.get::<Database>().unwrap().url, "postgres://localhost");
+            }
+
+            #[test]
             fn resolves_a_named_factory_chain() {
                 let container = Container::new(registry! {
                     scope(App) [

@@ -381,6 +381,55 @@ pub trait DepExec<Root, I>: Sized {
     fn resolve(root: &Root, container: &Container) -> Result<Self, ResolveErrorKind>;
 }
 
+/// A leaf that provides `T` synchronously. The bound is shallow: it names the leaf, not its
+/// dependencies, so proving it never walks the dependency graph.
+#[diagnostic::on_unimplemented(
+    message = "this registration cannot be constructed synchronously",
+    label = "a sync factory depends on it",
+    note = "a sync factory may not depend on an async registration; make the dependent factory async"
+)]
+pub trait SyncProvider<T> {}
+
+impl<T, F, D, Fin, DI> SyncProvider<T> for Linked<T, F, D, Fin, DI> {}
+impl SyncProvider<Container> for ContainerLeaf {}
+impl<T> SyncProvider<T> for crate::boundary::ImportLeaf<T> {}
+impl<T> SyncProvider<T> for crate::boundary::ContextLeaf<T> {}
+
+/// Table edges (default): the dependency is constructed through the construction table at the
+/// registration id rustc resolved. No `TypeId`, map or downcast check is involved, and the bounds
+/// do not chain through the dependency graph, so graph depth is unlimited.
+#[cfg(not(feature = "direct-edges"))]
+impl<Root, T: SendSafety + SyncSafety + 'static, I> DepExec<Root, SharedAt<I>> for Inject<T>
+where
+    Root: At<I>,
+    Root::Item: SyncProvider<T>,
+{
+    #[inline]
+    fn resolve(_root: &Root, container: &Container) -> Result<Self, ResolveErrorKind> {
+        let value = container.shared(Root::INDEX)?;
+        // SAFETY: slot `Root::INDEX` only ever holds values of the registration at path `I`,
+        // which provides `T`.
+        Ok(Inject(unsafe { downcast_unchecked(value) }))
+    }
+}
+
+#[cfg(not(feature = "direct-edges"))]
+impl<Root, T: 'static, I> DepExec<Root, TransientAt<I>> for InjectTransient<T>
+where
+    Root: At<I>,
+    Root::Item: SyncProvider<T>,
+{
+    #[inline]
+    fn resolve(_root: &Root, container: &Container) -> Result<Self, ResolveErrorKind> {
+        // SAFETY: the registration at `Root::INDEX` provides `T`.
+        unsafe { container.transient_unchecked::<T>(Root::INDEX) }.map(InjectTransient)
+    }
+}
+
+/// Direct edges (`direct-edges`): the dependency's factory is called directly and can be
+/// inlined. Proving the bounds walks every dependency chain, which exceeds rustc's default
+/// recursion limit on chains of about forty edges.
+#[cfg(feature = "direct-edges")]
 impl<Root, T: SendSafety + SyncSafety + 'static, I> DepExec<Root, SharedAt<I>> for Inject<T>
 where
     Root: At<I>,
@@ -395,6 +444,7 @@ where
     }
 }
 
+#[cfg(feature = "direct-edges")]
 impl<Root, T: 'static, I> DepExec<Root, TransientAt<I>> for InjectTransient<T>
 where
     Root: At<I>,

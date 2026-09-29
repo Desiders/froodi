@@ -367,15 +367,25 @@ impl Container {
                 type_info: TypeInfo::of::<Dep>(),
             });
         };
+        // SAFETY: the registration was found by `Dep`'s `TypeId`, so it provides `Dep`.
+        unsafe { self.transient_unchecked(id.index()) }
+    }
+
+    /// The container a transient value of the registration at `index` is built in: its owning
+    /// scope, as in Froodi.
+    ///
+    /// # Errors
+    /// Returns [`ResolveErrorKind::NoAccessible`] if the registration's scope is narrower.
+    fn transient_owner(&self, index: usize) -> Result<&Container, ResolveErrorKind> {
         let plan = &*self.inner.plan;
-        let entry = &plan.entries[id.index()];
-        let mut out = core::mem::MaybeUninit::<Dep>::uninit();
-        // SAFETY: the registration was found by `Dep`'s `TypeId`, so it provides `Dep`, and the
-        // entry belongs to the tree `plan.root` points to.
-        unsafe {
-            (entry.transient)(plan.root, entry.item, self, id.index(), out.as_mut_ptr().cast())?;
-            Ok(out.assume_init())
+        let scope = plan.compiled.nodes()[index].scope;
+        if scope > self.inner.level {
+            return Err(ResolveErrorKind::NoAccessible {
+                expected_scope_data: plan.scopes[scope.index()],
+                actual_scope_data: self.scope(),
+            });
         }
+        Ok(self.ancestor(scope))
     }
 
     /// `get_transient` semantics for the registration at `index`, which must provide `Dep`.
@@ -394,13 +404,8 @@ impl Container {
                 },
             });
         }
-        let entry = &plan.entries[index];
-        let mut out = core::mem::MaybeUninit::<Dep>::uninit();
-        // SAFETY: the registration provides `Dep` (checked above) and belongs to this plan.
-        unsafe {
-            (entry.transient)(plan.root, entry.item, self, index, out.as_mut_ptr().cast())?;
-            Ok(out.assume_init())
-        }
+        // SAFETY: the registration provides `Dep` (checked above).
+        unsafe { self.transient_unchecked(index) }
     }
 
     /// `get_transient` semantics for the registration at `index`: the result of `construct`, a
@@ -412,7 +417,27 @@ impl Container {
     ) -> Result<Dep, ResolveErrorKind> {
         match self.inner.plan.compiled.nodes()[index].replaced_by {
             Some(replacement) => self.transient_at(replacement.index()),
-            None => construct(self),
+            None => construct(self.transient_owner(index)?),
+        }
+    }
+
+    /// `get_transient` semantics for the registration at `index`, without the type check.
+    ///
+    /// # Safety
+    /// The registration at `index` must provide `Dep`.
+    pub(crate) unsafe fn transient_unchecked<Dep: 'static>(&self, index: usize) -> Result<Dep, ResolveErrorKind> {
+        let plan = &*self.inner.plan;
+        if let Some(replacement) = plan.compiled.nodes()[index].replaced_by {
+            // SAFETY: a replacement provides the same type as the registration it replaces.
+            return unsafe { self.transient_unchecked(replacement.index()) };
+        }
+        let owner = self.transient_owner(index)?;
+        let entry = &plan.entries[index];
+        let mut out = core::mem::MaybeUninit::<Dep>::uninit();
+        // SAFETY: guaranteed by the caller; the entry belongs to this plan.
+        unsafe {
+            (entry.transient)(plan.root, entry.item, owner, index, out.as_mut_ptr().cast())?;
+            Ok(out.assume_init())
         }
     }
 
