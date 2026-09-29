@@ -58,8 +58,8 @@ fn a_closure_resolves_when_its_return_type_is_annotated_or_turbofished() {
     assert_eq!(
         outcomes,
         [
-            resolved("Repo", &[("Database", Mode::Shared)]),
-            resolved("Stamp", &[("Clock", Mode::Transient)]),
+            resolved("Repo", &[("Database", Mode::Inject)]),
+            resolved("Stamp", &[("Clock", Mode::InjectTransient)]),
             resolved("Counter", &[]),
         ]
     );
@@ -76,7 +76,7 @@ fn an_async_closure_reads_the_turbofish_of_its_async_block() {
     assert_eq!(
         outcomes,
         [
-            resolved("Pool", &[("Config", Mode::Shared)]),
+            resolved("Pool", &[("Config", Mode::Inject)]),
             Outcome::Unresolved(Reason::ClosureReturnTypeNotWritten),
         ]
     );
@@ -136,7 +136,7 @@ fn a_block_that_captures_clones_is_read_through_to_its_closure() {
     assert_eq!(
         outcomes,
         [
-            resolved("Reset", &[("Config", Mode::Shared)]),
+            resolved("Reset", &[("Config", Mode::Inject)]),
             Outcome::Unresolved(Reason::ClosureReturnTypeNotWritten),
         ]
     );

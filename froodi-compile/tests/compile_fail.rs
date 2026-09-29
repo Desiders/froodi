@@ -1,5 +1,5 @@
 //! Compile errors of the typed registry, pinned for the default (`thread_safe`) build.
-#![cfg(all(feature = "thread_safe", not(feature = "direct-edges")))]
+#![cfg(feature = "thread_safe")]
 
 #[test]
 fn ui() {

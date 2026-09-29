@@ -1,16 +1,5 @@
-//! Runtime registries: registry fragments whose type is erased.
-//!
-//! `registry!{ ... }.into_runtime()` turns a fragment into a [`RuntimeRegistry`], which has a
-//! nameable type and can be returned from functions and crates. rustc no longer sees its
-//! registrations, so its dependency requests are linked by binding key (`TypeId`) when a
-//! container is built, and a missing binding becomes a startup diagnostic instead of a compile
-//! error.
-//!
-//! Execution is the indexed backend (level A): each dependency edge goes through the target's
-//! construction function by registration id, and the value is checked with a `downcast`.
-//!
-//! Static code cannot see into a runtime registry: a static factory that depends on a type only a
-//! runtime registry provides does not compile unless the composition declares that boundary.
+//! Erased fragments link by `TypeId` at container construction and use indexed executors.
+//! Missing providers become startup diagnostics. Static dependencies need explicit import boundaries.
 
 use alloc::{boxed::Box, vec::Vec};
 use core::{any::TypeId, slice};
@@ -22,7 +11,7 @@ use crate::{
     dependency_resolver::DependencyResolver,
     errors::{InstantiatorErrorKind, ResolveErrorKind, TypeInfo},
     finalizer::MaybeFinalizer,
-    graph::{CollectRuntime, Describe, Empty, Entry, Finalize, Link, Node, Reg, Size, Walk},
+    graph::{CollectExecutors, CollectRuntime, Describe, Empty, Finalize, Link, Node, Reg, RegistrationExecutor, Size},
     inject::{Inject, InjectTransient},
     instantiator::Instantiator,
     registry::Registry,
@@ -30,10 +19,7 @@ use crate::{
     thread_safety::{RcAnyThreadSafety, RcThreadSafety, SendSafety, SyncSafety},
 };
 
-/// A factory parameter resolved through the edges the graph compiler linked by key.
-pub trait DepIndexed: Sized {
-    /// # Errors
-    /// Returns the error of resolving the dependency.
+pub trait ResolveRuntimeDependency: Sized {
     fn resolve(container: &Container, edges: &mut slice::Iter<'_, CompiledEdge>) -> Result<Self, ResolveErrorKind>;
 }
 
@@ -43,9 +29,9 @@ fn next_edge<'a>(edges: &mut slice::Iter<'a, CompiledEdge>) -> &'a CompiledEdge 
         .expect("the graph compiler links one edge per Inject/InjectTransient parameter")
 }
 
-impl<T: SendSafety + SyncSafety + 'static> DepIndexed for Inject<T> {
+impl<T: SendSafety + SyncSafety + 'static> ResolveRuntimeDependency for Inject<T> {
     fn resolve(container: &Container, edges: &mut slice::Iter<'_, CompiledEdge>) -> Result<Self, ResolveErrorKind> {
-        let value = container.shared(next_edge(edges).target.index())?;
+        let value = container.get_at(next_edge(edges).target.index())?;
         value.downcast::<T>().map(Inject).map_err(|value| ResolveErrorKind::IncorrectType {
             expected: TypeInfo::of::<T>(),
             actual: TypeInfo {
@@ -56,28 +42,27 @@ impl<T: SendSafety + SyncSafety + 'static> DepIndexed for Inject<T> {
     }
 }
 
-impl<T: 'static> DepIndexed for InjectTransient<T> {
+impl<T: 'static> ResolveRuntimeDependency for InjectTransient<T> {
     fn resolve(container: &Container, edges: &mut slice::Iter<'_, CompiledEdge>) -> Result<Self, ResolveErrorKind> {
-        container.transient_at::<T>(next_edge(edges).target.index()).map(InjectTransient)
+        container
+            .get_transient_at::<T>(next_edge(edges).target.index())
+            .map(InjectTransient)
     }
 }
 
-impl<R: DependencyResolver> DepIndexed for R {
+impl<R: DependencyResolver> ResolveRuntimeDependency for R {
     fn resolve(container: &Container, _edges: &mut slice::Iter<'_, CompiledEdge>) -> Result<Self, ResolveErrorKind> {
         R::resolve(container).map_err(Into::into)
     }
 }
 
-/// All parameters of a factory, resolved through linked edges.
-pub trait DepsIndexed: Sized {
-    /// # Errors
-    /// Returns the first dependency error.
+pub trait ResolveRuntimeDependencies: Sized {
     fn resolve(container: &Container, edges: &mut slice::Iter<'_, CompiledEdge>) -> Result<Self, ResolveErrorKind>;
 }
 
-macro_rules! impl_deps_indexed {
+macro_rules! impl_resolve_runtime_dependencies {
     ([$($dep:ident),*]) => {
-        impl<$($dep: DepIndexed,)*> DepsIndexed for ($($dep,)*) {
+        impl<$($dep: ResolveRuntimeDependency,)*> ResolveRuntimeDependencies for ($($dep,)*) {
             #[inline]
             #[allow(unused_variables)]
             fn resolve(container: &Container, edges: &mut slice::Iter<'_, CompiledEdge>) -> Result<Self, ResolveErrorKind> {
@@ -87,18 +72,18 @@ macro_rules! impl_deps_indexed {
     };
 }
 
-all_the_tuples!(impl_deps_indexed);
+all_the_tuples!(impl_resolve_runtime_dependencies);
 
-impl<T, F, D, Fin> Reg<T, F, D, Fin>
+impl<Out, Inst, Deps, Fin> Reg<Out, Inst, Deps, Fin>
 where
-    F: Instantiator<D, Provides = T>,
-    D: DepsIndexed,
+    Inst: Instantiator<Deps, Provides = Out>,
+    Deps: ResolveRuntimeDependencies,
 {
-    fn construct_indexed(&self, container: &Container, index: usize) -> Result<T, ResolveErrorKind> {
+    fn construct_indexed(&self, container: &Container, index: usize) -> Result<Out, ResolveErrorKind> {
         let edges = container.edges(index);
-        let dependencies = D::resolve(container, &mut edges.iter())
+        let dependencies = Deps::resolve(container, &mut edges.iter())
             .map_err(|err| ResolveErrorKind::Instantiator(InstantiatorErrorKind::Deps(err.into())))?;
-        self.factory
+        self.instantiator
             .clone()
             .instantiate(dependencies)
             .map_err(|err| ResolveErrorKind::Instantiator(InstantiatorErrorKind::Factory(err.into())))
@@ -106,26 +91,26 @@ where
 }
 
 /// # Safety
-/// `item` must point to a live `Reg<T, F, D, Fin>` registered at `index`.
-unsafe fn construct_indexed<T, F, D, Fin>(
+/// `item` must point to a live `Reg<Out, Inst, Deps, Fin>` registered at `index`.
+unsafe fn construct_indexed<Out, Inst, Deps, Fin>(
     _root: *const (),
     item: *const (),
     container: &Container,
     index: usize,
 ) -> Result<RcAnyThreadSafety, ResolveErrorKind>
 where
-    T: SendSafety + SyncSafety + 'static,
-    F: Instantiator<D, Provides = T>,
-    D: DepsIndexed,
+    Out: SendSafety + SyncSafety + 'static,
+    Inst: Instantiator<Deps, Provides = Out>,
+    Deps: ResolveRuntimeDependencies,
 {
-    // SAFETY: guaranteed by the caller.
-    let item = unsafe { &*item.cast::<Reg<T, F, D, Fin>>() };
+    // SAFETY: the caller supplies a live `Reg<Out, Inst, Deps, Fin>` with this executor's registration ID.
+    let item = unsafe { &*item.cast::<Reg<Out, Inst, Deps, Fin>>() };
     Ok(RcThreadSafety::new(item.construct_indexed(container, index)?) as RcAnyThreadSafety)
 }
 
 /// # Safety
-/// As [`construct_indexed`]; `out` must be valid for writing a `T`.
-unsafe fn transient_indexed<T, F, D, Fin>(
+/// As [`construct_indexed`]; `out` must be valid for writing an `Out`.
+unsafe fn transient_indexed<Out, Inst, Deps, Fin>(
     _root: *const (),
     item: *const (),
     container: &Container,
@@ -133,82 +118,81 @@ unsafe fn transient_indexed<T, F, D, Fin>(
     out: *mut (),
 ) -> Result<(), ResolveErrorKind>
 where
-    F: Instantiator<D, Provides = T>,
-    D: DepsIndexed,
+    Inst: Instantiator<Deps, Provides = Out>,
+    Deps: ResolveRuntimeDependencies,
 {
-    // SAFETY: guaranteed by the caller.
-    let item = unsafe { &*item.cast::<Reg<T, F, D, Fin>>() };
+    // SAFETY: the caller supplies a live `Reg<Out, Inst, Deps, Fin>` with this executor's registration ID.
+    let item = unsafe { &*item.cast::<Reg<Out, Inst, Deps, Fin>>() };
     let value = item.construct_indexed(container, index)?;
-    // SAFETY: guaranteed by the caller.
-    unsafe { out.cast::<T>().write(value) };
+    // SAFETY: `out` is aligned, writable uninitialized storage for `Out`.
+    unsafe { out.cast::<Out>().write(value) };
     Ok(())
 }
 
 /// # Safety
-/// `item` must point to a live `Reg<T, F, D, Fin>`, and `value` must have been provided by it.
-unsafe fn finalize_indexed<T: 'static, F, D, Fin: MaybeFinalizer<T>>(item: *const (), value: RcAnyThreadSafety) {
-    // SAFETY: guaranteed by the caller.
-    let item = unsafe { &*item.cast::<Reg<T, F, D, Fin>>() };
-    // SAFETY: guaranteed by the caller: the value came from this registration, which provides `T`.
+/// `item` must point to a live `Reg<Out, Inst, Deps, Fin>`, and `value` must have been provided by it.
+unsafe fn finalize_indexed<Out: 'static, Inst, Deps, Fin: MaybeFinalizer<Out>>(item: *const (), value: RcAnyThreadSafety) {
+    // SAFETY: the caller supplies a live `Reg<Out, Inst, Deps, Fin>` with this executor's registration ID.
+    let item = unsafe { &*item.cast::<Reg<Out, Inst, Deps, Fin>>() };
+    // SAFETY: guaranteed by the caller: the value came from this registration, which provides `Out`.
     item.finalizer
-        .finalize(unsafe { crate::thread_safety::downcast_unchecked::<T>(value) });
+        .finalize(unsafe { crate::thread_safety::downcast_unchecked::<Out>(value) });
 }
 
-/// Collects the indexed construction entries of an unlinked tree, in declaration order.
-pub trait IndexedWalk {
+/// Collection order must match `describe_runtime`.
+pub trait CollectRuntimeExecutors {
     #[doc(hidden)]
     #[allow(private_interfaces)]
-    fn walk_indexed(&self, entries: &mut Vec<Entry>);
+    fn collect_runtime_executors(&self, executors: &mut Vec<RegistrationExecutor>);
 }
 
-impl<T, F, D, Fin> IndexedWalk for Reg<T, F, D, Fin>
+impl<Out, Inst, Deps, Fin> CollectRuntimeExecutors for Reg<Out, Inst, Deps, Fin>
 where
-    T: SendSafety + SyncSafety + 'static,
-    F: Instantiator<D, Provides = T>,
-    D: DepsIndexed,
-    Fin: MaybeFinalizer<T>,
+    Out: SendSafety + SyncSafety + 'static,
+    Inst: Instantiator<Deps, Provides = Out>,
+    Deps: ResolveRuntimeDependencies,
+    Fin: MaybeFinalizer<Out>,
 {
     #[allow(private_interfaces)]
-    fn walk_indexed(&self, entries: &mut Vec<Entry>) {
-        entries.push(Entry {
-            item: core::ptr::from_ref(self).cast(),
-            construct: construct_indexed::<T, F, D, Fin>,
-            transient: transient_indexed::<T, F, D, Fin>,
-            finalize: finalize_indexed::<T, F, D, Fin>,
+    fn collect_runtime_executors(&self, executors: &mut Vec<RegistrationExecutor>) {
+        executors.push(RegistrationExecutor {
+            registration: core::ptr::from_ref(self).cast(),
+            construct: construct_indexed::<Out, Inst, Deps, Fin>,
+            construct_transient: transient_indexed::<Out, Inst, Deps, Fin>,
+            finalize: finalize_indexed::<Out, Inst, Deps, Fin>,
         });
     }
 }
 
-impl<A: IndexedWalk, B: IndexedWalk> IndexedWalk for Node<A, B> {
+impl<Left: CollectRuntimeExecutors, Right: CollectRuntimeExecutors> CollectRuntimeExecutors for Node<Left, Right> {
     #[allow(private_interfaces)]
-    fn walk_indexed(&self, entries: &mut Vec<Entry>) {
-        self.0.walk_indexed(entries);
-        self.1.walk_indexed(entries);
+    fn collect_runtime_executors(&self, executors: &mut Vec<RegistrationExecutor>) {
+        self.0.collect_runtime_executors(executors);
+        self.1.collect_runtime_executors(executors);
     }
 }
 
-impl IndexedWalk for Empty {
+impl CollectRuntimeExecutors for Empty {
     #[allow(private_interfaces)]
-    fn walk_indexed(&self, _entries: &mut Vec<Entry>) {}
+    fn collect_runtime_executors(&self, _executors: &mut Vec<RegistrationExecutor>) {}
 }
 
-impl IndexedWalk for RuntimeNode {
+impl CollectRuntimeExecutors for RuntimeNode {
     #[allow(private_interfaces)]
-    fn walk_indexed(&self, _entries: &mut Vec<Entry>) {}
+    fn collect_runtime_executors(&self, _executors: &mut Vec<RegistrationExecutor>) {}
 }
 
-/// An erased registry tree: what a container needs from a runtime registry.
 pub trait RuntimeTree: SendSafety + SyncSafety {
     #[doc(hidden)]
     fn describe_runtime(&self, out: &mut Vec<Registration<TypeId>>);
     #[doc(hidden)]
     #[allow(private_interfaces)]
-    fn walk_runtime(&self, entries: &mut Vec<Entry>);
+    fn collect_fragment_executors(&self, executors: &mut Vec<RegistrationExecutor>);
 }
 
 impl<Tree> RuntimeTree for Tree
 where
-    Tree: Describe + IndexedWalk + CollectRuntime + SendSafety + SyncSafety + 'static,
+    Tree: Describe + CollectRuntimeExecutors + CollectRuntime + SendSafety + SyncSafety + 'static,
 {
     fn describe_runtime(&self, out: &mut Vec<Registration<TypeId>>) {
         self.describe(out);
@@ -220,27 +204,24 @@ where
     }
 
     #[allow(private_interfaces)]
-    fn walk_runtime(&self, entries: &mut Vec<Entry>) {
-        self.walk_indexed(entries);
+    fn collect_fragment_executors(&self, executors: &mut Vec<RegistrationExecutor>) {
+        self.collect_runtime_executors(executors);
         let mut nested = Vec::new();
         self.collect_runtime(&mut nested);
         for tree in nested {
-            tree.walk_runtime(entries);
+            tree.collect_fragment_executors(executors);
         }
     }
 }
 
-/// A registry fragment with an erased, nameable type. See the module docs.
 pub struct RuntimeRegistry {
     pub(crate) tree: Box<dyn RuntimeTree>,
     pub(crate) scopes: Vec<ScopeData>,
 }
 
 impl RuntimeRegistry {
-    /// Marks every registration of this registry as an explicit replacement: it takes over the
-    /// other registration of its type, static or runtime, including the edges rustc linked to it.
-    /// This is how a test overrides a registration; an unmarked second registration of a type is
-    /// a duplicate.
+    /// Overrides providers of the same type, including statically linked edges.
+    /// Unmarked duplicate providers remain errors.
     #[must_use]
     pub fn replacing(self) -> Self {
         Self {
@@ -262,14 +243,14 @@ impl RuntimeTree for Replacing {
     }
 
     #[allow(private_interfaces)]
-    fn walk_runtime(&self, entries: &mut Vec<Entry>) {
-        self.0.walk_runtime(entries);
+    fn collect_fragment_executors(&self, executors: &mut Vec<RegistrationExecutor>) {
+        self.0.collect_fragment_executors(executors);
     }
 }
 
 impl<Tree> Registry<Tree>
 where
-    Tree: Describe + IndexedWalk + CollectRuntime + SendSafety + SyncSafety + 'static,
+    Tree: Describe + CollectRuntimeExecutors + CollectRuntime + SendSafety + SyncSafety + 'static,
 {
     /// Erases the registry's type. Its registrations are then linked by key when a container is
     /// built, and execute through the indexed backend.
@@ -282,7 +263,7 @@ where
     }
 }
 
-/// A runtime registry inside a registry tree. It has no size and no `Has` impls, so static
+/// A runtime registry inside a registry tree. It has no size and no `ProviderPath` impls, so static
 /// code cannot see its registrations.
 pub struct RuntimeNode(pub(crate) Box<dyn RuntimeTree>);
 
@@ -303,9 +284,9 @@ impl<Root> Link<Root, ()> for RuntimeNode {
     }
 }
 
-impl<Root> Walk<Root> for RuntimeNode {
+impl<Root> CollectExecutors<Root> for RuntimeNode {
     #[allow(private_interfaces)]
-    fn walk(&self, _entries: &mut Vec<Entry>) {}
+    fn collect_executors(&self, _executors: &mut Vec<RegistrationExecutor>) {}
 }
 
 impl CollectRuntime for RuntimeNode {
@@ -319,7 +300,7 @@ impl Finalize for RuntimeNode {
 }
 
 /// What `extend(...)` accepts: a static registry, whose tree joins the outer tree, or a runtime
-/// registry, which joins it as a [`RuntimeNode`].
+/// registry, which joins it as a `RuntimeNode`.
 pub trait IntoFragment {
     type Tree;
 

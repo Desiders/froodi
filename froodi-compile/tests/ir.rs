@@ -50,7 +50,7 @@ fn describes_each_registration_in_declaration_order() {
         database.requests,
         vec![DependencyRequest {
             target: Target::Key(TypeId::of::<Config>()),
-            mode: RequestMode::Shared,
+            mode: RequestMode::Inject,
             type_name: type_name::<Config>(),
         }]
     );
@@ -72,7 +72,7 @@ fn keeps_inject_transient_as_a_transient_request() {
     }
     .graph();
 
-    assert_eq!(graph.registrations[1].requests[0].mode, RequestMode::Transient);
+    assert_eq!(graph.registrations[1].requests[0].mode, RequestMode::InjectTransient);
 }
 
 #[test]

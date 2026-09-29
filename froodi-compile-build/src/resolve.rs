@@ -197,12 +197,12 @@ fn dependency(ty: &Type) -> Option<Dependency> {
     if let Some(inner) = first_type_argument(ty, "Inject") {
         return Some(Dependency {
             ty: render::spelling(inner),
-            mode: Mode::Shared,
+            mode: Mode::Inject,
         });
     }
     first_type_argument(ty, "InjectTransient").map(|inner| Dependency {
         ty: render::spelling(inner),
-        mode: Mode::Transient,
+        mode: Mode::InjectTransient,
     })
 }
 

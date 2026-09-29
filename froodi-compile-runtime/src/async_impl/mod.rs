@@ -1,15 +1,6 @@
-//! Async execution on the same registry tree, IR and graph compiler as the sync engine.
-//!
-//! `async_registry!` builds the same tree as `registry!`, with async factory leaves
-//! ([`AsyncReg`]). Sync registrations join it through `extend(...)`. The async [`Container`]
-//! wraps the sync one: scopes, caches, context and the finalizer list are shared; only
-//! construction is async.
-//!
-//! On a static edge an async factory awaits its dependency's construction directly; a sync
-//! dependency is called directly. A future is boxed only where a call leaves the typed world:
-//! at the public `get` boundary and when a value is resolved in an ancestor container. A sync
-//! factory cannot depend on an async registration: that is a compile error, because the sync
-//! call cannot await.
+//! Async registrations use the same linked tree, graph compiler and indexed executors.
+//! Construction futures are boxed at the erased boundary; dependency bounds stay shallow.
+//! Sync instantiators cannot depend on async registrations.
 
 #![allow(
     clippy::manual_async_fn,
@@ -28,8 +19,9 @@ use crate::{
     errors::{InstantiateErrorKind, InstantiatorErrorKind, ResolveErrorKind, ScopeErrorKind, ScopeWithErrorKind, TypeInfo},
     finalizer::{NoFinalizer, WithFinalizer},
     graph::{
-        At, ByResolver, CollectRuntime, ContainerLeaf, DepsExecMeta, DepsIn, DepsMeta, Describe, DescribeLinked, Entry, Exec, Finalize,
-        Has, Here, Link, Meta, Node, SharedAt, Size, TransientAt, Walk,
+        ByResolver, CollectExecutors, CollectRuntime, ConstructRegistration, ContainerLeaf, DependenciesMetadata, Describe, DescribeLinked,
+        Finalize, Here, Link, LinkDependencies, LinkedDependenciesMetadata, LinkedInject, LinkedInjectTransient, Meta, Node, ProviderPath,
+        RegistrationExecutor, RegistrationPath, Size,
     },
     inject::{Inject, InjectTransient},
     registry::Registry,
@@ -42,8 +34,6 @@ type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 #[cfg(not(feature = "thread_safe"))]
 type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + 'a>>;
 
-/// An async factory: a function or closure returning a future of its result. Same shape as
-/// Froodi's async `Instantiator<Deps>`.
 pub trait Instantiator<Deps>: Clone + 'static {
     type Provides: 'static;
     type Error: Into<InstantiateErrorKind>;
@@ -54,18 +44,18 @@ pub trait Instantiator<Deps>: Clone + 'static {
 macro_rules! impl_async_instantiator {
     ([$($ty:ident),*]) => {
         #[allow(non_snake_case)]
-        impl<F, Fut, Response, Err, $($ty,)*> Instantiator<($($ty,)*)> for F
+        impl<Inst, Fut, Out, Err, $($ty,)*> Instantiator<($($ty,)*)> for Inst
         where
-            F: FnMut($($ty,)*) -> Fut + Clone + 'static,
-            Fut: Future<Output = Result<Response, Err>> + SendSafety,
-            Response: 'static,
+            Inst: FnMut($($ty,)*) -> Fut + Clone + 'static,
+            Fut: Future<Output = Result<Out, Err>> + SendSafety,
+            Out: 'static,
             Err: Into<InstantiateErrorKind>,
         {
-            type Provides = Response;
+            type Provides = Out;
             type Error = Err;
 
             #[inline]
-            fn instantiate(&mut self, ($($ty,)*): ($($ty,)*)) -> impl Future<Output = Result<Response, Err>> + SendSafety {
+            fn instantiate(&mut self, ($($ty,)*): ($($ty,)*)) -> impl Future<Output = Result<Out, Err>> + SendSafety {
                 self($($ty,)*)
             }
         }
@@ -74,14 +64,13 @@ macro_rules! impl_async_instantiator {
 
 all_the_tuples!(impl_async_instantiator);
 
-/// An async finalizer, as in Froodi.
 pub trait Finalizer<Dep>: Clone + 'static {
     fn finalize(&mut self, dependency: RcThreadSafety<Dep>) -> impl Future<Output = ()> + SendSafety;
 }
 
-impl<F, Fut, Dep> Finalizer<Dep> for F
+impl<Fin, Fut, Dep> Finalizer<Dep> for Fin
 where
-    F: FnMut(RcThreadSafety<Dep>) -> Fut + Clone + 'static,
+    Fin: FnMut(RcThreadSafety<Dep>) -> Fut + Clone + 'static,
     Fut: Future<Output = ()> + SendSafety,
 {
     #[inline]
@@ -90,8 +79,7 @@ where
     }
 }
 
-/// The finalizer slot of an async registration. `finalize` consumes a clone of the slot, as
-/// Froodi calls a clone of the finalizer, so the returned future owns everything it uses.
+/// Consumes a clone so the returned future owns the finalizer.
 pub trait MaybeFinalizer<Dep>: Clone {
     const PRESENT: bool;
 
@@ -107,7 +95,7 @@ impl<Dep: SendSafety + SyncSafety> MaybeFinalizer<Dep> for NoFinalizer {
     }
 }
 
-impl<Dep: SendSafety + SyncSafety, F: Finalizer<Dep> + SendSafety> MaybeFinalizer<Dep> for WithFinalizer<F> {
+impl<Dep: SendSafety + SyncSafety, Fin: Finalizer<Dep> + SendSafety> MaybeFinalizer<Dep> for WithFinalizer<Fin> {
     const PRESENT: bool = true;
 
     #[inline]
@@ -117,31 +105,29 @@ impl<Dep: SendSafety + SyncSafety, F: Finalizer<Dep> + SendSafety> MaybeFinalize
     }
 }
 
-/// An async registration before linking.
-pub struct AsyncReg<T, F, D, Fin> {
-    factory: F,
+pub struct AsyncReg<Out, Inst, Deps, Fin> {
+    instantiator: Inst,
     finalizer: Fin,
     meta: Meta,
-    marker: PhantomData<fn() -> (T, D)>,
+    marker: PhantomData<fn() -> (Out, Deps)>,
 }
 
-/// One `provide(...)` item of `async_registry!`.
 #[doc(hidden)]
 #[inline]
-pub fn async_reg<S: Scope, F, D, Fin>(
+pub fn async_reg<S: Scope, Inst, Deps, Fin>(
     scope: S,
-    factory: F,
+    instantiator: Inst,
     config: Option<Config>,
     finalizer: Fin,
     source: froodi_compile_core::ValueSource,
     origin: froodi_compile_core::Origin,
-) -> AsyncReg<F::Provides, F, D, Fin>
+) -> AsyncReg<Inst::Provides, Inst, Deps, Fin>
 where
-    F: Instantiator<D>,
-    Fin: MaybeFinalizer<F::Provides>,
+    Inst: Instantiator<Deps>,
+    Fin: MaybeFinalizer<Inst::Provides>,
 {
     AsyncReg {
-        factory,
+        instantiator,
         finalizer,
         meta: Meta {
             scope: scope.into(),
@@ -172,27 +158,27 @@ fn registration<T: 'static>(
     }
 }
 
-impl<T, F, D, Fin> Size for AsyncReg<T, F, D, Fin> {
+impl<Out, Inst, Deps, Fin> Size for AsyncReg<Out, Inst, Deps, Fin> {
     const SIZE: usize = 1;
 }
 
-impl<T, F, D, Fin> Has<T, Here> for AsyncReg<T, F, D, Fin> {}
+impl<Out, Inst, Deps, Fin> ProviderPath<Out, Here> for AsyncReg<Out, Inst, Deps, Fin> {}
 
-impl<T, F, D, Fin> CollectRuntime for AsyncReg<T, F, D, Fin> {}
+impl<Out, Inst, Deps, Fin> CollectRuntime for AsyncReg<Out, Inst, Deps, Fin> {}
 
-impl<T: 'static, F, D: DepsMeta, Fin: MaybeFinalizer<T>> Describe for AsyncReg<T, F, D, Fin> {
+impl<Out: 'static, Inst, Deps: DependenciesMetadata, Fin: MaybeFinalizer<Out>> Describe for AsyncReg<Out, Inst, Deps, Fin> {
     fn describe(&self, out: &mut Vec<Registration<TypeId>>) {
-        out.push(registration::<T>(&self.meta, Fin::PRESENT, D::requests()));
+        out.push(registration::<Out>(&self.meta, Fin::PRESENT, Deps::requests()));
     }
 }
 
-impl<Root, T, F, D: DepsIn<Root, DI>, Fin, DI> Link<Root, DI> for AsyncReg<T, F, D, Fin> {
-    type Linked = AsyncLinked<T, F, D, Fin, DI>;
+impl<Root, Out, Inst, Deps: LinkDependencies<Root, Links>, Fin, Links> Link<Root, Links> for AsyncReg<Out, Inst, Deps, Fin> {
+    type Linked = AsyncLinked<Out, Inst, Deps, Fin, Links>;
 
     #[inline]
     fn link(self) -> Self::Linked {
         AsyncLinked {
-            factory: self.factory,
+            instantiator: self.instantiator,
             finalizer: self.finalizer,
             meta: self.meta,
             marker: PhantomData,
@@ -200,39 +186,34 @@ impl<Root, T, F, D: DepsIn<Root, DI>, Fin, DI> Link<Root, DI> for AsyncReg<T, F,
     }
 }
 
-type AsyncLinkedMarker<T, D, DI> = PhantomData<fn() -> (T, D, DI)>;
-
-/// An async registration whose dependency paths `DI` are resolved.
-pub struct AsyncLinked<T, F, D, Fin, DI> {
-    factory: F,
+pub struct AsyncLinked<Out, Inst, Deps, Fin, Links> {
+    instantiator: Inst,
     finalizer: Fin,
     meta: Meta,
-    marker: AsyncLinkedMarker<T, D, DI>,
+    #[allow(clippy::type_complexity, reason = "keep the registration marker inline with its type parameters")]
+    marker: PhantomData<fn() -> (Out, Deps, Links)>,
 }
 
-impl<T, F, D, Fin, DI> Size for AsyncLinked<T, F, D, Fin, DI> {
+impl<Out, Inst, Deps, Fin, Links> Size for AsyncLinked<Out, Inst, Deps, Fin, Links> {
     const SIZE: usize = 1;
 }
 
-impl<T, F, D, Fin, DI> At<Here> for AsyncLinked<T, F, D, Fin, DI> {
-    type Item = Self;
+impl<Out, Inst, Deps, Fin, Links> RegistrationPath<Here> for AsyncLinked<Out, Inst, Deps, Fin, Links> {
+    type Registration = Self;
     const INDEX: usize = 0;
-
-    #[inline]
-    fn at(&self) -> &Self {
-        self
-    }
 }
 
-impl<T, F, D, Fin, DI> CollectRuntime for AsyncLinked<T, F, D, Fin, DI> {}
+impl<Out, Inst, Deps, Fin, Links> CollectRuntime for AsyncLinked<Out, Inst, Deps, Fin, Links> {}
 
-impl<Root, T: 'static, F, D: DepsExecMeta<Root, DI>, Fin: MaybeFinalizer<T>, DI> DescribeLinked<Root> for AsyncLinked<T, F, D, Fin, DI> {
+impl<Root, Out: 'static, Inst, Deps: LinkedDependenciesMetadata<Root, Links>, Fin: MaybeFinalizer<Out>, Links> DescribeLinked<Root>
+    for AsyncLinked<Out, Inst, Deps, Fin, Links>
+{
     fn describe_linked(&self, out: &mut Vec<Registration<TypeId>>) {
-        out.push(registration::<T>(&self.meta, Fin::PRESENT, D::requests()));
+        out.push(registration::<Out>(&self.meta, Fin::PRESENT, Deps::requests()));
     }
 }
 
-impl<T, F, D, Fin, DI> Finalize for AsyncLinked<T, F, D, Fin, DI> {
+impl<Out, Inst, Deps, Fin, Links> Finalize for AsyncLinked<Out, Inst, Deps, Fin, Links> {
     /// Async finalizers run only from the async container's `close().await`.
     unsafe fn finalize(&self, _value: RcAnyThreadSafety) {}
 }
@@ -268,21 +249,20 @@ unsafe fn async_only_transient<T: 'static>(
 /// Never dereferences its pointers.
 unsafe fn no_finalize(_item: *const (), _value: RcAnyThreadSafety) {}
 
-impl<Root, T: 'static, F, D, Fin, DI> Walk<Root> for AsyncLinked<T, F, D, Fin, DI> {
+impl<Root, Out: 'static, Inst, Deps, Fin, Links> CollectExecutors<Root> for AsyncLinked<Out, Inst, Deps, Fin, Links> {
     /// In the sync table an async registration reports that it needs the async container.
     #[allow(private_interfaces)]
-    fn walk(&self, entries: &mut Vec<Entry>) {
-        entries.push(Entry {
-            item: core::ptr::from_ref(self).cast(),
-            construct: async_only::<T>,
-            transient: async_only_transient::<T>,
+    fn collect_executors(&self, executors: &mut Vec<RegistrationExecutor>) {
+        executors.push(RegistrationExecutor {
+            registration: core::ptr::from_ref(self).cast(),
+            construct: async_only::<Out>,
+            construct_transient: async_only_transient::<Out>,
             finalize: no_finalize,
         });
     }
 }
 
-/// Constructs a linked registration inside an async container.
-pub trait AsyncExec<Root> {
+pub trait ConstructAsyncRegistration<Root> {
     type Provides: 'static;
 
     fn construct_async<'a>(
@@ -292,7 +272,7 @@ pub trait AsyncExec<Root> {
         index: usize,
     ) -> impl Future<Output = Result<Self::Provides, ResolveErrorKind>> + SendSafety + 'a;
 
-    fn construct_async_shared<'a>(
+    fn construct_async_inject<'a>(
         &'a self,
         root: &'a Root,
         container: &'a Container,
@@ -302,15 +282,14 @@ pub trait AsyncExec<Root> {
         Self::Provides: SendSafety + SyncSafety;
 }
 
-/// Sync leaves run their sync construction inside the async container.
-macro_rules! sync_leaf_async_exec {
+macro_rules! sync_leaf_async_construction {
     ($($ty:ty $(, $param:ident)*;)*) => {
-        $(impl<Root: SyncSafety $(, $param)*> AsyncExec<Root> for $ty
+        $(impl<Root: SyncSafety $(, $param)*> ConstructAsyncRegistration<Root> for $ty
         where
-            Self: Exec<Root> + SyncSafety,
-            <Self as Exec<Root>>::Provides: SendSafety,
+            Self: ConstructRegistration<Root> + SyncSafety,
+            <Self as ConstructRegistration<Root>>::Provides: SendSafety,
         {
-            type Provides = <Self as Exec<Root>>::Provides;
+            type Provides = <Self as ConstructRegistration<Root>>::Provides;
 
             #[inline]
             fn construct_async<'a>(
@@ -323,7 +302,7 @@ macro_rules! sync_leaf_async_exec {
             }
 
             #[inline]
-            fn construct_async_shared<'a>(
+            fn construct_async_inject<'a>(
                 &'a self,
                 root: &'a Root,
                 container: &'a Container,
@@ -332,40 +311,40 @@ macro_rules! sync_leaf_async_exec {
             where
                 Self::Provides: SendSafety + SyncSafety,
             {
-                core::future::ready(self.construct_shared(root, &container.sync, index))
+                core::future::ready(self.construct_inject(root, &container.sync, index))
             }
         })*
     };
 }
 
-sync_leaf_async_exec! {
-    crate::graph::Linked<T, F, D, Fin, DI>, T, F, D, Fin, DI;
+sync_leaf_async_construction! {
+    crate::graph::Linked<Out, Inst, Deps, Fin, Links>, Out, Inst, Deps, Fin, Links;
     ContainerLeaf;
     crate::boundary::ImportLeaf<T>, T;
     crate::boundary::ContextLeaf<T>, T;
 }
 
-impl<Root, T, F, D, Fin, DI> AsyncExec<Root> for AsyncLinked<T, F, D, Fin, DI>
+impl<Root, Out, Inst, Deps, Fin, Links> ConstructAsyncRegistration<Root> for AsyncLinked<Out, Inst, Deps, Fin, Links>
 where
     Root: SyncSafety,
-    T: SendSafety + 'static,
-    F: Instantiator<D, Provides = T> + SendSafety + SyncSafety,
-    D: AsyncDepsExec<Root, DI> + SendSafety,
+    Out: SendSafety + 'static,
+    Inst: Instantiator<Deps, Provides = Out> + SendSafety + SyncSafety,
+    Deps: ResolveAsyncLinkedDependencies<Root, Links> + SendSafety,
     Fin: SyncSafety,
 {
-    type Provides = T;
+    type Provides = Out;
 
     fn construct_async<'a>(
         &'a self,
         root: &'a Root,
         container: &'a Container,
         _index: usize,
-    ) -> impl Future<Output = Result<T, ResolveErrorKind>> + SendSafety + 'a {
+    ) -> impl Future<Output = Result<Out, ResolveErrorKind>> + SendSafety + 'a {
         async move {
-            let dependencies = D::resolve_async(root, container)
+            let dependencies = Deps::resolve_async(root, container)
                 .await
                 .map_err(|err| ResolveErrorKind::Instantiator(InstantiatorErrorKind::Deps(err.into())))?;
-            self.factory
+            self.instantiator
                 .clone()
                 .instantiate(dependencies)
                 .await
@@ -373,72 +352,62 @@ where
         }
     }
 
-    fn construct_async_shared<'a>(
+    fn construct_async_inject<'a>(
         &'a self,
         root: &'a Root,
         container: &'a Container,
         index: usize,
     ) -> impl Future<Output = Result<RcAnyThreadSafety, ResolveErrorKind>> + SendSafety + 'a
     where
-        T: SyncSafety,
+        Out: SyncSafety,
     {
         async move { Ok(RcThreadSafety::new(self.construct_async(root, container, index).await?) as RcAnyThreadSafety) }
     }
 }
 
-/// Resolves one parameter of an async factory at its linked path.
 #[diagnostic::on_unimplemented(
-    message = "no registration provides the async factory parameter `{Self}`",
+    message = "no registration provides the async instantiator parameter `{Self}`",
     label = "this registry has no `provide(...)` for the type inside `{Self}`"
 )]
-pub trait AsyncDepExec<Root, I>: Sized {
+pub trait ResolveAsyncLinkedDependency<Root, Path>: Sized {
     fn resolve_async<'a>(
         root: &'a Root,
         container: &'a Container,
     ) -> impl Future<Output = Result<Self, ResolveErrorKind>> + SendSafety + 'a;
 }
 
-impl<Root, T, I> AsyncDepExec<Root, SharedAt<I>> for Inject<T>
+impl<Root, T, Path> ResolveAsyncLinkedDependency<Root, LinkedInject<Path>> for Inject<T>
 where
-    Root: At<I> + SyncSafety,
-    Root::Item: AsyncExec<Root, Provides = T> + SyncSafety,
+    Root: RegistrationPath<Path> + SyncSafety,
     T: SendSafety + SyncSafety + 'static,
 {
     fn resolve_async<'a>(
-        root: &'a Root,
+        _root: &'a Root,
         container: &'a Container,
     ) -> impl Future<Output = Result<Self, ResolveErrorKind>> + SendSafety + 'a {
         async move {
-            let value = container
-                .shared_with(Root::INDEX, |owner| root.at().construct_async_shared(root, owner, Root::INDEX))
-                .await?;
-            // SAFETY: slot `Root::INDEX` only holds values of the registration at path `I`,
+            let value = container.get_at(Root::INDEX).await?;
+            // SAFETY: slot `Root::INDEX` only holds values of the registration at path `Path`,
             // which provides `T`.
             Ok(Inject(unsafe { downcast_unchecked(value) }))
         }
     }
 }
 
-impl<Root, T, I> AsyncDepExec<Root, TransientAt<I>> for InjectTransient<T>
+impl<Root, T, Path> ResolveAsyncLinkedDependency<Root, LinkedInjectTransient<Path>> for InjectTransient<T>
 where
-    Root: At<I> + SyncSafety,
-    Root::Item: AsyncExec<Root, Provides = T> + SyncSafety,
+    Root: RegistrationPath<Path> + SyncSafety,
     T: SendSafety + 'static,
 {
     fn resolve_async<'a>(
-        root: &'a Root,
+        _root: &'a Root,
         container: &'a Container,
     ) -> impl Future<Output = Result<Self, ResolveErrorKind>> + SendSafety + 'a {
-        async move {
-            if let Some(replacement) = container.sync.inner.plan.compiled.nodes()[Root::INDEX].replaced_by {
-                return container.transient_at::<T>(replacement.index()).await.map(InjectTransient);
-            }
-            root.at().construct_async(root, container, Root::INDEX).await.map(InjectTransient)
-        }
+        async move { container.get_transient_at::<T>(Root::INDEX).await.map(InjectTransient) }
     }
 }
 
-impl<Root, R: DependencyResolver + SendSafety + 'static> AsyncDepExec<Root, ByResolver> for R {
+impl<Root, R: DependencyResolver + SendSafety + 'static> ResolveAsyncLinkedDependency<Root, ByResolver> for R {
     fn resolve_async<'a>(
         _root: &'a Root,
         container: &'a Container,
@@ -447,59 +416,57 @@ impl<Root, R: DependencyResolver + SendSafety + 'static> AsyncDepExec<Root, ByRe
     }
 }
 
-/// Resolves all parameters of an async factory, in order.
-pub trait AsyncDepsExec<Root, I>: Sized {
+pub trait ResolveAsyncLinkedDependencies<Root, Links>: Sized {
     fn resolve_async<'a>(
         root: &'a Root,
         container: &'a Container,
     ) -> impl Future<Output = Result<Self, ResolveErrorKind>> + SendSafety + 'a;
 }
 
-macro_rules! impl_async_deps_exec {
+macro_rules! impl_resolve_async_linked_dependencies {
     ([$($dep:ident $index:ident),*]) => {
-        impl<Root: SyncSafety, $($dep: AsyncDepExec<Root, $index> + SendSafety, $index,)*> AsyncDepsExec<Root, ($($index,)*)> for ($($dep,)*) {
+        impl<Root: SyncSafety, $($dep: ResolveAsyncLinkedDependency<Root, $index> + SendSafety, $index,)*> ResolveAsyncLinkedDependencies<Root, ($($index,)*)> for ($($dep,)*) {
             #[allow(unused_variables)]
             fn resolve_async<'a>(root: &'a Root, container: &'a Container) -> impl Future<Output = Result<Self, ResolveErrorKind>> + SendSafety + 'a {
-                async move { Ok(($(<$dep as AsyncDepExec<Root, $index>>::resolve_async(root, container).await?,)*)) }
+                async move { Ok(($(<$dep as ResolveAsyncLinkedDependency<Root, $index>>::resolve_async(root, container).await?,)*)) }
             }
         }
     };
 }
 
-all_the_tuple_pairs!(impl_async_deps_exec);
+all_the_tuple_pairs!(impl_resolve_async_linked_dependencies);
 
 type ConstructAsync =
     for<'a> unsafe fn(*const (), *const (), &'a Container, usize) -> BoxFuture<'a, Result<RcAnyThreadSafety, ResolveErrorKind>>;
 type TransientAsync =
     for<'a> unsafe fn(*const (), *const (), &'a Container, usize) -> BoxFuture<'a, Result<BoxAnyThreadSafety, ResolveErrorKind>>;
 
-/// Async construction functions of one registration.
-pub(crate) struct AsyncEntry {
-    item: *const (),
+/// Shares [`RegistrationExecutor`]'s invariants; construction futures borrow plan storage.
+pub(crate) struct AsyncRegistrationExecutor {
+    registration: *const (),
     construct: ConstructAsync,
-    transient: TransientAsync,
+    construct_transient: TransientAsync,
     finalize: unsafe fn(*const (), RcAnyThreadSafety) -> BoxFuture<'static, ()>,
 }
 
-// SAFETY: `item` points into the boxed tree of the plan that owns this entry, which is
+// SAFETY: `registration` points into the boxed tree of the plan that owns this executor, which is
 // `Send + Sync` in thread-safe builds; the other fields are plain function pointers.
 #[cfg(feature = "thread_safe")]
-unsafe impl Send for AsyncEntry {}
+unsafe impl Send for AsyncRegistrationExecutor {}
 #[cfg(feature = "thread_safe")]
-unsafe impl Sync for AsyncEntry {}
+unsafe impl Sync for AsyncRegistrationExecutor {}
 
-/// The async construction table of a plan, indexed by registration id. Registrations of
-/// runtime registries have no entry and are constructed synchronously.
+/// Runtime registrations have no async executor and fall back to synchronous construction.
 #[derive(Default)]
 pub(crate) struct AsyncTable {
-    entries: Vec<Option<AsyncEntry>>,
+    executors: Vec<Option<AsyncRegistrationExecutor>>,
     #[cfg(feature = "thread_safe")]
     locks: Vec<tokio::sync::Mutex<()>>,
 }
 
 impl AsyncTable {
     pub(crate) fn fill(&mut self, len: usize) {
-        self.entries.resize_with(len, || None);
+        self.executors.resize_with(len, || None);
         #[cfg(feature = "thread_safe")]
         self.locks.resize_with(len, || tokio::sync::Mutex::new(()));
     }
@@ -514,12 +481,12 @@ unsafe fn construct_async_erased<Root: SyncSafety + 'static, Item>(
     index: usize,
 ) -> BoxFuture<'_, Result<RcAnyThreadSafety, ResolveErrorKind>>
 where
-    Item: AsyncExec<Root> + SyncSafety + 'static,
+    Item: ConstructAsyncRegistration<Root> + SyncSafety + 'static,
     Item::Provides: SendSafety + SyncSafety,
 {
-    // SAFETY: guaranteed by the caller; the plan outlives every container that uses it.
+    // SAFETY: matching `Root`/`Item` pointers remain live through the container-borrowing future.
     let (root, item) = unsafe { (&*root.cast::<Root>(), &*item.cast::<Item>()) };
-    Box::pin(item.construct_async_shared(root, container, index))
+    Box::pin(item.construct_async_inject(root, container, index))
 }
 
 /// # Safety
@@ -531,25 +498,25 @@ unsafe fn transient_async_erased<Root: SyncSafety + 'static, Item>(
     index: usize,
 ) -> BoxFuture<'_, Result<BoxAnyThreadSafety, ResolveErrorKind>>
 where
-    Item: AsyncExec<Root> + SyncSafety + 'static,
+    Item: ConstructAsyncRegistration<Root> + SyncSafety + 'static,
     Item::Provides: SendSafety + SyncSafety,
 {
-    // SAFETY: guaranteed by the caller.
+    // SAFETY: matching `Root`/`Item` pointers stay live for the returned future.
     let (root, item) = unsafe { (&*root.cast::<Root>(), &*item.cast::<Item>()) };
     Box::pin(async move { Ok(Box::new(item.construct_async(root, container, index).await?) as BoxAnyThreadSafety) })
 }
 
 /// # Safety
-/// `item` must point to a live `AsyncLinked<T, F, D, Fin, DI>`, and `value` must hold a `T`.
-unsafe fn finalize_async_erased<T, F, D, Fin, DI>(item: *const (), value: RcAnyThreadSafety) -> BoxFuture<'static, ()>
+/// `item` must point to a live `AsyncLinked<Out, Inst, Deps, Fin, Links>`, and `value` must have been provided by it.
+unsafe fn finalize_async_erased<Out, Inst, Deps, Fin, Links>(item: *const (), value: RcAnyThreadSafety) -> BoxFuture<'static, ()>
 where
-    T: SendSafety + SyncSafety + 'static,
-    Fin: MaybeFinalizer<T> + 'static,
+    Out: SendSafety + SyncSafety + 'static,
+    Fin: MaybeFinalizer<Out> + 'static,
 {
-    // SAFETY: guaranteed by the caller.
-    let item = unsafe { &*item.cast::<AsyncLinked<T, F, D, Fin, DI>>() };
-    // SAFETY: guaranteed by the caller.
-    let value = unsafe { downcast_unchecked::<T>(value) };
+    // SAFETY: the caller supplies a live `AsyncLinked<Out, Inst, Deps, Fin, Links>` with this executor's registration ID.
+    let item = unsafe { &*item.cast::<AsyncLinked<Out, Inst, Deps, Fin, Links>>() };
+    // SAFETY: the value was produced by this registration, whose provided type is `Out`.
+    let value = unsafe { downcast_unchecked::<Out>(value) };
     Box::pin(item.finalizer.clone().finalize(value))
 }
 
@@ -559,26 +526,26 @@ unsafe fn finalize_nothing(_item: *const (), _value: RcAnyThreadSafety) -> BoxFu
     Box::pin(core::future::ready(()))
 }
 
-/// Collects the async construction entries of a linked tree, in declaration order.
-pub trait AsyncWalk<Root> {
+/// Must use the same registration order as the sync executor table.
+pub trait CollectAsyncExecutors<Root> {
     #[doc(hidden)]
     #[allow(private_interfaces)]
-    fn walk_async(&self, entries: &mut Vec<Option<AsyncEntry>>);
+    fn collect_async_executors(&self, executors: &mut Vec<Option<AsyncRegistrationExecutor>>);
 }
 
-macro_rules! sync_leaf_async_walk {
+macro_rules! collect_sync_leaf_async_executors {
     ($($ty:ty $(, $param:ident)*;)*) => {
-        $(impl<Root: SyncSafety + 'static $(, $param)*> AsyncWalk<Root> for $ty
+        $(impl<Root: SyncSafety + 'static $(, $param)*> CollectAsyncExecutors<Root> for $ty
         where
-            Self: AsyncExec<Root> + Exec<Root> + SyncSafety + 'static,
-            <Self as AsyncExec<Root>>::Provides: SendSafety + SyncSafety,
+            Self: ConstructAsyncRegistration<Root> + ConstructRegistration<Root> + SyncSafety + 'static,
+            <Self as ConstructAsyncRegistration<Root>>::Provides: SendSafety + SyncSafety,
         {
             #[allow(private_interfaces)]
-            fn walk_async(&self, entries: &mut Vec<Option<AsyncEntry>>) {
-                entries.push(Some(AsyncEntry {
-                    item: core::ptr::from_ref(self).cast(),
+            fn collect_async_executors(&self, executors: &mut Vec<Option<AsyncRegistrationExecutor>>) {
+                executors.push(Some(AsyncRegistrationExecutor {
+                    registration: core::ptr::from_ref(self).cast(),
                     construct: construct_async_erased::<Root, Self>,
-                    transient: transient_async_erased::<Root, Self>,
+                    construct_transient: transient_async_erased::<Root, Self>,
                     finalize: finalize_nothing,
                 }));
             }
@@ -586,50 +553,49 @@ macro_rules! sync_leaf_async_walk {
     };
 }
 
-sync_leaf_async_walk! {
-    crate::graph::Linked<T, F, D, Fin, DI>, T, F, D, Fin, DI;
+collect_sync_leaf_async_executors! {
+    crate::graph::Linked<Out, Inst, Deps, Fin, Links>, Out, Inst, Deps, Fin, Links;
     ContainerLeaf;
     crate::boundary::ImportLeaf<T>, T;
     crate::boundary::ContextLeaf<T>, T;
 }
 
-impl<Root, T, F, D, Fin, DI> AsyncWalk<Root> for AsyncLinked<T, F, D, Fin, DI>
+impl<Root, Out, Inst, Deps, Fin, Links> CollectAsyncExecutors<Root> for AsyncLinked<Out, Inst, Deps, Fin, Links>
 where
     Root: SyncSafety + 'static,
-    Self: AsyncExec<Root, Provides = T> + SyncSafety + 'static,
-    T: SendSafety + SyncSafety + 'static,
-    Fin: MaybeFinalizer<T> + 'static,
+    Self: ConstructAsyncRegistration<Root, Provides = Out> + SyncSafety + 'static,
+    Out: SendSafety + SyncSafety + 'static,
+    Fin: MaybeFinalizer<Out> + 'static,
 {
     #[allow(private_interfaces)]
-    fn walk_async(&self, entries: &mut Vec<Option<AsyncEntry>>) {
-        entries.push(Some(AsyncEntry {
-            item: core::ptr::from_ref(self).cast(),
+    fn collect_async_executors(&self, executors: &mut Vec<Option<AsyncRegistrationExecutor>>) {
+        executors.push(Some(AsyncRegistrationExecutor {
+            registration: core::ptr::from_ref(self).cast(),
             construct: construct_async_erased::<Root, Self>,
-            transient: transient_async_erased::<Root, Self>,
-            finalize: finalize_async_erased::<T, F, D, Fin, DI>,
+            construct_transient: transient_async_erased::<Root, Self>,
+            finalize: finalize_async_erased::<Out, Inst, Deps, Fin, Links>,
         }));
     }
 }
 
-impl<Root, A: AsyncWalk<Root>, B: AsyncWalk<Root>> AsyncWalk<Root> for Node<A, B> {
+impl<Root, Left: CollectAsyncExecutors<Root>, Right: CollectAsyncExecutors<Root>> CollectAsyncExecutors<Root> for Node<Left, Right> {
     #[allow(private_interfaces)]
-    fn walk_async(&self, entries: &mut Vec<Option<AsyncEntry>>) {
-        self.0.walk_async(entries);
-        self.1.walk_async(entries);
+    fn collect_async_executors(&self, executors: &mut Vec<Option<AsyncRegistrationExecutor>>) {
+        self.0.collect_async_executors(executors);
+        self.1.collect_async_executors(executors);
     }
 }
 
-impl<Root> AsyncWalk<Root> for crate::graph::Empty {
+impl<Root> CollectAsyncExecutors<Root> for crate::graph::Empty {
     #[allow(private_interfaces)]
-    fn walk_async(&self, _entries: &mut Vec<Option<AsyncEntry>>) {}
+    fn collect_async_executors(&self, _executors: &mut Vec<Option<AsyncRegistrationExecutor>>) {}
 }
 
-impl<Root> AsyncWalk<Root> for crate::runtime_registry::RuntimeNode {
+impl<Root> CollectAsyncExecutors<Root> for crate::runtime_registry::RuntimeNode {
     #[allow(private_interfaces)]
-    fn walk_async(&self, _entries: &mut Vec<Option<AsyncEntry>>) {}
+    fn collect_async_executors(&self, _executors: &mut Vec<Option<AsyncRegistrationExecutor>>) {}
 }
 
-/// The async container. It is the sync [`container::Container`] with async construction.
 #[derive(Clone)]
 pub struct Container {
     pub(crate) sync: container::Container,
@@ -644,8 +610,8 @@ impl Container {
     pub fn new<Tree, Links>(registry: Registry<Tree>) -> Self
     where
         Node<Tree, ContainerLeaf>: Link<Node<Tree, ContainerLeaf>, Links>,
-        Linked<Tree, Links>: Walk<Linked<Tree, Links>>
-            + AsyncWalk<Linked<Tree, Links>>
+        Linked<Tree, Links>: CollectExecutors<Linked<Tree, Links>>
+            + CollectAsyncExecutors<Linked<Tree, Links>>
             + DescribeLinked<Linked<Tree, Links>>
             + CollectRuntime
             + SendSafety
@@ -662,8 +628,8 @@ impl Container {
     pub fn try_new<Tree, Links>(registry: Registry<Tree>) -> Result<Self, Diagnostics>
     where
         Node<Tree, ContainerLeaf>: Link<Node<Tree, ContainerLeaf>, Links>,
-        Linked<Tree, Links>: Walk<Linked<Tree, Links>>
-            + AsyncWalk<Linked<Tree, Links>>
+        Linked<Tree, Links>: CollectExecutors<Linked<Tree, Links>>
+            + CollectAsyncExecutors<Linked<Tree, Links>>
             + DescribeLinked<Linked<Tree, Links>>
             + CollectRuntime
             + SendSafety
@@ -672,7 +638,7 @@ impl Container {
     {
         let plan = Plan::build_with(registry, |tree| {
             let mut table = AsyncTable::default();
-            tree.walk_async(&mut table.entries);
+            tree.collect_async_executors(&mut table.executors);
             table
         })?;
         Ok(Self {
@@ -687,7 +653,7 @@ impl Container {
     pub async fn get<Dep: SendSafety + SyncSafety + 'static>(&self) -> Result<RcThreadSafety<Dep>, ResolveErrorKind> {
         let type_info = TypeInfo::of::<Dep>();
         let value = match self.sync.inner.plan.compiled.lookup(&TypeId::of::<Dep>()) {
-            Some(id) => self.shared(id.index()).await?,
+            Some(id) => self.get_at(id.index()).await?,
             None => match self.sync.inner.context.map.get(&TypeId::of::<Dep>()) {
                 Some(value) => value.clone(),
                 None => return Err(ResolveErrorKind::NoInstantiator { type_info }),
@@ -712,7 +678,7 @@ impl Container {
                 type_info: TypeInfo::of::<Dep>(),
             });
         };
-        self.transient_at(id.index()).await
+        self.get_transient_at(id.index()).await
     }
 
     /// Closes the container: awaits the finalizers of the values constructed here since the last
@@ -723,15 +689,15 @@ impl Container {
             let resolved = core::mem::take(&mut *container.inner.resolved.write());
             let plan = &container.inner.plan;
             for (index, value) in resolved.into_iter().rev() {
-                if let (Some(entry), Some(ExecutionKind::Async)) =
-                    (&plan.async_table.entries[index], plan.compiled.nodes()[index].finalizer)
+                if let (Some(executor), Some(ExecutionKind::Async)) =
+                    (&plan.async_table.executors[index], plan.compiled.nodes()[index].finalizer)
                 {
                     // SAFETY: `value` was constructed by the registration at `index`.
-                    unsafe { (entry.finalize)(entry.item, value) }.await;
+                    unsafe { (executor.finalize)(executor.registration, value) }.await;
                 } else {
-                    let entry = &plan.entries[index];
+                    let executor = &plan.executors[index];
                     // SAFETY: `value` was constructed by the registration at `index`.
-                    unsafe { (entry.finalize)(entry.item, value) };
+                    unsafe { (executor.finalize)(executor.registration, value) };
                 }
             }
             container.inner.reset_slots();
@@ -745,7 +711,7 @@ impl Container {
     /// Creates a child container in the next scope that is not skipped by default.
     ///
     /// # Errors
-    /// See [`container::ChildContainerBuilder::build`].
+    /// See `container::ChildContainerBuilder::build`.
     pub fn enter_build(self) -> Result<Self, ScopeErrorKind> {
         self.sync.enter_build().map(|sync| Self { sync })
     }
@@ -753,7 +719,7 @@ impl Container {
     /// Creates a child container in the given scope.
     ///
     /// # Errors
-    /// See [`container::ChildContainerWithScope::build`].
+    /// See `container::ChildContainerWithScope::build`.
     pub fn enter_build_with_scope<S: Scope>(self, scope: S) -> Result<Self, ScopeWithErrorKind> {
         self.sync.enter().with_scope(scope).build().map(|sync| Self { sync })
     }
@@ -763,77 +729,62 @@ impl Container {
         Self { sync: sync.clone() }
     }
 
-    /// `get` semantics for the registration at `index`, through its async entry.
-    fn shared(&self, index: usize) -> BoxFuture<'_, Result<RcAnyThreadSafety, ResolveErrorKind>> {
-        let plan = self.sync.inner.plan.clone();
+    fn get_at(&self, index: usize) -> BoxFuture<'_, Result<RcAnyThreadSafety, ResolveErrorKind>> {
         Box::pin(async move {
-            match &plan.async_table.entries[index] {
-                Some(entry) => {
-                    // SAFETY: the entry belongs to the tree `plan.root` points to.
-                    self.shared_with(index, |owner| unsafe { (entry.construct)(plan.root, entry.item, owner, index) })
-                        .await
-                }
-                None => self.sync.shared(index),
+            if self.sync.inner.plan.async_table.executors[index].is_none() {
+                return self.sync.get_at(index);
             }
+            let inner = &self.sync.inner;
+            let node = &inner.plan.compiled.nodes()[index];
+            if let Some(replacement) = node.replaced_by {
+                return self.get_at(replacement.index()).await;
+            }
+            if let Some(value) = inner.slots.read().get(index) {
+                return Ok(value.clone());
+            }
+            let value = match node.scope.cmp(&inner.level) {
+                core::cmp::Ordering::Less => {
+                    // Resolve in the owning container, keep a copy here as Froodi does.
+                    let owner = Self::view(self.sync.ancestor(node.scope));
+                    owner.get_at(index).await?
+                }
+                core::cmp::Ordering::Greater => {
+                    return Err(ResolveErrorKind::NoAccessible {
+                        expected_scope_data: inner.plan.scopes[node.scope.index()],
+                        actual_scope_data: self.sync.scope(),
+                    });
+                }
+                core::cmp::Ordering::Equal => {
+                    #[cfg(feature = "thread_safe")]
+                    let _guard = inner.plan.async_table.locks[index].lock().await;
+                    #[cfg(feature = "thread_safe")]
+                    if let Some(value) = inner.slots.read().get(index) {
+                        return Ok(value.clone());
+                    }
+                    let executor = inner.plan.async_table.executors[index]
+                        .as_ref()
+                        .expect("async executor checked above");
+                    // SAFETY: the plan and its boxed tree outlive this awaited call.
+                    let value = unsafe { (executor.construct)(inner.plan.root, executor.registration, self, index) }.await?;
+                    if node.finalizer.is_some() {
+                        inner.resolved.write().push((index, value.clone()));
+                    }
+                    value
+                }
+            };
+            if node.cache_provides {
+                inner.slots.write().set(index, value.clone(), inner.plan.executors.len());
+            }
+            Ok(value)
         })
     }
 
-    /// `get` semantics for the registration at `index`: the cached value, or the result of
-    /// `construct` run in the owning container.
-    pub(crate) async fn shared_with<'a, Fut>(
-        &'a self,
-        index: usize,
-        construct: impl FnOnce(&'a Container) -> Fut,
-    ) -> Result<RcAnyThreadSafety, ResolveErrorKind>
-    where
-        Fut: Future<Output = Result<RcAnyThreadSafety, ResolveErrorKind>> + 'a,
-    {
-        let inner = &self.sync.inner;
-        let node = &inner.plan.compiled.nodes()[index];
-        if let Some(replacement) = node.replaced_by {
-            return self.shared(replacement.index()).await;
-        }
-        if let Some(value) = inner.slots.read().get(index) {
-            return Ok(value.clone());
-        }
-        let value = match node.scope.cmp(&inner.level) {
-            core::cmp::Ordering::Less => {
-                // Resolve in the owning container, keep a copy here as Froodi does.
-                let owner = Self::view(self.sync.ancestor(node.scope));
-                owner.shared(index).await?
-            }
-            core::cmp::Ordering::Greater => {
-                return Err(ResolveErrorKind::NoAccessible {
-                    expected_scope_data: inner.plan.scopes[node.scope.index()],
-                    actual_scope_data: self.sync.scope(),
-                });
-            }
-            core::cmp::Ordering::Equal => {
-                #[cfg(feature = "thread_safe")]
-                let _guard = inner.plan.async_table.locks[index].lock().await;
-                #[cfg(feature = "thread_safe")]
-                if let Some(value) = inner.slots.read().get(index) {
-                    return Ok(value.clone());
-                }
-                let value = construct(self).await?;
-                if node.finalizer.is_some() {
-                    inner.resolved.write().push((index, value.clone()));
-                }
-                value
-            }
-        };
-        if node.cache_provides {
-            inner.slots.write().set(index, value.clone(), inner.plan.entries.len());
-        }
-        Ok(value)
-    }
-
     /// `get_transient` semantics for the registration at `index`, which must provide `Dep`.
-    async fn transient_at<Dep: 'static>(&self, index: usize) -> Result<Dep, ResolveErrorKind> {
+    async fn get_transient_at<Dep: 'static>(&self, index: usize) -> Result<Dep, ResolveErrorKind> {
         let plan = self.sync.inner.plan.clone();
         let node = &plan.compiled.nodes()[index];
         if let Some(replacement) = node.replaced_by {
-            return Box::pin(self.transient_at(replacement.index())).await;
+            return Box::pin(self.get_transient_at(replacement.index())).await;
         }
         let owner = match node.scope.cmp(&self.sync.inner.level) {
             core::cmp::Ordering::Greater => {
@@ -844,10 +795,10 @@ impl Container {
             }
             _ => Self::view(self.sync.ancestor(node.scope)),
         };
-        let value = match &plan.async_table.entries[index] {
-            // SAFETY: the entry belongs to the tree `plan.root` points to.
-            Some(entry) => unsafe { (entry.transient)(plan.root, entry.item, &owner, index) }.await?,
-            None => return owner.sync.transient_at::<Dep>(index),
+        let value = match &plan.async_table.executors[index] {
+            // SAFETY: the executor belongs to the tree `plan.root` points to.
+            Some(executor) => unsafe { (executor.construct_transient)(plan.root, executor.registration, &owner, index) }.await?,
+            None => return owner.sync.get_transient_at::<Dep>(index),
         };
         value
             .downcast::<Dep>()

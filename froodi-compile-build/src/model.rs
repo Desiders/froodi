@@ -140,10 +140,10 @@ pub struct Dependency {
 /// How a factory requests a dependency.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
-    /// `Inject<T>`: the value cached by the container.
-    Shared,
+    /// `Inject<T>`: `get` semantics, subject to the provider's cache policy.
+    Inject,
     /// `InjectTransient<T>`: a fresh value per request.
-    Transient,
+    InjectTransient,
 }
 
 /// Why the source text does not determine a registration's types.

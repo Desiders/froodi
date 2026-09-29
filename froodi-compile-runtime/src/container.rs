@@ -11,22 +11,19 @@ use froodi_compile_core::{compile, CompiledGraph, Diagnostics, ExecutionKind, Sc
 use crate::{
     context::Context,
     errors::{ResolveErrorKind, ScopeErrorKind, ScopeWithErrorKind, TypeInfo},
-    graph::{CollectRuntime, ContainerLeaf, DescribeLinked, Entry, Link, Node, Walk},
+    graph::{CollectExecutors, CollectRuntime, ContainerLeaf, DescribeLinked, Link, Node, RegistrationExecutor},
     lock::LocalLock,
     registry::Registry,
     scope::{Scope, ScopeData},
     thread_safety::{BoxAnyThreadSafety, RcAnyThreadSafety, RcThreadSafety, SendSafety, SyncSafety},
 };
 
-/// State shared by every container of one tree: the compiled graph, the linked registration
-/// tree and its construction entries.
+/// Owned by every scope container so executor storage outlives construction and finalization.
 pub(crate) struct Plan {
     pub(crate) compiled: CompiledGraph<TypeId>,
-    /// Keeps the linked tree alive at a stable address; `root` and the entries point into it.
-    _tree: BoxAnyThreadSafety,
     pub(crate) root: *const (),
     /// Indexed by registration id.
-    pub(crate) entries: Vec<Entry>,
+    pub(crate) executors: Vec<RegistrationExecutor>,
     /// The scope hierarchy, widest first; indexed by `ScopeId`.
     pub(crate) scopes: Vec<ScopeData>,
     /// Provided type of every registration, indexed by registration id.
@@ -35,11 +32,14 @@ pub(crate) struct Plan {
     pub(crate) async_table: AsyncTable,
     #[cfg(feature = "thread_safe")]
     locks: NodeLocks,
+    /// Stable storage for `root` and both executor tables, including owned runtime fragments.
+    /// Declared last so executor tables are dropped first. See `RegistrationExecutor`'s invariants.
+    _tree: BoxAnyThreadSafety,
 }
 
 /// Async construction functions, present when an async container built the plan.
 #[cfg(feature = "async")]
-pub(crate) type AsyncTable = crate::async_impl::AsyncTable;
+pub(crate) use crate::async_impl::AsyncTable;
 
 #[cfg(not(feature = "async"))]
 pub(crate) type AsyncTable = ();
@@ -81,9 +81,9 @@ impl Inner {
             if self.plan.compiled.nodes()[index].finalizer == Some(ExecutionKind::Async) {
                 continue;
             }
-            let entry = &self.plan.entries[index];
+            let executor = &self.plan.executors[index];
             // SAFETY: `value` was constructed by the registration at `index`.
-            unsafe { (entry.finalize)(entry.item, value) };
+            unsafe { (executor.finalize)(executor.registration, value) };
         }
         self.reset_slots();
         if self.close_parent {
@@ -112,31 +112,36 @@ impl Plan {
     fn fill_from_context(&self, slots: &mut Slots, context: &Context) {
         for (type_id, value) in &context.map {
             if let Some(id) = self.compiled.lookup(type_id) {
-                slots.set(id.index(), value.clone(), self.entries.len());
+                slots.set(id.index(), value.clone(), self.executors.len());
             }
         }
     }
 
-    /// Compiles the registry graph and links its tree.
     pub(crate) fn build<Tree, Links>(registry: Registry<Tree>) -> Result<RcThreadSafety<Self>, Diagnostics>
     where
         Node<Tree, ContainerLeaf>: Link<Node<Tree, ContainerLeaf>, Links>,
-        Linked<Tree, Links>:
-            Walk<Linked<Tree, Links>> + DescribeLinked<Linked<Tree, Links>> + CollectRuntime + SendSafety + SyncSafety + 'static,
+        Linked<Tree, Links>: CollectExecutors<Linked<Tree, Links>>
+            + DescribeLinked<Linked<Tree, Links>>
+            + CollectRuntime
+            + SendSafety
+            + SyncSafety
+            + 'static,
     {
         Self::build_with(registry, |_| AsyncTable::default())
     }
 
-    /// Like [`Self::build`], with the async construction table `walk_async` collects from the
-    /// linked tree.
     pub(crate) fn build_with<Tree, Links>(
         registry: Registry<Tree>,
-        walk_async: impl FnOnce(&Linked<Tree, Links>) -> AsyncTable,
+        collect_async_executors: impl FnOnce(&Linked<Tree, Links>) -> AsyncTable,
     ) -> Result<RcThreadSafety<Self>, Diagnostics>
     where
         Node<Tree, ContainerLeaf>: Link<Node<Tree, ContainerLeaf>, Links>,
-        Linked<Tree, Links>:
-            Walk<Linked<Tree, Links>> + DescribeLinked<Linked<Tree, Links>> + CollectRuntime + SendSafety + SyncSafety + 'static,
+        Linked<Tree, Links>: CollectExecutors<Linked<Tree, Links>>
+            + DescribeLinked<Linked<Tree, Links>>
+            + CollectRuntime
+            + SendSafety
+            + SyncSafety
+            + 'static,
     {
         let mut scopes = registry.scopes;
         scopes.sort_by_key(|scope| scope.priority);
@@ -147,42 +152,42 @@ impl Plan {
         let tree = alloc::boxed::Box::new(Node(registry.tree, container).link());
         let mut graph = froodi_compile_core::Graph::new(scopes.iter().copied().map(Into::into).collect());
         tree.describe_linked(&mut graph.registrations);
-        let mut entries = Vec::new();
-        tree.walk(&mut entries);
+        let mut executors = Vec::new();
+        tree.collect_executors(&mut executors);
         let mut runtime = Vec::new();
         tree.collect_runtime(&mut runtime);
         for fragment in runtime {
             fragment.describe_runtime(&mut graph.registrations);
-            fragment.walk_runtime(&mut entries);
+            fragment.collect_fragment_executors(&mut executors);
         }
         let type_ids = graph.registrations.iter().map(|registration| registration.key).collect();
         let compiled = compile(graph)?;
         let root = core::ptr::from_ref::<Linked<Tree, Links>>(&tree).cast();
         #[cfg(feature = "async")]
         let async_table = {
-            let mut table = walk_async(&tree);
-            table.fill(entries.len());
+            let mut table = collect_async_executors(&tree);
+            table.fill(executors.len());
             table
         };
         #[cfg(not(feature = "async"))]
-        walk_async(&tree);
+        collect_async_executors(&tree);
         Ok(RcThreadSafety::new(Self {
             #[cfg(feature = "async")]
             async_table,
             type_ids,
             #[cfg(feature = "thread_safe")]
-            locks: NodeLocks::new(entries.len()),
+            locks: NodeLocks::new(executors.len()),
             compiled,
             _tree: tree,
             root,
-            entries,
+            executors,
             scopes,
         }))
     }
 }
 
 // SAFETY: the raw pointers only address the boxed tree owned by the same `Plan`, which is
-// `Send + Sync` in thread-safe builds; entries hold plain function pointers.
+// `Send + Sync` in thread-safe builds; executors hold plain function pointers.
 #[cfg(feature = "thread_safe")]
 unsafe impl Send for Plan {}
 #[cfg(feature = "thread_safe")]
@@ -195,9 +200,7 @@ pub struct Container {
 
 pub(crate) struct Inner {
     pub(crate) plan: RcThreadSafety<Plan>,
-    /// Position of this container's scope in the hierarchy.
     pub(crate) level: ScopeId,
-    /// Cached values by registration id.
     pub(crate) slots: LocalLock<Slots>,
     /// Context values visible in this container: the parent's, overridden by its own.
     pub(crate) context: Context,
@@ -218,8 +221,12 @@ impl Container {
     pub fn new<Tree, Links>(registry: Registry<Tree>) -> Self
     where
         Node<Tree, ContainerLeaf>: Link<Node<Tree, ContainerLeaf>, Links>,
-        Linked<Tree, Links>:
-            Walk<Linked<Tree, Links>> + DescribeLinked<Linked<Tree, Links>> + CollectRuntime + SendSafety + SyncSafety + 'static,
+        Linked<Tree, Links>: CollectExecutors<Linked<Tree, Links>>
+            + DescribeLinked<Linked<Tree, Links>>
+            + CollectRuntime
+            + SendSafety
+            + SyncSafety
+            + 'static,
     {
         Self::try_new(registry).unwrap_or_else(|diagnostics| panic!("invalid registry:\n{diagnostics}"))
     }
@@ -232,8 +239,12 @@ impl Container {
     pub fn try_new<Tree, Links>(registry: Registry<Tree>) -> Result<Self, Diagnostics>
     where
         Node<Tree, ContainerLeaf>: Link<Node<Tree, ContainerLeaf>, Links>,
-        Linked<Tree, Links>:
-            Walk<Linked<Tree, Links>> + DescribeLinked<Linked<Tree, Links>> + CollectRuntime + SendSafety + SyncSafety + 'static,
+        Linked<Tree, Links>: CollectExecutors<Linked<Tree, Links>>
+            + DescribeLinked<Linked<Tree, Links>>
+            + CollectRuntime
+            + SendSafety
+            + SyncSafety
+            + 'static,
     {
         Ok(Self::root(Plan::build(registry)?, |scope| !scope.is_skipped_by_default))
     }
@@ -247,8 +258,12 @@ impl Container {
     pub fn new_with_start_scope<Tree, Links, S: Scope>(registry: Registry<Tree>, scope: S) -> Self
     where
         Node<Tree, ContainerLeaf>: Link<Node<Tree, ContainerLeaf>, Links>,
-        Linked<Tree, Links>:
-            Walk<Linked<Tree, Links>> + DescribeLinked<Linked<Tree, Links>> + CollectRuntime + SendSafety + SyncSafety + 'static,
+        Linked<Tree, Links>: CollectExecutors<Linked<Tree, Links>>
+            + DescribeLinked<Linked<Tree, Links>>
+            + CollectRuntime
+            + SendSafety
+            + SyncSafety
+            + 'static,
     {
         let priority = scope.priority();
         let plan = Plan::build(registry).unwrap_or_else(|diagnostics| panic!("invalid registry:\n{diagnostics}"));
@@ -276,7 +291,6 @@ impl Container {
         self.inner.close();
     }
 
-    /// Creates a child container builder.
     #[inline]
     #[must_use]
     pub fn enter(self) -> ChildContainerBuilder {
@@ -286,7 +300,7 @@ impl Container {
     /// Creates a child container in the next scope that is not skipped by default.
     ///
     /// # Errors
-    /// See [`ChildContainerBuilder::build`].
+    /// See `ChildContainerBuilder::build`.
     #[inline]
     pub fn enter_build(self) -> Result<Container, ScopeErrorKind> {
         self.enter().build()
@@ -366,7 +380,7 @@ impl Container {
     pub fn get<Dep: SendSafety + SyncSafety + 'static>(&self) -> Result<RcThreadSafety<Dep>, ResolveErrorKind> {
         let type_info = TypeInfo::of::<Dep>();
         let value = match self.inner.plan.compiled.lookup(&TypeId::of::<Dep>()) {
-            Some(id) => self.shared(id.index())?,
+            Some(id) => self.get_at(id.index())?,
             None => match self.inner.context.map.get(&TypeId::of::<Dep>()) {
                 Some(value) => value.clone(),
                 None => return Err(ResolveErrorKind::NoInstantiator { type_info }),
@@ -393,7 +407,7 @@ impl Container {
             });
         };
         // SAFETY: the registration was found by `Dep`'s `TypeId`, so it provides `Dep`.
-        unsafe { self.transient_unchecked(id.index()) }
+        unsafe { self.get_transient_unchecked(id.index()) }
     }
 
     /// The container a transient value of the registration at `index` is built in: its owning
@@ -418,7 +432,7 @@ impl Container {
     /// # Errors
     /// Returns [`ResolveErrorKind::IncorrectType`] if it provides another type, or the
     /// construction error.
-    pub(crate) fn transient_at<Dep: 'static>(&self, index: usize) -> Result<Dep, ResolveErrorKind> {
+    pub(crate) fn get_transient_at<Dep: 'static>(&self, index: usize) -> Result<Dep, ResolveErrorKind> {
         let plan = &*self.inner.plan;
         if plan.type_ids[index] != TypeId::of::<Dep>() {
             return Err(ResolveErrorKind::IncorrectType {
@@ -430,39 +444,25 @@ impl Container {
             });
         }
         // SAFETY: the registration provides `Dep` (checked above).
-        unsafe { self.transient_unchecked(index) }
-    }
-
-    /// `get_transient` semantics for the registration at `index`: the result of `construct`, a
-    /// direct call to its factory, unless the registration is replaced.
-    #[cfg(feature = "direct-edges")]
-    pub(crate) fn transient_with<Dep: 'static>(
-        &self,
-        index: usize,
-        construct: impl FnOnce(&Container) -> Result<Dep, ResolveErrorKind>,
-    ) -> Result<Dep, ResolveErrorKind> {
-        match self.inner.plan.compiled.nodes()[index].replaced_by {
-            Some(replacement) => self.transient_at(replacement.index()),
-            None => construct(self.transient_owner(index)?),
-        }
+        unsafe { self.get_transient_unchecked(index) }
     }
 
     /// `get_transient` semantics for the registration at `index`, without the type check.
     ///
     /// # Safety
     /// The registration at `index` must provide `Dep`.
-    pub(crate) unsafe fn transient_unchecked<Dep: 'static>(&self, index: usize) -> Result<Dep, ResolveErrorKind> {
+    pub(crate) unsafe fn get_transient_unchecked<Dep: 'static>(&self, index: usize) -> Result<Dep, ResolveErrorKind> {
         let plan = &*self.inner.plan;
         if let Some(replacement) = plan.compiled.nodes()[index].replaced_by {
             // SAFETY: a replacement provides the same type as the registration it replaces.
-            return unsafe { self.transient_unchecked(replacement.index()) };
+            return unsafe { self.get_transient_unchecked(replacement.index()) };
         }
         let owner = self.transient_owner(index)?;
-        let entry = &plan.entries[index];
+        let executor = &plan.executors[index];
         let mut out = core::mem::MaybeUninit::<Dep>::uninit();
-        // SAFETY: guaranteed by the caller; the entry belongs to this plan.
+        // SAFETY: guaranteed by the caller; the executor belongs to this plan.
         unsafe {
-            (entry.transient)(plan.root, entry.item, owner, index, out.as_mut_ptr().cast())?;
+            (executor.construct_transient)(plan.root, executor.registration, owner, index, out.as_mut_ptr().cast())?;
             Ok(out.assume_init())
         }
     }
@@ -472,26 +472,9 @@ impl Container {
         &self.inner.plan.compiled.nodes()[index].edges
     }
 
-    /// `get` semantics for the registration at `index`, constructing through its entry.
-    pub(crate) fn shared(&self, index: usize) -> Result<RcAnyThreadSafety, ResolveErrorKind> {
-        let plan = &*self.inner.plan;
-        let entry = &plan.entries[index];
-        // SAFETY: the entry was produced by walking the tree `plan.root` points to.
-        self.shared_with(index, |container| unsafe {
-            (entry.construct)(plan.root, entry.item, container, index)
-        })
-    }
-
-    /// `get` semantics for the registration at `index`: the cached value, or the result of
-    /// `construct`. `construct` must produce the value of that registration; static edges pass a
-    /// direct call to its factory.
-    pub(crate) fn shared_with(
-        &self,
-        index: usize,
-        construct: impl FnOnce(&Container) -> Result<RcAnyThreadSafety, ResolveErrorKind>,
-    ) -> Result<RcAnyThreadSafety, ResolveErrorKind> {
+    pub(crate) fn get_at(&self, index: usize) -> Result<RcAnyThreadSafety, ResolveErrorKind> {
         if let Some(replacement) = self.inner.plan.compiled.nodes()[index].replaced_by {
-            return self.shared(replacement.index());
+            return self.get_at(replacement.index());
         }
         if let Some(value) = self.inner.slots.read().get(index) {
             return Ok(value.clone());
@@ -500,7 +483,7 @@ impl Container {
         let node = &plan.compiled.nodes()[index];
         let value = match node.scope.cmp(&self.inner.level) {
             // Owned by a wider scope: resolve there, keep a copy here as Froodi does.
-            Ordering::Less => self.ancestor(node.scope).shared_with(index, construct)?,
+            Ordering::Less => self.ancestor(node.scope).get_at(index)?,
             Ordering::Greater => {
                 return Err(ResolveErrorKind::NoAccessible {
                     expected_scope_data: plan.scopes[node.scope.index()],
@@ -516,7 +499,9 @@ impl Container {
                 if let Some(value) = self.inner.slots.read().get(index) {
                     return Ok(value.clone());
                 }
-                let value = construct(self)?;
+                let executor = &plan.executors[index];
+                // SAFETY: this plan owns the registration and its matching erased functions.
+                let value = unsafe { (executor.construct)(plan.root, executor.registration, self, index) }?;
                 if node.finalizer.is_some() {
                     self.inner.resolved.write().push((index, value.clone()));
                 }
@@ -524,7 +509,7 @@ impl Container {
             }
         };
         if node.cache_provides {
-            self.inner.slots.write().set(index, value.clone(), plan.entries.len());
+            self.inner.slots.write().set(index, value.clone(), plan.executors.len());
         }
         Ok(value)
     }
@@ -619,7 +604,7 @@ impl ChildContainerWithContext {
     /// Creates a child container in the next scope that is not skipped by default, with `context`.
     ///
     /// # Errors
-    /// See [`ChildContainerBuilder::build`].
+    /// See `ChildContainerBuilder::build`.
     pub fn build(self) -> Result<Container, ScopeErrorKind> {
         self.container.descend(
             Some(&self.context),

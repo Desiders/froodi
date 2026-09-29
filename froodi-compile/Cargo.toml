@@ -19,7 +19,6 @@ thread_safe = ["froodi-compile-runtime/thread_safe"]
 lock-parking-lot = ["froodi-compile-runtime/lock-parking-lot"]
 lock-spin = ["froodi-compile-runtime/lock-spin"]
 async = ["froodi-compile-runtime/async"]
-direct-edges = ["froodi-compile-runtime/direct-edges"]
 
 [dependencies]
 froodi-compile-core = { path = "../froodi-compile-core" }
