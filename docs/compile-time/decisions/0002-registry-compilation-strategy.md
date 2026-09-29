@@ -67,7 +67,24 @@ A `build.rs` runs before its crate is compiled. It can read source text but not 
 infers, and it runs before the same package's proc macros expand, so it cannot consume their
 output. The prototype in `froodi-compile-build` measures what it can still recover.
 
-BUILD_RS_EVIDENCE
+`froodi_compile_build::analyze` parses `registry!` / `async_registry!` invocations with `syn`
+and recovers a registration's provided type and dependencies only from what is written: a
+function in the same file with a `Result`-typed signature, a closure with annotated parameters and
+a written return type, `instance::<T>(..)`. Everything else gets a stated reason.
+
+Measured on this workspace (`froodi-compile-build/tests/sample.rs`):
+
+| Source | Registrations | Resolved | Main reasons |
+|---|---|---|---|
+| `examples/` | 26 | 0 | instance type not written 10, closure parameter not annotated 8, closure return type not written 8 |
+| `froodi/tests/` | 42 | 4 | closure return type not written 37 |
+| `froodi/benches/` | 148 | 0 | closure return type not written 148 |
+
+It also cannot see registrations produced by other macros: in `examples/sync_auto_provide` the
+container gets three registrations from `#[injectable]`, and the source text shows one
+(`froodi-compile-build/tests/staging.rs`). Type identity from text is spellings only: `Config`,
+`crate::Config`, `settings::Config` and a `type` alias are reported as unresolvable rather than
+guessed.
 
 ## Decision
 
