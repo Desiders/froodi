@@ -55,7 +55,7 @@ impl<Out> ProviderPath<Out, Here> for Provider<Out> {
     const INDEX: usize = 0;
 }
 
-impl<Out, Execution> SupportsExecution<Execution> for Provider<Out> {}
+impl<Out, Execution, Request> SupportsExecution<Execution, Request> for Provider<Out> {}
 
 impl<Left: RegistryIndex, Right: RegistryIndex> RegistryIndex for Node<Left, Right> {
     type Index = Node<Left::Index, Right::Index>;
@@ -101,20 +101,23 @@ pub struct SyncExecution;
 pub struct AsyncExecution;
 
 #[diagnostic::on_unimplemented(
-    message = "this registration cannot be constructed synchronously",
-    label = "a sync instantiator depends on it",
-    note = "a sync instantiator may not depend on an async registration; make the dependent instantiator async"
+    message = "cannot resolve `{Request}` in a synchronous instantiator: its selected registration is async",
+    label = "`{Request}` requires async construction",
+    note = "make the dependent instantiator async"
 )]
-pub trait SupportsExecution<Execution> {}
+pub trait SupportsExecution<Execution, Request> {}
+
+impl<Execution, T> SupportsExecution<Execution, RuntimeDependency<T>> for () {}
 
 // Check execution after provider inference, so an async provider is not reported as missing.
 macro_rules! impl_supports_execution {
-    ([$($provider:ident),*]) => {
-        impl<Execution, $($provider: SupportsExecution<Execution>,)*> SupportsExecution<Execution> for ($($provider,)*) {}
+    ([$($provider:ident $request:ident),*]) => {
+        impl<Execution, $($provider: SupportsExecution<Execution, $request>, $request,)*>
+            SupportsExecution<Execution, ($($request,)*)> for ($($provider,)*) {}
     };
 }
 
-all_the_tuples!(impl_supports_execution);
+all_the_tuple_pairs!(impl_supports_execution);
 
 /// `Links` is inferred alongside the tree; collection preserves its declaration order.
 pub trait Link<Root, Links> {
@@ -138,8 +141,9 @@ impl<Root, Left: Link<Root, LLinks>, Right: Link<Root, RLinks>, LLinks, RLinks> 
 }
 
 #[diagnostic::on_unimplemented(
-    message = "no static registration provides the instantiator parameter `{Self}`",
-    note = "custom resolvers in typed registrations use RuntimeDependency<T>; ordinary runtime fragments accept them directly"
+    message = "unsupported compiled instantiator parameter `{Self}`; use `RuntimeDependency<{Self}>` for a custom resolver",
+    label = "wrap this custom resolver in `RuntimeDependency<{Self}>`",
+    note = "compiled parameters use Inject<T>, InjectTransient<T> or RuntimeDependency<T>; dynamic registrations accept custom resolvers directly"
 )]
 pub trait LinkDependency<Root, Path> {
     type Provider;

@@ -8,6 +8,7 @@ use crate::{Config, Registry as RuntimeRegistry, ScopeData, TypeInfo};
 use alloc::vec::Vec;
 use core::marker::PhantomData;
 
+#[diagnostic::do_not_recommend]
 impl<T, Execution> Provide<Execution, BoundaryDeps, NoFinalizer> for Boundary<T> {
     type Leaf = BoundaryLeaf<T>;
 

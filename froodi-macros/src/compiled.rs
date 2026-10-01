@@ -1,14 +1,15 @@
 //! Balanced typed registry syntax; provider types are inferred by rustc.
 
-use alloc::{boxed::Box, format, vec, vec::Vec};
+use alloc::{boxed::Box, format, string::ToString, vec, vec::Vec};
 use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as TokenStream2};
-use quote::{format_ident, quote};
+use quote::{format_ident, quote, quote_spanned};
 use syn::{
     bracketed, parenthesized,
     parse::{Parse, ParseStream},
     parse_macro_input,
     punctuated::Punctuated,
+    spanned::Spanned,
     Expr, Ident, Token,
 };
 
@@ -130,6 +131,38 @@ fn balanced(leaves: &[TokenStream2], runtime: &TokenStream2) -> TokenStream2 {
 
 fn leaf(runtime: &TokenStream2, constructor: &TokenStream2, scope: &Ident, entry: &Registration) -> TokenStream2 {
     let inst = &entry.inst;
+    let label = match inst {
+        Expr::Path(path) => quote!(#path).to_string(),
+        Expr::Call(call) => {
+            let func = &call.func;
+            format!("{}(...)", quote!(#func))
+        }
+        Expr::Closure(closure) => {
+            // Show parameters, without exposing literals or verbose instantiator bodies.
+            let mut signature = closure.clone();
+            *signature.body = syn::parse_quote!({ __froodi_body() });
+            let file = syn::parse_quote! {
+                fn __froodi_diagnostic() {
+                    let _ = #signature;
+                }
+            };
+            let formatted = prettyplease::unparse(&file).split_whitespace().collect::<Vec<_>>().join(" ");
+            formatted
+                .strip_prefix("fn __froodi_diagnostic() { let _ = ")
+                .and_then(|signature| signature.strip_suffix(" { __froodi_body() }; }"))
+                .map(|signature| format!("{signature} ..."))
+                .unwrap_or_else(|| {
+                    let inputs = &closure.inputs;
+                    format!("|{}| ...", quote!(#inputs))
+                })
+        }
+        _ => "instantiator expression".into(),
+    };
+    let label = label.replace(" :: ", "::");
+    let source = format_ident!("__FroodiRegistrationSource", span = Span::mixed_site());
+    let description = quote_spanned!(inst.span()=> ::core::concat!(
+        "provide(", #label, ") at ", ::core::file!(), ":", ::core::line!(), ":", ::core::column!()
+    ));
     let inst_binding = format_ident!("__froodi_inst", span = Span::mixed_site());
     let config_binding = format_ident!("__froodi_config", span = Span::mixed_site());
     let finalizer_binding = format_ident!("__froodi_finalizer", span = Span::mixed_site());
@@ -149,9 +182,13 @@ fn leaf(runtime: &TokenStream2, constructor: &TokenStream2, scope: &Ident, entry
         }
     }
     quote!({
+        struct #source;
+        impl #runtime::RegistrationSource for #source {
+            const DESCRIPTION: &'static str = #description;
+        }
         let #inst_binding = #inst;
         #(#bindings)*
-        #constructor(#scope, #inst_binding, #config, #finalizer)
+        #runtime::LocatedRegistration::<_, #source>::new(#constructor(#scope, #inst_binding, #config, #finalizer))
     })
 }
 

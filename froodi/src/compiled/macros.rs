@@ -138,9 +138,10 @@
 ///   Later native fragments override earlier native fragments.
 /// - `extend(...)` may appear between registrations; expressions evaluate once in source order.
 /// - Closed cycle checks run for instantiated constructors during build/test code generation,
-///   within 1,024 typed leaves including the implicit container. `cargo check` does not
-///   evaluate them. Open, erased and larger graphs retain runtime cycle validation;
-///   scope/config checks remain runtime.
+///   within 1,024 typed leaves including the implicit container. Diagnostics list instantiator
+///   signatures, source locations and the parameters forming the cycle. Inferred type names
+///   are unavailable to this stable const validator. `cargo check` does not evaluate these checks.
+///   Open, erased and larger graphs retain runtime cycle validation; scope/config checks remain runtime.
 #[macro_export]
 macro_rules! compiled_registry {
     ($($tokens:tt)*) => {

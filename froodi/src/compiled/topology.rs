@@ -10,8 +10,21 @@ pub struct Topology {
 
 enum Shape {
     Empty,
-    Leaf(&'static [Option<usize>]),
+    Leaf(TopologyLeaf),
     Branch(&'static Topology, &'static Topology),
+}
+
+#[derive(Clone, Copy)]
+struct TopologyLeaf {
+    targets: &'static [Option<usize>],
+    source: &'static str,
+}
+
+impl TopologyLeaf {
+    const EMPTY: Self = Self {
+        targets: &[],
+        source: "unnamed registration",
+    };
 }
 
 impl Topology {
@@ -38,8 +51,18 @@ impl Topology {
         Self {
             count: 1,
             closed,
-            shape: Shape::Leaf(targets),
+            shape: Shape::Leaf(TopologyLeaf {
+                targets,
+                ..TopologyLeaf::EMPTY
+            }),
         }
+    }
+
+    pub const fn with_source(mut self, source: &'static str) -> Self {
+        if let Shape::Leaf(ref mut leaf) = self.shape {
+            leaf.source = source;
+        }
+        self
     }
 
     pub const fn branch(left: &'static Self, right: &'static Self) -> Self {
@@ -50,10 +73,10 @@ impl Topology {
         }
     }
 
-    const fn flatten(&self, nodes: &mut [&'static [Option<usize>]; LIMIT], offset: usize) {
+    const fn flatten(&self, nodes: &mut [TopologyLeaf; LIMIT], offset: usize) {
         match self.shape {
             Shape::Empty => (),
-            Shape::Leaf(targets) => nodes[offset] = targets,
+            Shape::Leaf(leaf) => nodes[offset] = leaf,
             Shape::Branch(left, right) => {
                 left.flatten(nodes, offset);
                 right.flatten(nodes, offset + left.count);
@@ -66,7 +89,7 @@ impl Topology {
         if !self.closed || self.count > LIMIT {
             return;
         }
-        let mut nodes: [&[Option<usize>]; LIMIT] = [&[]; LIMIT];
+        let mut nodes = [TopologyLeaf::EMPTY; LIMIT];
         self.flatten(&mut nodes, 0);
         let mut color = [0u8; LIMIT];
         let mut stack = [0usize; LIMIT];
@@ -79,17 +102,20 @@ impl Topology {
                 color[start] = 1;
                 while depth != 0 {
                     let node = stack[depth - 1];
-                    if next[node] == nodes[node].len() {
+                    if next[node] == nodes[node].targets.len() {
                         color[node] = 2;
                         depth -= 1;
                     } else {
-                        let target = match nodes[node][next[node]] {
+                        let target = match nodes[node].targets[next[node]] {
                             Some(target) => target,
                             None => panic!("open dependency in closed topology"),
                         };
                         next[node] += 1;
                         assert!(target < self.count, "static dependency outside topology");
-                        assert!(color[target] != 1, "dependency cycle in closed static registry");
+                        if color[target] == 1 {
+                            let diagnostic = describe_cycle(&nodes, &stack, &next, depth, target);
+                            panic!("{}", diagnostic.message());
+                        }
                         if color[target] == 0 {
                             color[target] = 1;
                             stack[depth] = target;
@@ -103,9 +129,111 @@ impl Topology {
     }
 }
 
+const fn describe_cycle(
+    nodes: &[TopologyLeaf; LIMIT],
+    stack: &[usize; LIMIT],
+    next: &[usize; LIMIT],
+    depth: usize,
+    target: usize,
+) -> CycleDiagnostic {
+    let mut start = 0;
+    while stack[start] != target {
+        start += 1;
+    }
+    let mut diagnostic = CycleDiagnostic::new();
+    if start + 1 == depth {
+        diagnostic.append("dependency cycle in closed static registry (self-dependency):\n  ");
+        if diagnostic.len + nodes[target].source.len() + 128 > diagnostic.bytes.len() {
+            diagnostic.append("... (cycle diagnostic truncated)");
+        } else {
+            diagnostic.append(nodes[target].source);
+        }
+        diagnostic.append("\n  parameter #");
+        diagnostic.number(next[target]);
+        diagnostic.append(" requests this registration's own provided value\n");
+        return diagnostic;
+    }
+    diagnostic.append("dependency cycle in closed static registry:\n");
+    let mut position = start;
+    while position <= depth {
+        let node = if position == depth { target } else { stack[position] };
+        if position == start {
+            diagnostic.append("  ");
+        } else {
+            diagnostic.append("  -- parameter #");
+            diagnostic.number(next[stack[position - 1]]);
+            diagnostic.append(" --> ");
+        }
+        if diagnostic.len + nodes[node].source.len() + 128 > diagnostic.bytes.len() {
+            diagnostic.append("... (cycle diagnostic truncated)");
+            break;
+        }
+        diagnostic.append(nodes[node].source);
+        diagnostic.append("\n");
+        position += 1;
+    }
+    diagnostic
+}
+
+// Bound const-evaluation work and compiler output even for long cycles or source paths.
+struct CycleDiagnostic {
+    bytes: [u8; 4096],
+    len: usize,
+}
+
+impl CycleDiagnostic {
+    const fn new() -> Self {
+        Self { bytes: [0; 4096], len: 0 }
+    }
+
+    const fn message(&self) -> &str {
+        match core::str::from_utf8(self.bytes.split_at(self.len).0) {
+            Ok(message) => message,
+            Err(_) => panic!("invalid cycle diagnostic"),
+        }
+    }
+
+    const fn append(&mut self, text: &str) -> bool {
+        let bytes = text.as_bytes();
+        // Copy complete strings, so a bounded diagnostic remains valid UTF-8.
+        if self.len + bytes.len() > self.bytes.len() {
+            return false;
+        }
+        let mut index = 0;
+        while index < bytes.len() {
+            self.bytes[self.len] = bytes[index];
+            self.len += 1;
+            index += 1;
+        }
+        true
+    }
+
+    const fn number(&mut self, mut value: usize) {
+        let mut digits = [0u8; 20];
+        let mut len = 0;
+        loop {
+            digits[len] = b'0' + (value % 10) as u8;
+            len += 1;
+            value /= 10;
+            if value == 0 {
+                break;
+            }
+        }
+        while len != 0 {
+            len -= 1;
+            self.bytes[self.len] = digits[len];
+            self.len += 1;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    extern crate std;
+
     use super::Topology;
+    use alloc::string::String;
+    use std::panic::catch_unwind;
 
     const CYCLE: Topology = Topology::leaf(&[Some(0)]);
     const N2: Topology = Topology::branch(&CYCLE, &CYCLE);
@@ -130,5 +258,48 @@ mod tests {
     #[test]
     fn larger_graphs_defer_even_cycles_to_runtime() {
         let () = FALLBACK;
+    }
+
+    #[test]
+    fn reports_only_the_cycle_in_dependency_order() {
+        const PREFIX: Topology = Topology::leaf(&[Some(1)]).with_source("unrelated instantiator");
+        const FIRST: Topology = Topology::leaf(&[Some(2)]).with_source("provide(préparer) at src/app.rs:12:5");
+        const SECOND: Topology = Topology::leaf(&[Some(1)]).with_source("provide(handler) at src/app.rs:20:5");
+        const GRAPH: Topology = Topology::branch(&PREFIX, &Topology::branch(&FIRST, &SECOND));
+
+        let error = catch_unwind(|| GRAPH.validate()).unwrap_err();
+        assert_eq!(
+            error.downcast_ref::<String>().unwrap(),
+            "dependency cycle in closed static registry:\n  provide(préparer) at src/app.rs:12:5\n  -- parameter #1 --> provide(handler) at src/app.rs:20:5\n  -- parameter #1 --> provide(préparer) at src/app.rs:12:5\n"
+        );
+    }
+
+    #[test]
+    fn long_diagnostics_are_explicitly_truncated() {
+        const BYTES: [u8; 4096] = [b'x'; 4096];
+        const SOURCE: &str = match core::str::from_utf8(&BYTES) {
+            Ok(source) => source,
+            Err(_) => panic!("invalid test source"),
+        };
+        const GRAPH: Topology = Topology::leaf(&[Some(0)]).with_source(SOURCE);
+
+        let error = catch_unwind(|| GRAPH.validate()).unwrap_err();
+        assert_eq!(
+            error.downcast_ref::<String>().unwrap(),
+            "dependency cycle in closed static registry (self-dependency):\n  ... (cycle diagnostic truncated)\n  parameter #1 requests this registration's own provided value\n"
+        );
+    }
+
+    #[test]
+    fn identifies_the_parameter_that_requests_its_own_output() {
+        const INST: Topology = Topology::leaf(&[Some(1), Some(0)]).with_source("provide(inst) at src/app.rs:12:5");
+        const BASE: Topology = Topology::leaf(&[]);
+        const GRAPH: Topology = Topology::branch(&INST, &BASE);
+
+        let error = catch_unwind(|| GRAPH.validate()).unwrap_err();
+        assert_eq!(
+            error.downcast_ref::<String>().unwrap(),
+            "dependency cycle in closed static registry (self-dependency):\n  provide(inst) at src/app.rs:12:5\n  parameter #2 requests this registration's own provided value\n"
+        );
     }
 }
