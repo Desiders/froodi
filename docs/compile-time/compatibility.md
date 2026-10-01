@@ -116,19 +116,14 @@ uploaded.
 
 ## Safety verification limitation
 
-Focused suites pass on nightly 1.101.0 / Miri 0.1.0 (`5c543b0b8`, 2026-09-29):
+The contended parking_lot report is localized to a **dependency FFI argument
+mismatch under Miri's C-variadic contract**. Standalone parking_lot contention and
+direct syscall probes reproduce it on `x86_64-unknown-linux-gnu`, with
+`parking_lot 0.12.5`, `parking_lot_core 0.9.12`, `lock_api 0.4.14` and
+`libc 0.2.189`. Both pinned toolchains report UB:
 
-```sh
-cargo +nightly miri test -p froodi --no-default-features --features compiled,async \
-  --lib compiled::tests
-cargo +nightly miri test -p froodi --features compiled,async --lib compiled::tests::edges
-cargo +nightly miri test -p froodi --features compiled,async --lib compiled::tests::construction \
-  -- --skip concurrent_cached_construction
-```
-
-Contended synchronous locking is still **unresolved reported UB**, not an
-unsupported operation. On `x86_64-unknown-linux-gnu`, with `parking_lot 0.12.5`,
-`parking_lot_core 0.9.12`, `lock_api 0.4.14`, `libc 0.2.189`, Miri reports:
+- `nightly-2026-09-29`: rustc/Miri `c1070d693`, compiler date 2026-09-28.
+- `nightly-2026-09-30`: rustc/Miri `5c543b0b8`, compiler date 2026-09-29.
 
 ```text
 Undefined Behavior: incorrect c-variadic argument type for `syscall(SYS_futex, ...)`:
@@ -137,21 +132,42 @@ expected argument #2 to have type `*mut u32` but got incompatible type
 parking_lot_core-0.9.12/src/thread_parker/linux.rs:112:13
 ```
 
-The prior external-test reproduction reported the same diagnostic with `std::sync`
-spelling. The unit-test reproduction above still reports UB; its cause is unresolved.
+Passing `&AtomicI32` or `*const AtomicI32` fails for both WAIT and WAKE; passing
+`word.as_ptr().cast::<u32>()` passes. WAIT deliberately requests 1 from a word
+containing 0: native and accepted Miri calls return `-1`, errno `EAGAIN` (11).
+This is reported UB, not an unsupported operation, race, deadlock or timeout.
 
-The shared controlled-construction reproduction is retained:
+An isolated copy with the two pointer changes proposed in
+[parking_lot PR #539](https://github.com/Amanieu/parking_lot/pull/539) passes
+controlled contention on the first nightly with seeds 0, 1 and 42, and the second
+with seed 0. The original fails on both. The same argument issue is tracked in
+[parking_lot #542](https://github.com/Amanieu/parking_lot/issues/542); Rust's
+[Miri signature change](https://github.com/rust-lang/rust/commit/51dfc2b349ea16ab61e8aec1ad44ed5383d59c21)
+also corrected standard-library futex pointer types. These results support the
+dependency classification; they do not establish every unpark lifetime or
+interleaving. Production dependencies and synchronization remain unchanged.
+
+Strict-provenance contention separately stops at `word_lock.rs:320` with an
+**unsupported integer-to-pointer operation**. The default-provenance runs retain
+Miri's warning that exposed provenance can hide pointer bugs; no ABI, UB or
+aliasing checks were suppressed. Passing the isolated patch does not establish
+full thread-safe verification of the unpatched library.
+
+Both ordinary and compiled Froodi controlled reproductions fail with the same
+diagnostic on nightly 2026-09-29, seed 0. Their native tests pass. Replay separately
+from the focused adapter suite:
 
 ```sh
-MIRIFLAGS=-Zmiri-preemption-rate=1 cargo +nightly miri test -p froodi \
-  --features compiled --lib compiled::tests::construction::native_concurrent_cached_construction
+MIRIFLAGS='-Zmiri-symbolic-alignment-check -Zmiri-preemption-rate=1 -Zmiri-seed=0' \
+  cargo +nightly-2026-09-29 miri test --locked -p froodi --features compiled \
+  --lib compiled::tests::construction::native_concurrent_cached_construction -- --exact
 ```
 
-It also reproduces with the compiled variant (`compiled::tests::construction::concurrent_cached_construction
--- --exact`). Ordinary reproduction identifies a shared path, not proof of
-soundness or a tooling false positive. No race, deadlock or timeout was reported.
-UB checks and synchronization were not changed to hide it. Native contention
-regressions pass, but the Miri cause remains unresolved.
+Use `compiled::tests::construction::concurrent_cached_construction` for the
+compiled variant. Neither a passing focused adapter filter nor reproduction
+through ordinary registries proves this shared path sound. The supplied standalone
+ABI probe also reproduces the failure on both nightlies; its raw-pointer variant
+returns the intended EAGAIN.
 
 Host checks cover `no_std + alloc`, local async and thread-safe parking_lot/Tokio
 configurations; they do not certify a bare-metal target. Parsing stays host-side.

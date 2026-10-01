@@ -19,6 +19,9 @@ fn run(command: &mut Command, log: &Path) -> f64 {
 
 fn cargo(dir: &Path, target: &Path) -> Command {
     let mut command = Command::new("cargo");
+    if dir.join("Cargo.lock").exists() {
+        command.arg("--locked");
+    }
     command
         .current_dir(dir)
         .env("CARGO_TARGET_DIR", target)
@@ -35,7 +38,7 @@ fn source(shape: &str, edit: &str, engine: &str) -> String {
     } else {
         "froodi::registry"
     };
-    let mut text = format!("#![allow(unused_imports, dead_code)]\nuse {registry};\nuse froodi::{{Container, Inject, InstantiateErrorKind, DefaultScope::App}};\n");
+    let mut text = format!("#![allow(unused_imports, dead_code)]\nuse {registry} as registry;\nuse froodi::{{Container, Inject, InstantiateErrorKind, DefaultScope::App}};\n");
     for i in 0..count {
         text.push_str(&format!("struct T{i}(usize);\n"));
         if i == 0 || shape == "flat500" {
@@ -80,7 +83,9 @@ fn main() {
     let selected = args.get(4).map_or("both", String::as_str);
     assert!(matches!(selected, "dynamic" | "compiled" | "both"));
     let only = args.get(5).map(String::as_str);
-    assert!(matches!(only, None | Some("clean-app" | "body" | "topology" | "release")));
+    assert!(only.is_none_or(|only| only
+        .split(',')
+        .all(|measurement| matches!(measurement, "clean-app" | "body" | "topology" | "release"))));
     let target = output.join("target");
     let version = Command::new("rustc").arg("-Vv").output().unwrap();
     fs::write(output.join("toolchain.txt"), version.stdout).unwrap();
@@ -99,7 +104,7 @@ fn main() {
             fs::write(&src, &original).unwrap();
             run(cargo(&dir, &target).args(["build", "--offline"]), &dir.join("warm.log"));
             for measurement in ["clean-app", "body", "topology", "release"] {
-                if only.is_some_and(|only| only != measurement) {
+                if only.is_some_and(|only| !only.split(',').any(|selected| selected == measurement)) {
                     continue;
                 }
                 let mut samples = Vec::new();

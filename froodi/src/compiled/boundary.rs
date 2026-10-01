@@ -27,11 +27,11 @@ impl IntoFragment for RuntimeRegistry {
     }
 }
 
-unsafe impl RegistryIndex for RuntimeNode {
+impl RegistryIndex for RuntimeNode {
     type Index = Empty;
 }
 
-unsafe impl<Root> Link<Root, ()> for RuntimeNode {
+impl<Root> Link<Root, ()> for RuntimeNode {
     type Linked = Self;
 
     const TOPOLOGY: Topology = Topology::OPEN;
@@ -62,11 +62,11 @@ pub struct BoundaryDeps;
 
 pub struct BoundaryLeaf<T>(PhantomData<fn() -> T>);
 
-unsafe impl<T> RegistryIndex for BoundaryLeaf<T> {
+impl<T> RegistryIndex for BoundaryLeaf<T> {
     type Index = Provider<T>;
 }
 
-unsafe impl<Root, T> Link<Root, ()> for BoundaryLeaf<T> {
+impl<Root, T> Link<Root, ()> for BoundaryLeaf<T> {
     type Linked = Self;
 
     const TOPOLOGY: Topology = Topology::OPEN;

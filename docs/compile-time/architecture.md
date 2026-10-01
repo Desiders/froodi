@@ -46,8 +46,9 @@ versioned path dependency policy. Parsing dependencies stay on the host side.
 Macros pass a hygienic `$crate::macros_utils::compiled` path through hidden public
 helpers. The compiled backend itself is private. This supports
 renamed dependencies without downstream imports of implementation crates.
-`#[doc(hidden)]` controls documentation, not safety: provider-proof traits retain
-explicit unsafe contracts and executor construction remains private.
+`#[doc(hidden)]` controls documentation, not access. Provider-proof traits and
+executor construction remain private; the proofs establish DI correctness, not
+preconditions for unchecked memory access.
 
 ## Linking and execution
 
@@ -108,14 +109,17 @@ Open, erased and oversized compositions use effective runtime cycle validation;
 opaque lookups cannot be fully checked. Scope/config validation remains runtime
 and is never skipped by a general validation flag.
 
-## Executor safety contract
+## Executor ownership and metadata
 
-The owning abstraction documents these invariants beside native `ErasedInstantiator`:
+`ErasedInstantiator` owns an Rc/Arc of a private `CompiledCall` adapter containing
+the concrete `Inst`. Rust keeps dispatch and ownership paired; there are no
+project-owned raw pointer casts or manual Send/Sync implementations. Async calls
+tie the adapter, container, edges and future to one lifetime, including future
+destruction. `Inst` retains its existing feature-dependent thread-safety bounds;
+the dependency marker adds no ownership or Sync requirement to `Deps`.
 
-- Allocate each Inst in its final Rc/Arc before deriving its pointer; keep its
-  owner alive through every call and future.
-- Pair the pointer only with its exact `construct::<Inst, Deps>` function.
-  Safe extension points cannot manufacture that pairing.
+The metadata contract remains:
+
 - Preserve edge position, repeats and exact provided Rust types through remapping.
   Custom resolvers consume no indexed position.
 - IDs select immutable complete registrations. Imports/replacements select their
@@ -123,9 +127,8 @@ The owning abstraction documents these invariants beside native `ErasedInstantia
 - Native cached/transient downcasts are checked. Box owns aligned, initialized
   transient output; finalizers receive values from their matching registration.
 
-The prior Miri allocation/provenance finding is addressed by establishing ownership
-before pointer collection. Move, child-ownership and aligned-output cases retain
-regression coverage. Focused local and thread-safe adapter Miri suites pass after consolidation.
-Contended parking_lot futex calls still report unresolved UB in the shared path;
-see [compatibility](compatibility.md). This does not establish a complete lifecycle
-or shutdown soundness audit. Measurements live in [benchmarks](benchmarks.md).
+Move, alignment, clone, child ownership and genuinely borrowing async hooks retain
+regression coverage. The shared parking_lot futex ABI defect still blocks
+production contention verification; see [compatibility](compatibility.md).
+These tests do not establish complete lifecycle or dependency soundness.
+Measurements live in [benchmarks](benchmarks.md).

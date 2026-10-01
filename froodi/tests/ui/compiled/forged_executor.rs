@@ -1,8 +1,7 @@
+#[allow(unreachable_code)]
 fn main() {
     let _ = froodi::instantiator::compiled::ErasedInstantiator {
-        owner: todo!(),
-        item: core::ptr::null(),
-        construct: todo!(),
+        inst: todo!(),
         keys: todo!(),
         edges: todo!(),
     };

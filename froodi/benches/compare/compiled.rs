@@ -128,6 +128,30 @@ mod bench {
         group.finish();
     }
 
+    #[cfg(feature = "async")]
+    fn async_instantiator(c: &mut Criterion) {
+        use froodi::{async_impl::Container, async_registry, compiled_async_registry, DefaultScope::App, InstantiateErrorKind};
+
+        async fn value() -> Result<u64, InstantiateErrorKind> {
+            Ok(black_box(7))
+        }
+
+        let runtime = tokio::runtime::Builder::new_current_thread().build().unwrap();
+        let dynamic = Container::new(async_registry! { provide(App, value) });
+        let compiled = Container::new(compiled_async_registry! { provide(App, value) });
+        let mut group = c.benchmark_group("async_instantiator");
+        for (name, container) in [("dynamic", dynamic), ("compiled", compiled)] {
+            group.bench_function(BenchmarkId::new("transient", name), |b| {
+                b.to_async(&runtime)
+                    .iter(|| async { black_box(container.get_transient::<u64>().await.unwrap()) });
+            });
+        }
+        group.finish();
+    }
+
+    #[cfg(feature = "async")]
+    criterion_group!(benches, resolve, lifecycle, async_instantiator);
+    #[cfg(not(feature = "async"))]
     criterion_group!(benches, resolve, lifecycle);
 }
 

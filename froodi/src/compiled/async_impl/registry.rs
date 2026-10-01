@@ -64,8 +64,7 @@ where
         let Registration {
             inst, fin, scope, config, ..
         } = self.0.reg;
-        // SAFETY: linking preserves parameter order, skips runtime dependencies and proves each target's exact type.
-        let instantiator = unsafe { AsyncRegistrationInstantiator::compiled::<Inst, Deps>(inst, self.0.targets) };
+        let instantiator = AsyncRegistrationInstantiator::compiled::<Inst, Deps>(inst, self.0.targets);
         entries.push(CollectedAsyncRegistration {
             key: TypeInfo::of::<Out>(),
             data: Selected::Async(AsyncInstantiatorData {
@@ -111,11 +110,11 @@ pub struct AsyncContainerLeaf {
     scope: ScopeData,
 }
 
-unsafe impl RegistryIndex for AsyncContainerLeaf {
+impl RegistryIndex for AsyncContainerLeaf {
     type Index = AsyncProvider<Container>;
 }
 
-unsafe impl<Root> Link<Root, ()> for AsyncContainerLeaf {
+impl<Root> Link<Root, ()> for AsyncContainerLeaf {
     type Linked = Self;
 
     const TOPOLOGY: Topology = Topology::leaf(&[]);
@@ -159,11 +158,11 @@ impl IntoFragment for AsyncRegistry {
     }
 }
 
-unsafe impl RegistryIndex for RuntimeAsyncNode {
+impl RegistryIndex for RuntimeAsyncNode {
     type Index = Empty;
 }
 
-unsafe impl<Root> Link<Root, ()> for RuntimeAsyncNode {
+impl<Root> Link<Root, ()> for RuntimeAsyncNode {
     type Linked = Self;
 
     const TOPOLOGY: Topology = Topology::OPEN;

@@ -53,7 +53,7 @@ impl<Inst: Instantiator<Deps, Error = InstantiateErrorKind>, Deps: DependencyRes
     }
 }
 
-unsafe impl<Out, Inst, Deps, Fin> RegistryIndex for Registration<Out, Inst, Deps, Fin> {
+impl<Out, Inst, Deps, Fin> RegistryIndex for Registration<Out, Inst, Deps, Fin> {
     type Index = Provider<Out>;
 }
 
@@ -62,7 +62,7 @@ pub struct Linked<Out, Inst, Deps, Fin> {
     pub(super) targets: Vec<RegistrationId>,
 }
 
-unsafe impl<Root, Out, Inst, Deps, Fin, Links> Link<Root, Links> for Registration<Out, Inst, Deps, Fin>
+impl<Root, Out, Inst, Deps, Fin, Links> Link<Root, Links> for Registration<Out, Inst, Deps, Fin>
 where
     Deps: LinkDependencies<Root, Links>,
     Deps::Providers: SupportsExecution<SyncExecution>,

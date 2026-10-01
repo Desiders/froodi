@@ -41,11 +41,11 @@ impl<Inst: Instantiator<Deps, Error = InstantiateErrorKind>, Deps: DependencyRes
 
 pub struct AsyncProvider<Out>(PhantomData<fn() -> Out>);
 
-unsafe impl<Out> Size for AsyncProvider<Out> {
+impl<Out> Size for AsyncProvider<Out> {
     const SIZE: usize = 1;
 }
 
-unsafe impl<Out> ProviderPath<Out, Here> for AsyncProvider<Out> {
+impl<Out> ProviderPath<Out, Here> for AsyncProvider<Out> {
     type Provider = Self;
 
     const INDEX: usize = 0;
@@ -53,13 +53,13 @@ unsafe impl<Out> ProviderPath<Out, Here> for AsyncProvider<Out> {
 
 impl<Out> SupportsExecution<AsyncExecution> for AsyncProvider<Out> {}
 
-unsafe impl<Out, Inst, Deps, Fin> RegistryIndex for AsyncRegistration<Out, Inst, Deps, Fin> {
+impl<Out, Inst, Deps, Fin> RegistryIndex for AsyncRegistration<Out, Inst, Deps, Fin> {
     type Index = AsyncProvider<Out>;
 }
 
 pub struct AsyncLinked<Out, Inst, Deps, Fin>(pub(super) Linked<Out, Inst, Deps, Fin>);
 
-unsafe impl<Root, Out, Inst, Deps, Fin, Links> Link<Root, Links> for AsyncRegistration<Out, Inst, Deps, Fin>
+impl<Root, Out, Inst, Deps, Fin, Links> Link<Root, Links> for AsyncRegistration<Out, Inst, Deps, Fin>
 where
     Deps: LinkDependencies<Root, Links>,
     Deps::Providers: SupportsExecution<AsyncExecution>,
