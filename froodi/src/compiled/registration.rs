@@ -3,9 +3,7 @@ use super::{
     registry::RegistrationId,
     topology::Topology,
 };
-use crate::{
-    utils::thread_safety::RcThreadSafety, Config, DependencyResolver, Finalizer, InstantiateErrorKind, Instantiator, Scope, ScopeData,
-};
+use crate::{utils::thread_safety::RcThreadSafety, Config, DependencyResolver, Finalizer, InstantiateErrorKind, Instantiator, ScopeData};
 use alloc::vec::Vec;
 use core::marker::PhantomData;
 
@@ -27,12 +25,12 @@ pub struct Registration<Out, Inst, Deps, Fin> {
 }
 
 pub fn reg<Inst: Provide<SyncExecution, Deps, Fin>, Deps, Fin>(
-    scope: impl Scope,
+    scope: ScopeData,
     inst: Inst,
     config: Option<Config>,
     fin: Option<Fin>,
 ) -> Inst::Leaf {
-    inst.into_leaf(scope.into(), config.unwrap_or_default(), fin)
+    inst.into_leaf(scope, config.unwrap_or_default(), fin)
 }
 
 pub trait Provide<Execution, Deps, Fin> {

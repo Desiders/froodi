@@ -2,7 +2,7 @@
 
 use alloc::{boxed::Box, format, vec, vec::Vec};
 use proc_macro::TokenStream;
-use proc_macro2::TokenStream as TokenStream2;
+use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::{format_ident, quote};
 use syn::{
     bracketed, parenthesized,
@@ -15,30 +15,38 @@ use syn::{
 /// `inst [, config = expr] [, finalizer = expr]`, options in any order.
 struct Registration {
     inst: Expr,
-    config: Option<Expr>,
-    finalizer: Option<Expr>,
+    options: Vec<RegistrationOption>,
+}
+
+enum RegistrationOption {
+    Config(Expr),
+    Finalizer(Expr),
 }
 
 impl Parse for Registration {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let inst = input.parse()?;
-        let (mut config, mut finalizer) = (None, None);
+        let mut options = Vec::new();
         while input.parse::<Option<Token![,]>>()?.is_some() && !input.is_empty() {
             let name: Ident = input.parse()?;
             input.parse::<Token![=]>()?;
-            let slot = if name == "config" {
-                &mut config
-            } else if name == "finalizer" {
-                &mut finalizer
-            } else {
+            if name != "config" && name != "finalizer" {
                 return Err(syn::Error::new(name.span(), "expected `config = ...` or `finalizer = ...`"));
-            };
-            if slot.is_some() {
+            }
+            if options.iter().any(|option| match option {
+                RegistrationOption::Config(_) => name == "config",
+                RegistrationOption::Finalizer(_) => name == "finalizer",
+            }) {
                 return Err(syn::Error::new(name.span(), format!("`{name}` is given twice")));
             }
-            *slot = Some(input.parse()?);
+            let value = input.parse()?;
+            options.push(if name == "config" {
+                RegistrationOption::Config(value)
+            } else {
+                RegistrationOption::Finalizer(value)
+            });
         }
-        Ok(Self { inst, config, finalizer })
+        Ok(Self { inst, options })
     }
 }
 
@@ -120,58 +128,80 @@ fn balanced(leaves: &[TokenStream2], runtime: &TokenStream2) -> TokenStream2 {
     }
 }
 
-fn leaf(runtime: &TokenStream2, constructor: &TokenStream2, scope: &Expr, entry: &Registration) -> TokenStream2 {
+fn leaf(runtime: &TokenStream2, constructor: &TokenStream2, scope: &Ident, entry: &Registration) -> TokenStream2 {
     let inst = &entry.inst;
-    let config = entry.config.as_ref().map_or_else(
-        || quote!(::core::option::Option::None),
-        |config| quote!(::core::option::Option::Some(#config)),
-    );
-    let finalizer = entry.finalizer.as_ref().map_or_else(
-        || quote!(::core::option::Option::None::<#runtime::NoFinalizer>),
-        |finalizer| quote!(::core::option::Option::Some(#finalizer)),
-    );
-    quote!(#constructor(#scope, #inst, #config, #finalizer))
+    let inst_binding = format_ident!("__froodi_inst", span = Span::mixed_site());
+    let config_binding = format_ident!("__froodi_config", span = Span::mixed_site());
+    let finalizer_binding = format_ident!("__froodi_finalizer", span = Span::mixed_site());
+    let mut bindings = Vec::new();
+    let mut config = quote!(::core::option::Option::None);
+    let mut finalizer = quote!(::core::option::Option::None::<#runtime::NoFinalizer>);
+    for option in &entry.options {
+        match option {
+            RegistrationOption::Config(value) => {
+                bindings.push(quote!(let #config_binding = #value;));
+                config = quote!(::core::option::Option::Some(#config_binding));
+            }
+            RegistrationOption::Finalizer(value) => {
+                bindings.push(quote!(let #finalizer_binding = #value;));
+                finalizer = quote!(::core::option::Option::Some(#finalizer_binding));
+            }
+        }
+    }
+    quote!({
+        let #inst_binding = #inst;
+        #(#bindings)*
+        #constructor(#scope, #inst_binding, #config, #finalizer)
+    })
 }
 
 fn expand(input: &RegistryInput, runtime: &TokenStream2, constructor: &TokenStream2) -> TokenStream {
     let mut leaves = Vec::new();
-    let mut scopes = Vec::new();
+    let mut first_scopes = None;
     let mut extensions = Vec::new();
+    let mut bindings = Vec::new();
+    let scope_converter = format_ident!("__froodi_scope_data", span = Span::mixed_site());
     for clause in &input.clauses {
         let (scope, entries) = match clause {
             Clause::Scope { scope, entries } => (scope, entries.iter().collect::<Vec<_>>()),
             Clause::Provide { scope, entry } => (scope, vec![&**entry]),
             Clause::Extend(registries) => {
-                extensions.extend(registries);
+                for registry in registries {
+                    let index = extensions.len();
+                    let tree = format_ident!("__froodi_tree_{index}", span = Span::mixed_site());
+                    let scopes = format_ident!("__froodi_extended_scopes_{index}", span = Span::mixed_site());
+                    bindings.push(quote!(let (#tree, #scopes) = #runtime::IntoFragment::into_fragment(#registry);));
+                    extensions.push((tree, scopes));
+                }
                 continue;
             }
         };
-        scopes.push(scope);
+        let index = leaves.len();
+        let scope_binding = format_ident!("__froodi_scope_{index}", span = Span::mixed_site());
+        if first_scopes.is_none() {
+            let scopes_binding = format_ident!("__froodi_scopes", span = Span::mixed_site());
+            bindings.push(quote!(let (#scope_binding, #scopes_binding, #scope_converter) = #runtime::Registry::scope_data(#scope);));
+            first_scopes = Some(scopes_binding);
+        } else {
+            bindings.push(quote!(let #scope_binding = #scope_converter(#scope);));
+        }
         for entry in entries {
-            leaves.push(leaf(runtime, constructor, scope, entry));
+            let value = leaf(runtime, constructor, &scope_binding, entry);
+            let binding = format_ident!("__froodi_registration_{}", leaves.len(), span = Span::mixed_site());
+            bindings.push(quote!(let #binding = #value;));
+            leaves.push(quote!(#binding));
         }
     }
 
-    // Each extended registry is split into its tree, which joins the leaves, and its scope
-    // hierarchy, which is used when the registry declares no scope of its own.
-    let bindings: Vec<_> = (0..extensions.len())
-        .map(|index| (format_ident!("__froodi_tree_{index}"), format_ident!("__froodi_scopes_{index}")))
-        .collect();
-    let splits = extensions
-        .iter()
-        .zip(&bindings)
-        .map(|(registry, (tree, scopes))| quote!(let (#tree, #scopes) = #runtime::IntoFragment::into_fragment(#registry);));
-    leaves.extend(bindings.iter().map(|(tree, _)| quote!(#tree)));
+    leaves.extend(extensions.iter().map(|(tree, _)| quote!(#tree)));
     let tree = balanced(&leaves, runtime);
-    let registry = match bindings.first() {
-        None if scopes.is_empty() => quote!(#runtime::Registry::empty()),
-        Some((_, first_scopes)) if scopes.is_empty() => {
-            quote!(#runtime::Registry::from_parts(#tree, #first_scopes))
-        }
-        _ => quote!(#runtime::Registry::from_tree(#tree, [#(#scopes),*])),
+    let scopes = first_scopes.or_else(|| extensions.first().map(|(_, scopes)| scopes.clone()));
+    let registry = match scopes {
+        None => quote!(#runtime::Registry::empty()),
+        Some(scopes) => quote!(#runtime::Registry::from_parts(#tree, #scopes)),
     };
     quote!({
-        #(#splits)*
+        #(#bindings)*
         #registry
     })
     .into()

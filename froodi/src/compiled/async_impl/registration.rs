@@ -7,7 +7,7 @@ use super::super::{
 use crate::{
     async_impl::{Finalizer, Instantiator},
     utils::thread_safety::{RcThreadSafety, SendSafety},
-    Config, DependencyResolver, InstantiateErrorKind, Scope, ScopeData,
+    Config, DependencyResolver, InstantiateErrorKind, ScopeData,
 };
 use core::{
     future::{ready, Future},
@@ -17,12 +17,12 @@ use core::{
 pub struct AsyncRegistration<Out, Inst, Deps, Fin>(pub(super) Registration<Out, Inst, Deps, Fin>);
 
 pub fn async_reg<Inst: Provide<AsyncExecution, Deps, Fin>, Deps, Fin>(
-    scope: impl Scope,
+    scope: ScopeData,
     inst: Inst,
     config: Option<Config>,
     fin: Option<Fin>,
 ) -> Inst::Leaf {
-    inst.into_leaf(scope.into(), config.unwrap_or_default(), fin)
+    inst.into_leaf(scope, config.unwrap_or_default(), fin)
 }
 
 impl<Inst: Instantiator<Deps, Error = InstantiateErrorKind>, Deps: DependencyResolver, Fin> Provide<AsyncExecution, Deps, Fin> for Inst {

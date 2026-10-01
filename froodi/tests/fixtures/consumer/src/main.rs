@@ -53,12 +53,77 @@ fn check_compiled() {
     };
     let container = Container::new_compiled_with_start_scope::<DefaultScope, _>(registry, App);
     assert_eq!(&*container.get::<String>().unwrap(), "7!");
+
+    check_erased();
+}
+
+#[cfg(feature = "compiled")]
+fn compiled_fragment() -> di::Registry {
+    use di::compiled_registry as registry;
+
+    registry! { provide(App, instance(11u32)) }.into_registry()
+}
+
+#[cfg(feature = "compiled")]
+struct CycleLeft;
+#[cfg(feature = "compiled")]
+struct CycleRight;
+
+#[cfg(feature = "compiled")]
+fn cyclic_fragment() -> di::Registry {
+    use di::compiled_registry as registry;
+
+    registry! {
+        provide(App, |_: Inject<CycleRight>| Ok(CycleLeft)),
+        provide(App, |_: Inject<CycleLeft>| Ok(CycleRight)),
+    }
+    .into_registry()
+}
+
+#[cfg(feature = "compiled")]
+fn check_erased() {
+    let container = Container::new(dynamic_registry! {
+        provide(App, |number: Inject<u32>| Ok::<_, InstantiateErrorKind>(*number.0 as u64)),
+        extend(compiled_fragment()),
+    });
+    assert_eq!(*container.get::<u64>().unwrap(), 11);
+
+    let container = Container::new(dynamic_registry! {
+        extend(cyclic_fragment(), dynamic_registry! {
+            provide(App, || Ok::<_, InstantiateErrorKind>(CycleLeft)),
+        }),
+    });
+    assert!(container.get::<CycleRight>().is_ok());
+    assert!(std::panic::catch_unwind(|| Container::new(cyclic_fragment())).is_err());
+}
+
+#[cfg(all(feature = "compiled", feature = "async"))]
+fn compiled_async_fragment() -> di::async_impl::RegistryWithSync {
+    use di::compiled_async_registry as async_registry;
+
+    async_registry! {
+        provide(App, async || Ok(13u32)),
+        provide(App, async |number: Inject<u32>| Ok(number.0.to_string())),
+    }
+    .into_async_registry()
+}
+
+#[cfg(all(feature = "compiled", feature = "async"))]
+fn cyclic_async_fragment() -> di::async_impl::RegistryWithSync {
+    use di::compiled_async_registry as async_registry;
+
+    async_registry! {
+        provide(App, async |_: Inject<CycleRight>| Ok(CycleLeft)),
+        provide(App, async |_: Inject<CycleLeft>| Ok(CycleRight)),
+    }
+    .into_async_registry()
 }
 
 #[cfg(feature = "async")]
 fn check_async() {
     use di::async_impl::Container;
     use di::async_registry as dynamic_async_registry;
+    use di::{DefaultScope::Request, Inject};
 
     fn scoped<S: Scope + Clone>(registry: di::async_impl::RegistryWithSync, scope: S) -> Container {
         Container::new_with_start_scope::<S>(registry, scope)
@@ -75,6 +140,15 @@ fn check_async() {
             7
         );
         assert_eq!(&*scoped(dynamic, App).get::<String>().await.unwrap(), "7");
+
+        struct NativeService;
+
+        let container = Container::new(dynamic_async_registry! {
+            provide(App, async |_: Inject<u16>| Ok::<_, InstantiateErrorKind>(NativeService)),
+            extend(dynamic_registry! { provide(Request, instance(1u16)) }),
+        });
+        assert!(container.get::<NativeService>().await.is_err());
+
         #[cfg(feature = "compiled")]
         {
             use di::{compiled_async_registry as async_registry, RuntimeDependency};
@@ -90,6 +164,20 @@ fn check_async() {
                 App,
             );
             assert_eq!(&*container.get::<String>().await.unwrap(), "7-7");
+
+            let container = Container::new(dynamic_async_registry! {
+                provide(App, async |text: Inject<String>| Ok::<_, InstantiateErrorKind>(text.0.len())),
+                extend(compiled_async_fragment()),
+            });
+            assert_eq!(*container.get::<usize>().await.unwrap(), 2);
+
+            let container = Container::new(dynamic_async_registry! {
+                extend(cyclic_async_fragment(), dynamic_async_registry! {
+                    provide(App, async || Ok::<_, InstantiateErrorKind>(CycleLeft)),
+                }),
+            });
+            assert!(container.get::<CycleRight>().await.is_ok());
+            assert!(std::panic::catch_unwind(|| Container::new(cyclic_async_fragment())).is_err());
         }
     });
 }

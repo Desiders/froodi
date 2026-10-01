@@ -28,7 +28,12 @@ providers fail inference.
 ## Necessary API differences
 
 - Typed macro results differ from dynamic `Registry`. `Container::new` accepts
-  either with `compiled` enabled.
+  either with `compiled` enabled. Use `.into_registry()` to return a native
+  `froodi::Registry` from a function without naming the typed tree.
+  Async compositions use `.into_async_registry()` and return
+  `froodi::async_impl::RegistryWithSync`. Conversion preserves linking checks
+  and indexed edges; final construction validates the effective graph after
+  any later replacements.
 - Dynamic `new_with_start_scope::<Scope>` stays unchanged under feature unification.
   Typed registries use `new_compiled_with_start_scope::<Scope, _>`; inference also
   works. Hiding its linking witness in nested `impl Trait` is rejected by rustc
@@ -45,6 +50,16 @@ providers fail inference.
   no static-only override marker. Erasing a fragment retains indexed execution
   but postpones cycle checks until effective composition.
 
+Registration expressions are evaluated once in source order, including
+interleaved extensions, scope expressions, config and finalizer options.
+Tree balancing does not determine evaluation order.
+
+Native fragments override typed registrations regardless of their position in
+`extend(...)`; later native fragments override earlier native fragments. Typed
+duplicates remain subject to static ambiguity checks. Restoring source-order
+replacement across both kinds would require changes to collection and assembly;
+expression evaluation follows source order independently.
+
 ## Validation and test organization
 
 Missing/ambiguous static providers and sync-to-async dependencies fail checking.
@@ -52,6 +67,9 @@ Closed cycles fail only during instantiated build/test code generation within
 1,024 typed declaration leaves, including implicit registrations. Open/erased/oversized graphs
 retain runtime checks; scope/config values remain runtime. Arbitrary instantiator
 and resolver lookups remain opaque. See [architecture](architecture.md).
+Mixed sync/async compositions with compiled executors validate async dependencies
+against the selected provider: async first, then sync. Purely native compositions
+retain their existing validation behavior.
 
 The [compilation tests](../../froodi/tests/compile_fail.rs) use trybuild and `.stderr`
 snapshots. Static-linking diagnostics use a fail-only suite (`cargo check`);

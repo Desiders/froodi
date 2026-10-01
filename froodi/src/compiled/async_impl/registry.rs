@@ -182,6 +182,17 @@ impl CollectAsync for RuntimeAsyncNode {
 type Root<Tree> = Node<Tree, Node<ContainerLeaf, AsyncContainerLeaf>>;
 type Index<Tree> = <Root<Tree> as RegistryIndex>::Index;
 
+impl<Tree> Registry<Tree> {
+    /// Materializes linked sync/async edges for later native registry composition.
+    /// Cycle and scope validation are deferred to final container construction.
+    pub fn into_async_registry<Links>(self) -> RegistryWithSync
+    where
+        Self: IntoRegistry<Links>,
+    {
+        IntoRegistry::into_registry(self)
+    }
+}
+
 pub trait IntoRegistry<Links> {
     const VALIDATE: () = ();
 
@@ -265,9 +276,11 @@ fn assemble(entries: Vec<CollectedAsyncRegistration>, runtime: Vec<RegistryWithS
 }
 
 pub(crate) fn prepare(mut registries: RegistryWithSync) -> RegistryWithSync {
+    let compiled_sync = has_compiled_sync_executors(&registries.sync);
     registries.sync = prepare_sync(registries.sync);
     let registry = &mut registries.registry;
-    if !has_compiled_executors(registry) {
+    let compiled_async = has_compiled_executors(registry);
+    if !compiled_sync && !compiled_async {
         return registries;
     }
     registry.validate().expect("invalid compiled async registry");
@@ -287,6 +300,9 @@ pub(crate) fn prepare(mut registries: RegistryWithSync) -> RegistryWithSync {
                 );
             }
         }
+    }
+    if !compiled_async {
+        return registries;
     }
     let mut keys: BTreeSet<_> = registry.entries.keys().chain(registries.sync.entries.keys()).cloned().collect();
     for entry in registry.entries.values() {
