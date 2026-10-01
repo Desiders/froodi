@@ -5,3 +5,7 @@ pub mod types;
 pub mod async_impl;
 
 pub mod sync;
+
+#[cfg(feature = "compiled")]
+#[doc(hidden)]
+pub mod compiled;

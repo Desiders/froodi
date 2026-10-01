@@ -22,6 +22,7 @@ default = ["std", "thread_safe"]
 std = ["anyhow/std", "thiserror/std", "tracing/std"]
 
 thread_safe = []
+compiled = ["dep:froodi-macros", "froodi-macros/compiled"]
 async = ["tokio", "tokio/sync"]
 
 axum = ["dep:axum", "axum/ws", "dep:tower-layer", "dep:tower-service", "thread_safe"]
@@ -37,6 +38,7 @@ ruststream = ["dep:ruststream", "thread_safe", "tokio/rt"]
 anyhow = { version = "1.0", default-features = false }
 axum = { version = ">= 0.6, <= 0.8", default-features = false, optional = true }
 dptree = { version = "0.5", optional = true }
+froodi-macros = { version = "1", path = "../froodi-macros", optional = true }
 h2 = { version = "0.4", optional = true }
 parking_lot = { version = "0.12", default-features = false }
 ruststream = { version = "0.7.0-rc.7", default-features = false, optional = true }
@@ -54,9 +56,12 @@ version_check = "0.9"
 axum = { version = "0.8" }
 axum-test = { version = "18", features = ["ws"] }
 criterion = { version = "0.7", features = ["async_tokio"] }
-froodi-auto = { path = "../froodi-auto", default-features = false }
+froodi-auto = { version = "1.0", path = "../froodi-auto", default-features = false }
+prettyplease = "0.2"
 ruststream = { version = "0.7.0-rc.7", features = ["testing", "memory", "macros", "json"] }
+syn = { version = "2", features = ["full"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+toml = "1"
 tracing-test = { version = "0.2", default-features = false }
 trybuild = "1"
 
@@ -122,6 +127,12 @@ test = false
 doctest = false
 doc = false
 required-features = []
+
+[[bench]]
+name = "compiled_registry"
+path = "benches/compare/compiled.rs"
+harness = false
+required-features = ["compiled", "thread_safe"]
 
 [[test]]
 name = "auto_registration_async"

@@ -1,0 +1,17 @@
+[package]
+name = "froodi-public-consumer"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[features]
+compiled = ["di/compiled"]
+async = ["di/async", "dep:tokio"]
+unified = ["dep:compiled-enabler"]
+
+[dependencies]
+di = { package = "froodi", version = "=1.0.0-beta.18" }
+tokio = { version = "1", features = ["rt", "macros"], optional = true }
+compiled-enabler = { path = "enabler", optional = true }

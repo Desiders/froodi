@@ -1,0 +1,28 @@
+error[E0277]: this registration cannot be constructed synchronously
+  --> tests/ui/compiled/sync_async.rs:7:48
+   |
+ 7 |       let _ = froodi::async_impl::Container::new(froodi::compiled_async_registry! {
+   |  _____________----------------------------------_^
+   | |             |
+   | |             required by a bound introduced by this call
+ 8 | |         provide(App, async || Ok::<_, InstantiateErrorKind>(1u32)),
+ 9 | |         extend(sync),
+10 | |     });
+   | |_____^ a sync instantiator depends on it
+   |
+   = note: a sync instantiator may not depend on an async registration; make the dependent instantiator async
+help: the trait `SupportsExecution<froodi::compiled::linking::SyncExecution>` is not implemented for `froodi::compiled::async_impl::registration::AsyncProvider<u32>`
+      but trait `SupportsExecution<froodi::compiled::linking::AsyncExecution>` is implemented for it
+  --> src/compiled/async_impl/registration.rs
+   |
+   | impl<Out> SupportsExecution<AsyncExecution> for AsyncProvider<Out> {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = help: for that trait implementation, expected `froodi::compiled::linking::AsyncExecution`, found `froodi::compiled::linking::SyncExecution`
+   = note: required for `(froodi::compiled::async_impl::registration::AsyncProvider<u32>,)` to implement `froodi::compiled::linking::SupportsExecution<froodi::compiled::linking::SyncExecution>`
+   = note: required for `froodi::compiled::registration::Registration<bool, {closure@$DIR/tests/ui/compiled/sync_async.rs:5:22: 5:38}, (Inject<u32>,), froodi::macros_utils::compiled::NoFinalizer>` to implement `froodi::compiled::linking::Link<froodi::macros_utils::compiled::Node<froodi::macros_utils::compiled::Node<froodi::compiled::async_impl::registration::AsyncProvider<u32>, froodi::compiled::linking::Provider<bool>>, froodi::macros_utils::compiled::Node<froodi::compiled::linking::Provider<froodi::Container>, froodi::compiled::async_impl::registration::AsyncProvider<froodi::async_impl::Container>>>, (froodi::compiled::linking::LinkedInject<froodi::compiled::linking::L<froodi::compiled::linking::L<froodi::compiled::linking::Here>>>,)>`
+   = note: required for `froodi::macros_utils::compiled::Registry<froodi::macros_utils::compiled::Node<froodi::compiled::async_impl::registration::AsyncRegistration<u32, {async closure@$DIR/tests/ui/compiled/sync_async.rs:8:22: 8:30}, (), froodi::macros_utils::compiled::NoFinalizer>, froodi::compiled::registration::Registration<bool, {closure@$DIR/tests/ui/compiled/sync_async.rs:5:22: 5:38}, (Inject<u32>,), froodi::macros_utils::compiled::NoFinalizer>>>` to implement `froodi::compiled::async_impl::registry::IntoRegistry<(((), (froodi::compiled::linking::LinkedInject<froodi::compiled::linking::L<froodi::compiled::linking::L<froodi::compiled::linking::Here>>>,)), ((), ()))>`
+note: required by a bound in `froodi::async_impl::Container::new`
+  --> src/async_impl/container.rs
+   |
+   |     pub fn new<Links>(registry: impl IntoRegistry<Links>) -> Self {
+   |                                      ^^^^^^^^^^^^^^^^^^^ required by this bound in `Container::new`

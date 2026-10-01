@@ -1,0 +1,29 @@
+error[E0277]: no registration provides `u32`
+ --> tests/ui/compiled/missing.rs
+  |
+  |       let _ = Container::new(froodi::compiled_registry! {
+  |  _____________--------------_^
+  | |             |
+  | |             required by a bound introduced by this call
+  | |         provide(App, |_: Inject<u32>| Ok::<_, InstantiateErrorKind>(true)),
+  | |     });
+  | |_____^ `u32` is requested here, but no `provide(...)` in the registry produces it
+  |
+  = help: the trait `froodi::compiled::linking::ProviderPath<u32, _>` is not implemented for `froodi::macros_utils::compiled::Node<froodi::compiled::linking::Provider<bool>, froodi::compiled::linking::Provider<Container>>`
+  = note: register an instantiator or `instance(...)` that returns `u32`, or `extend(...)` a registry that does
+help: `froodi::macros_utils::compiled::Node<Left, Right>` implements trait `froodi::compiled::linking::ProviderPath<T, Path>`
+ --> src/compiled/linking.rs
+  |
+  | unsafe impl<T, Path, Left: ProviderPath<T, Path>, Right> ProviderPath<T, L<Path>> for Node<Left, Right> {
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `froodi::compiled::linking::ProviderPath<T, froodi::compiled::linking::L<Path>>`
+...
+  | unsafe impl<T, Path, Left: Size, Right: ProviderPath<T, Path>> ProviderPath<T, R<Path>> for Node<Left, Right> {
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `froodi::compiled::linking::ProviderPath<T, froodi::compiled::linking::R<Path>>`
+  = note: required for `Inject<u32>` to implement `froodi::compiled::linking::LinkDependency<froodi::macros_utils::compiled::Node<froodi::compiled::linking::Provider<bool>, froodi::compiled::linking::Provider<Container>>, froodi::compiled::linking::LinkedInject<_>>`
+  = note: required for `froodi::compiled::registration::Registration<bool, {closure@$DIR/tests/ui/compiled/missing.rs:5:22: 5:38}, (Inject<u32>,), froodi::macros_utils::compiled::NoFinalizer>` to implement `froodi::compiled::linking::Link<froodi::macros_utils::compiled::Node<froodi::compiled::linking::Provider<bool>, froodi::compiled::linking::Provider<Container>>, (froodi::compiled::linking::LinkedInject<_>,)>`
+  = note: required for `froodi::macros_utils::compiled::Registry<froodi::compiled::registration::Registration<bool, {closure@$DIR/tests/ui/compiled/missing.rs:5:22: 5:38}, (Inject<u32>,), froodi::macros_utils::compiled::NoFinalizer>>` to implement `froodi::compiled::registry::IntoRegistry<((froodi::compiled::linking::LinkedInject<_>,), ())>`
+note: required by a bound in `Container::new`
+ --> src/container.rs
+  |
+  |     pub fn new<Links>(registry: impl IntoRegistry<Links>) -> Self {
+  |                                      ^^^^^^^^^^^^^^^^^^^ required by this bound in `Container::new`

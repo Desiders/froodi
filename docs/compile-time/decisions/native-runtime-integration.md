@@ -1,31 +1,24 @@
-# Execute compiled edges through native Froodi lifecycle
+# Execute compiled edges through Froodi's lifecycle
 
-Status: accepted for the opt-in `compiled` feature.
+Status: accepted. The initial shared-core crate and retained experimental runtime
+arrangement is historical and superseded by consolidation.
 
-Share the provider index/linker and bounded const topology in
-`froodi-compile-core`. Generate typed registrations with opt-in native macro
-exports; adapt original `Instantiator<Deps>` directly to original containers.
-Do not depend on the experimental runtime or introduce a general runtime trait.
+Provider linking and bounded const topology live in Froodi's private compiled module.
+Registry parsing uses the shared `froodi-macros` host package. Adapters
+invoke original instantiators through original containers; there is one lifecycle.
 
-Split provider selection from lifecycle handling inside native get/transient.
-Compiled parameters select complete registration data through numeric tables;
-both dynamic and compiled paths use the existing scope/cache/lock/finalizer code.
-Root/path/link witnesses never specialize executor functions.
+Separate selection from lifecycle: compiled parameters select complete
+registration data by numeric ID, then use the native scope/cache/lock/finalizer
+path. Root/path/link witnesses never specialize executor functions. Convert local
+IDs to exact type keys during collection and remap after composition and implicit
+registrations, retaining native replacement and async-first selection rules.
 
-Convert local declaration IDs to exact type keys while collecting registrations,
-then remap to final IDs after runtime composition and implicit registrations.
-Retain native replacement and async-first lookup policy. This adds startup work
-and keeps type-keyed caches, but removes provider lookup on static edges without
-requiring a new runtime storage model.
+Const cycles are evaluated only at final typed construction. Erased/open fragments
+use effective runtime validation so replacements can change topology.
+`RuntimeDependency<T>` marks custom parameters for runtime resolution, preserving
+static provider inference. Scope/config values stay runtime.
 
-Evaluate const cycle validation only at typed container construction. Erased
-fragments and open compositions use effective runtime validation, so a later
-replacement may remove an intermediate cycle. Explicit resolver wrappers prevent
-blanket native resolver implementations from weakening static provider errors.
-
-Executors own instantiators in Rc/Arc before pointers are derived. Native checked
-output/cache/finalizer conversions remain in place. Experimental unchecked
-transient writes and lifecycle code are not imported. Keep the experimental
-executor as a regression/performance reference until retirement has equivalent
-coverage. Measurements and tested limits live in the architecture, compatibility
-and benchmark documents.
+Own instantiators in Rc/Arc before deriving executor pointers. Native checked
+output/cache/finalizer conversions remain. The prototype container and unchecked
+transient implementation are removed. The unresolved shared futex Miri report,
+validation limits and measurements remain in the existing documentation.

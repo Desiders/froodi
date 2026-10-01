@@ -1,102 +1,142 @@
-# Native runtime integration
+# Compiled frontend compatibility
 
-The optional `froodi/compiled` feature connects typed linking to the original
-sync/async containers. Original dynamic registries continue to work, including in
-the same container. There is no forwarding to `froodi-compile-runtime`.
-
-## Programming model
+The compiled frontend uses the original `froodi::Container` and async container.
+Use `froodi::compiled_registry!` or, with `async`, `froodi::compiled_async_registry!`.
+It is explicitly opt-in; enabling its feature never switches ordinary macros.
 
 ```rust
-use froodi::{Container, instance, Inject, InstantiateErrorKind, DefaultScope::App};
-use froodi::compiled::registry;
+use froodi::{compiled_registry, instance, Container, Inject, InstantiateErrorKind, DefaultScope::App};
 
 fn text(number: Inject<u32>) -> Result<String, InstantiateErrorKind> {
     Ok(number.0.to_string())
 }
-let container = Container::new(registry! {
+let container = Container::new(compiled_registry! {
     provide(App, instance(7u32)),
     provide(App, text),
 });
 assert_eq!(&*container.get::<String>().unwrap(), "7");
 ```
 
-The macro import is opt-in: `froodi::registry!` / `async_registry!` still produce
-native dynamic registries. Typed macro results have a different return type.
-`Container::new` accepts either with `compiled` enabled. Calls to
-`new_with_start_scope` infer both generics; an explicit scope turbofish under this
-feature becomes `::<Scope, _>`. The original signature is unchanged without the
-feature. The [executable example](../../froodi/examples/compiled.rs) covers
-App settings/Database and Request Repository/Service with both injection modes.
+The [executable example](../../examples/sync_compiled_registration/src/main.rs), run with
+`cargo run -p sync_compiled_registration`, uses the same `Config`, `Greeter` and `WelcomeHandler`
+as [sync_registration](../../examples/sync_registration/src/main.rs), with the
+`compiled_registry` import. Instantiators, captured closures, `instance`, injection modes,
+cache policy, scopes, Context, finalizers and close/drop use native behavior.
+Dynamic duplicates retain later-wins handling; referenced duplicate static
+providers fail inference.
 
-| Area | Integrated behavior / boundary |
-|---|---|
-| Instantiators | Original trait and independently defined functions/captured closures; typed dependencies come from `Deps` |
-| `instance` | Original helper; value ownership and cloning semantics unchanged |
-| `Inject` / `InjectTransient` | Original get/transient lifecycle; no duplicate registration for modes |
-| Scopes, Context, cache, close/drop | Original runtime implementation, including custom scopes and ancestor cache behavior |
-| Finalizers | Original sync/async adapters and recording; replacements select matching finalizer and policy |
-| Async | Same linker/topology; native async lifecycle and sync interoperability |
-| Static ambiguity | Referenced duplicate static providers fail inference, including aliases |
-| Runtime overrides | Native later-wins merge; no `.replacing()` requirement; final IDs remapped after composition |
-| Runtime/Context boundary | Typed consumers declare `runtime::<T>()` / `context::<T>()`; ordinary dynamic registrations need no declarations |
-| Custom resolvers | Typed parameters use `compiled::Resolver<T>`; dynamic parameters unchanged; arbitrary user lookups opaque |
-| Returning fragments | Keep typed fragments within inference or erase using the sync/async `IntoRegistry` trait; erasure retains indexed edges but defers cycle checks |
-| `froodi-auto` | Its existing dynamic registries can be opaque fragments; a typed auto frontend is not implemented |
+## Necessary API differences
 
-Closed typed constructors retain static provider and sync/async checks. The const
-cycle check covers at most 1,024 total nodes at code generation; it does not run
-in `cargo check` or uninstantiated code. Open/erased/oversized registries retain
-runtime graph validation. Missing opaque dependencies can be supplied by native
-Context; absent values fail on resolution as in native Froodi. Scope/config
-validation is runtime. See [architecture](architecture.md#bounded-static-cycle-validation).
+- Typed macro results differ from dynamic `Registry`. `Container::new` accepts
+  either with `compiled` enabled.
+- Dynamic `new_with_start_scope::<Scope>` stays unchanged under feature unification.
+  Typed registries use `new_compiled_with_start_scope::<Scope, _>`; inference also
+  works. Hiding its linking witness in nested `impl Trait` is rejected by rustc
+  (E0666). No proof types enter runtime execution.
+- Compiled custom parameters use `froodi::RuntimeDependency<Custom>`, equivalent to a
+  dynamic `Custom` parameter implementing the ordinary `DependencyResolver`.
+  A blanket candidate also matches `Inject<T>`, making valid linking ambiguous
+  and accepting missing providers through resolver fallback. The
+  [candidate reproduction](../../froodi/tests/ui/compiled/support/resolver_candidates.rs)
+  verifies this constraint. Runtime dependency parameters consume no indexed edge.
+- Typed consumers declare `froodi::runtime::<T>()` / `froodi::context::<T>()` for
+  opaque boundaries.
+  Ordinary dynamic registries need no declarations. Native replacements require
+  no static-only override marker. Erasing a fragment retains indexed execution
+  but postpones cycle checks until effective composition.
 
-## Verification and limits
+## Validation and test organization
 
-Compatibility scenarios run against original, experimental and integrated paths.
-Native regression suites cover edge order/repeats with resolver skipping, aligned
-values, imports, Context, replacements before/after erasure, finalizer ownership,
-captured instantiators and concurrent sync/async construction. The compile-stage
-harness checks `check`, `build`, `test`, generic wrappers and oversized fallback.
+Missing/ambiguous static providers and sync-to-async dependencies fail checking.
+Closed cycles fail only during instantiated build/test code generation within
+1,024 typed declaration leaves, including implicit registrations. Open/erased/oversized graphs
+retain runtime checks; scope/config values remain runtime. Arbitrary instantiator
+and resolver lookups remain opaque. See [architecture](architecture.md).
 
-The combined native/backend suite passes 420 tests. Native default/all-features
-suites and final feature builds were also checked. Library Clippy passes with
-warnings denied; linting all test targets still encounters existing acronym and
-unused-generic test lints, which this integration does not change.
+The [compilation tests](../../froodi/tests/compile_fail.rs) use trybuild and `.stderr`
+snapshots. Static-linking diagnostics use a fail-only suite (`cargo check`);
+const cycles use a mixed pass/fail suite (`cargo build`). Run the whole cycle suite
+when filtering: removing all pass fixtures with `trybuild=` switches it to checking.
+[Ordinary validation tests](../../froodi/tests/validation.rs) cover valid composition
+and oversized runtime fallback. Each large boundary graph is compiled once. The
+500-independent-registration case shares the existing native scale fixture.
+Unit tests under `src/compiled` cover lifecycle, indexed edges, local execution
+and controlled construction scheduling. Downstream and compilation tests remain
+external to verify public access and compiler behavior.
 
-Focused integrated Miri runs pass with nightly 1.101.0 (`c1070d693`, 2026-09-28),
-in local mode and for thread-safe adapters/async construction:
+```sh
+cargo test --workspace --all-features
+cargo test -p froodi --no-default-features --features compiled,async
+```
+
+Refresh diagnostic snapshots after deliberate changes with
+`TRYBUILD=overwrite cargo test -p froodi --features compiled,async --test compile_fail errors`.
+
+The [downstream test](../../froodi/tests/downstream.rs) uses a reusable fixture in
+`tests/fixtures/consumer` that renames Froodi to `di` and checks sync/async APIs.
+Its test creates a minimal second dependency in the temporary project to verify
+feature unification; that dependency exists only in the temporary project.
+Disposable projects live outside the workspace. The same test can consume extracted package archives with
+`FROODI_PACKAGE_DIR`; it rejects checkout references in that dependency graph.
+There is no one-off packaging tool or patched release manifest.
+
+## Distribution prerequisite
+
+The backend is internal to Froodi. Registry parsing and auto-registration
+attributes share `froodi-macros`, using `version = "1"` plus a workspace path.
+The renamed macro package retains version `1.0.0`.
+
+`cargo package -p froodi-macros --allow-dirty --all-features` passes. Normal
+packaging of Froodi and froodi-auto fails with `no matching package named
+froodi-macros found` in crates.io. Publishing `froodi-macros 1.0.0` is therefore
+a prerequisite for their releases.
+
+Both packages verify with local crates.io patches pointing to extracted archives,
+and the downstream fixture passes against those archives without checkout
+references. These checks do not establish registry availability. No package was
+uploaded.
+
+## Safety verification limitation
+
+Focused suites pass on nightly 1.101.0 / Miri 0.1.0 (`5c543b0b8`, 2026-09-29):
 
 ```sh
 cargo +nightly miri test -p froodi --no-default-features --features compiled,async \
-  --test compiled --test compiled_construction
-cargo +nightly miri test -p froodi --features compiled,async \
-  --test compiled --test compiled_construction -- --skip concurrent_cached_construction
+  --lib compiled::tests
+cargo +nightly miri test -p froodi --features compiled,async --lib compiled::tests::edges
+cargo +nightly miri test -p froodi --features compiled,async --lib compiled::tests::construction \
+  -- --skip concurrent_cached_construction
 ```
 
-Contended synchronous locking is **not fully Miri-verified**. Some schedules pass;
-others reach `parking_lot_core 0.9.12`'s Linux futex call, where this Miri version
-reports an incompatible C-variadic argument (`&Atomic<i32>` versus `*mut u32`).
-The ordinary dynamic registry reproduces the same failure:
+Contended synchronous locking is still **unresolved reported UB**, not an
+unsupported operation. On `x86_64-unknown-linux-gnu`, with `parking_lot 0.12.5`,
+`parking_lot_core 0.9.12`, `lock_api 0.4.14`, `libc 0.2.189`, Miri reports:
+
+```text
+Undefined Behavior: incorrect c-variadic argument type for `syscall(SYS_futex, ...)`:
+expected argument #2 to have type `*mut u32` but got incompatible type
+`&core::sync::atomic::Atomic<i32>`
+parking_lot_core-0.9.12/src/thread_parker/linux.rs:112:13
+```
+
+The prior external-test reproduction reported the same diagnostic with `std::sync`
+spelling. The unit-test reproduction above still reports UB; its cause is unresolved.
+
+The shared controlled-construction reproduction is retained:
 
 ```sh
 MIRIFLAGS=-Zmiri-preemption-rate=1 cargo +nightly miri test -p froodi \
-  --features compiled,async --test compiled_construction native_concurrent_cached_construction
+  --features compiled --lib compiled::tests::construction::native_concurrent_cached_construction
 ```
 
-This dependency/Miri boundary remains unresolved; native synchronization was not
-replaced to bypass it. Host concurrency tests pass for both paths. Adapter ownership,
-remapping, aligned transient values and finalizers pass Miri in both configurations.
+It also reproduces with the compiled variant (`compiled::tests::construction::concurrent_cached_construction
+-- --exact`). Ordinary reproduction identifies a shared path, not proof of
+soundness or a tooling false positive. No race, deadlock or timeout was reported.
+UB checks and synchronization were not changed to hide it. Native contention
+regressions pass, but the Miri cause remains unresolved.
 
-The native library checks with `--no-default-features --features compiled` and
-`compiled,async` (alloc direction); these are host checks, not proof of support
-on a particular bare-metal target. Native synchronization remains parking_lot /
-Tokio; the experimental `lock-spin` backend is separately checked. Proc-macro
-compiler dependencies stay on the host side. `compiled` requires the newer
-experimental backend toolchain; the native crate's historical MSRV is not a
-claim for this opt-in feature.
-
-Remaining work: frontend stabilization/publishing of shared crates, clearer
-ambiguity diagnostics, typed cross-crate fragment interfaces, and eventual
-experimental runtime retirement. General concurrent close, cancellation and
-shutdown questions belong to a separate Froodi lifecycle audit. The materialized
-boundary review and Miri runs do not settle those questions.
+Host checks cover `no_std + alloc`, local async and thread-safe parking_lot/Tokio
+configurations; they do not certify a bare-metal target. Parsing stays host-side.
+The historical native MSRV is not a claim for the opt-in compiled feature, tested
+on modern Rust. General concurrent close, cancellation and shutdown questions
+remain a separate lifecycle concern.

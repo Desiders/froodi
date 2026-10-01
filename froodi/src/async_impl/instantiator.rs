@@ -3,9 +3,16 @@ use core::{any::Any, future::Future};
 use tracing::debug;
 
 use super::{
-    service::{service_fn, BoxCloneService},
+    service::{service_fn, BoxCloneService, Service},
     Container,
 };
+#[cfg(feature = "compiled")]
+mod compiled;
+
+#[cfg(feature = "compiled")]
+use self::compiled::ErasedInstantiator;
+#[cfg(feature = "compiled")]
+use crate::compiled::RegistrationId;
 use crate::{
     dependency::Dependency,
     dependency_resolver::DependencyResolver,
@@ -22,6 +29,28 @@ where
     type Error: Into<InstantiateErrorKind>;
 
     fn instantiate(&mut self, dependencies: Deps) -> impl Future<Output = Result<Self::Provides, Self::Error>> + SendSafety;
+
+    #[cfg(feature = "compiled")]
+    #[doc(hidden)]
+    fn instantiate_compiled(
+        &self,
+        container: &Container,
+        edges: &[RegistrationId],
+    ) -> impl Future<Output = Result<Self::Provides, InstantiatorErrorKind<ResolveErrorKind, InstantiateErrorKind>>> + SendSafety
+    where
+        Self: SendSafety,
+    {
+        let mut instantiator = self.clone();
+        async move {
+            let dependencies = Deps::resolve_async_compiled(container, &mut edges.iter())
+                .await
+                .map_err(|err| InstantiatorErrorKind::Deps(err.into()))?;
+            instantiator
+                .instantiate(dependencies)
+                .await
+                .map_err(|err| InstantiatorErrorKind::Factory(err.into()))
+        }
+    }
 
     fn dependencies() -> BTreeSet<Dependency>;
 }
@@ -99,6 +128,35 @@ macro_rules! impl_instantiator {
 
 all_the_tuples!(impl_instantiator);
 
+#[derive(Clone)]
+pub(crate) enum RegistrationInstantiator {
+    Dynamic(BoxedCloneInstantiator<ResolveErrorKind, InstantiateErrorKind>),
+    #[cfg(feature = "compiled")]
+    Compiled(ErasedInstantiator),
+}
+
+impl From<BoxedCloneInstantiator<ResolveErrorKind, InstantiateErrorKind>> for RegistrationInstantiator {
+    fn from(inst: BoxedCloneInstantiator<ResolveErrorKind, InstantiateErrorKind>) -> Self {
+        Self::Dynamic(inst)
+    }
+}
+
+impl RegistrationInstantiator {
+    #[allow(clippy::manual_async_fn)]
+    pub(crate) fn call(
+        &self,
+        container: Container,
+    ) -> impl Future<Output = Result<Box<dyn Any>, InstantiatorErrorKind<ResolveErrorKind, InstantiateErrorKind>>> + SendSafety + '_ {
+        async move {
+            match self {
+                Self::Dynamic(inst) => Service::call(&mut inst.clone(), container).await,
+                #[cfg(feature = "compiled")]
+                Self::Compiled(inst) => inst.call(container).await,
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     extern crate std;
@@ -127,6 +185,7 @@ mod tests {
     #[allow(dead_code)]
     fn test_factory_helper() {
         fn resolver<Deps: DependencyResolver, F: Instantiator<Deps>>(_f: F) {}
+
         fn resolver_with_dep<Deps: DependencyResolver>() {
             resolver(async || Ok::<_, InstantiateErrorKind>(()));
         }

@@ -1,4 +1,6 @@
 use alloc::{boxed::Box, collections::btree_set::BTreeSet, sync::Arc, vec};
+#[cfg(not(feature = "async"))]
+use core::borrow::Borrow;
 use core::future::Future;
 use dptree::{
     di::{Asyncify, CompiledFn, DependencyMap, Injectable as InjectableTrait},
@@ -10,7 +12,7 @@ use crate::async_impl::Container as AsyncContainer;
 use crate::{
     any::TypeInfo,
     dependency_resolver::DependencyResolver,
-    Container,
+    Container, Context,
     DefaultScope::{self, Request as RequestScope},
     ResolveErrorKind, Scope,
 };
@@ -83,7 +85,7 @@ macro_rules! impl_setup {
             fn inject<'a>(&'a self, map: &'a DependencyMap) -> CompiledFn<'a, Option<$ContainerType>> {
                 Arc::new(move || {
                     Box::pin(async move {
-                        let mut context = crate::Context::new();
+                        let mut context = Context::new();
                         context.insert(map.clone());
 
                         self.container
@@ -157,7 +159,7 @@ macro_rules! impl_injectable {
             fn inject<'a>(&'a self, map: &'a DependencyMap) -> CompiledFn<'a, Output> {
                 let Self(this) = self;
                 Arc::new( move ||  {
-                    let container = core::borrow::Borrow::<Container>::borrow(&map.get()).clone();
+                    let container = Borrow::<Container>::borrow(&map.get()).clone();
                     $( let $ty = $ty::resolve(&container).map_err(Into::into).unwrap(); )*
                     Box::pin(async move {
                         let res = this( $( $ty ),* ).await;
@@ -224,7 +226,7 @@ macro_rules! impl_injectable {
             fn inject<'a>(&'a self, map: &'a DependencyMap) -> CompiledFn<'a, Output> {
                 let Self(Asyncify(this)) = self;
                 Arc::new( move ||  {
-                    let container = core::borrow::Borrow::<Container>::borrow(&map.get()).clone();
+                    let container = Borrow::<Container>::borrow(&map.get()).clone();
                     $( let $ty = $ty::resolve(&container).map_err(Into::into).unwrap(); )*
                     Box::pin(async move {
                         let res = this( $( $ty ),* );

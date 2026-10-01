@@ -8,14 +8,14 @@ use crate::{
     dependency::{Dependency, EMPTY_DEPENDENCIES},
     errors::ValidationErrorKind,
     finalizer::BoxedCloneFinalizer,
-    instantiator::{boxed_container_instantiator, BoxedCloneInstantiator},
+    instantiator::{boxed_container_instantiator, RegistrationInstantiator},
     scope::{ScopeData, ScopeDataWithChildScopesData},
-    Config, Container, DefaultScope, InstantiateErrorKind, ResolveErrorKind, Scope, Scopes,
+    Config, Container, DefaultScope, Scope, Scopes,
 };
 
 #[derive(Clone)]
 pub struct InstantiatorData {
-    pub(crate) instantiator: BoxedCloneInstantiator<ResolveErrorKind, InstantiateErrorKind>,
+    pub(crate) instantiator: RegistrationInstantiator,
     pub(crate) dependencies: BTreeSet<Dependency>,
     pub(crate) finalizer: Option<BoxedCloneFinalizer>,
     pub(crate) config: Config,
@@ -26,6 +26,8 @@ pub struct InstantiatorData {
 pub struct Registry {
     pub(crate) entries: BTreeMap<TypeInfo, InstantiatorData>,
     pub(crate) scopes_data: Vec<ScopeData>,
+    #[cfg(feature = "compiled")]
+    pub(crate) indexed: Vec<(TypeInfo, Option<InstantiatorData>)>,
 }
 
 impl Registry {
@@ -43,7 +45,7 @@ impl Registry {
         entries.insert(
             TypeInfo::new::<Container>("Container"),
             InstantiatorData {
-                instantiator: boxed_container_instantiator(),
+                instantiator: boxed_container_instantiator().into(),
                 dependencies: EMPTY_DEPENDENCIES,
                 finalizer: None,
                 // Caching the container in its own cache creates an cycle
@@ -58,7 +60,12 @@ impl Registry {
             scopes_data.push(scope.into());
         }
 
-        Self { entries, scopes_data }
+        Self {
+            entries,
+            scopes_data,
+            #[cfg(feature = "compiled")]
+            indexed: Vec::new(),
+        }
     }
 
     #[inline]
@@ -591,6 +598,20 @@ macro_rules! registry_internal {
     };
 }
 
+pub(crate) enum Selection<'a, Data> {
+    ByType,
+    Indexed(Option<&'a Data>),
+}
+
+impl<'a, Data> Selection<'a, Data> {
+    pub(crate) fn or_lookup(self, lookup: impl FnOnce() -> Option<&'a Data>) -> Option<&'a Data> {
+        match self {
+            Self::ByType => lookup(),
+            Self::Indexed(data) => data,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     extern crate std;
@@ -601,7 +622,10 @@ mod tests {
     };
     use tracing_test::traced_test;
 
-    use crate::{any::TypeInfo, utils::thread_safety::RcThreadSafety, Config, DefaultScope, Inject, InjectTransient, InstantiateErrorKind};
+    use crate::{
+        any::TypeInfo, macros_utils::sync::RegistryBuilder, utils::thread_safety::RcThreadSafety, Config, DefaultScope, Inject,
+        InjectTransient, InstantiateErrorKind,
+    };
 
     /// A `Scope` implementation other than `DefaultScope`, so that the scope type and the `N` of
     /// `Scopes<N>` the `registry!` builder infers are actually exercised with a second instantiation.
@@ -609,8 +633,9 @@ mod tests {
         extern crate std;
 
         use crate::{
+            any::TypeInfo,
             scope::{Scope, ScopeData, Scopes},
-            Container, InstantiateErrorKind,
+            Container, InjectTransient, InstantiateErrorKind,
         };
         use alloc::{
             format,
@@ -669,6 +694,7 @@ mod tests {
         fn inst_a() -> Result<A, InstantiateErrorKind> {
             Ok(A)
         }
+
         fn inst_b() -> Result<B, InstantiateErrorKind> {
             Ok(B)
         }
@@ -697,14 +723,8 @@ mod tests {
             };
 
             assert_eq!(registry.entries.len(), 3);
-            assert_eq!(
-                registry.get(&crate::any::TypeInfo::of::<A>()).unwrap().scope_data,
-                TestScope::Work.into()
-            );
-            assert_eq!(
-                registry.get(&crate::any::TypeInfo::of::<B>()).unwrap().scope_data,
-                TestScope::Task.into()
-            );
+            assert_eq!(registry.get(&TypeInfo::of::<A>()).unwrap().scope_data, TestScope::Work.into());
+            assert_eq!(registry.get(&TypeInfo::of::<B>()).unwrap().scope_data, TestScope::Task.into());
         }
 
         #[test]
@@ -733,7 +753,7 @@ mod tests {
         #[traced_test]
         fn test_custom_scope_validate_rejects_narrower_dependency() {
             registry! {
-                scope(TestScope::Work) [ provide(|crate::InjectTransient(_): crate::InjectTransient<B>| Ok(A)) ],
+                scope(TestScope::Work) [ provide(|InjectTransient(_): InjectTransient<B>| Ok(A)) ],
                 scope(TestScope::Task) [ provide(inst_b) ],
             };
         }
@@ -742,30 +762,41 @@ mod tests {
     fn inst_a() -> Result<(), InstantiateErrorKind> {
         Ok(())
     }
+
     fn inst_b() -> Result<((), ()), InstantiateErrorKind> {
         Ok(((), ()))
     }
+
     fn inst_b_with_c(_dependency: InjectTransient<((), (), ())>) -> Result<((), ()), InstantiateErrorKind> {
         Ok(((), ()))
     }
+
     fn inst_c() -> Result<((), (), ()), InstantiateErrorKind> {
         Ok(((), (), ()))
     }
+
     fn inst_d() -> Result<((), (), (), ()), InstantiateErrorKind> {
         Ok(((), (), (), ()))
     }
+
     fn inst_e() -> Result<((), (), (), (), ()), InstantiateErrorKind> {
         Ok(((), (), (), (), ()))
     }
+
     fn inst_f() -> Result<((), (), (), (), (), ()), InstantiateErrorKind> {
         Ok(((), (), (), (), (), ()))
     }
 
     fn fin_a(_val: RcThreadSafety<()>) {}
+
     fn fin_b(_val: RcThreadSafety<((), ())>) {}
+
     fn fin_c(_val: RcThreadSafety<((), (), ())>) {}
+
     fn fin_d(_val: RcThreadSafety<((), (), (), ())>) {}
+
     fn fin_e(_val: RcThreadSafety<((), (), (), (), ())>) {}
+
     fn fin_f(_val: RcThreadSafety<((), (), (), (), (), ())>) {}
 
     #[test]
@@ -808,77 +839,77 @@ mod tests {
     #[test]
     #[traced_test]
     fn test_entry_in_scope() {
-        let mut builder = crate::macros_utils::sync::RegistryBuilder::new();
+        let mut builder = RegistryBuilder::new();
         registry_internal! { @clause builder; scope(DefaultScope::App) [ provide(inst_a) ] };
     }
 
     #[test]
     #[traced_test]
     fn test_entry_in_scope_with_config() {
-        let mut builder = crate::macros_utils::sync::RegistryBuilder::new();
+        let mut builder = RegistryBuilder::new();
         registry_internal! { @clause builder; scope(DefaultScope::App) [ provide(inst_a, config = Config::default()) ] };
     }
 
     #[test]
     #[traced_test]
     fn test_entry_in_scope_with_finalizer() {
-        let mut builder = crate::macros_utils::sync::RegistryBuilder::new();
+        let mut builder = RegistryBuilder::new();
         registry_internal! { @clause builder; scope(DefaultScope::App) [ provide(inst_a, finalizer = fin_a) ] };
     }
 
     #[test]
     #[traced_test]
     fn test_entry_in_scope_with_config_and_finalizer() {
-        let mut builder = crate::macros_utils::sync::RegistryBuilder::new();
+        let mut builder = RegistryBuilder::new();
         registry_internal! { @clause builder; scope(DefaultScope::App) [ provide(inst_a, config = Config::default(), finalizer = fin_a) ] };
     }
 
     #[test]
     #[traced_test]
     fn test_entry_in_scope_with_finalizer_and_config_swapped() {
-        let mut builder = crate::macros_utils::sync::RegistryBuilder::new();
+        let mut builder = RegistryBuilder::new();
         registry_internal! { @clause builder; scope(DefaultScope::App) [ provide(inst_a, finalizer = fin_a, config = Config::default()) ] };
     }
 
     #[test]
     #[traced_test]
     fn test_entry_with_scope() {
-        let mut builder = crate::macros_utils::sync::RegistryBuilder::new();
+        let mut builder = RegistryBuilder::new();
         registry_internal! { @clause builder; provide(DefaultScope::App, inst_a) };
     }
 
     #[test]
     #[traced_test]
     fn test_entry_with_scope_with_config() {
-        let mut builder = crate::macros_utils::sync::RegistryBuilder::new();
+        let mut builder = RegistryBuilder::new();
         registry_internal! { @clause builder; provide(DefaultScope::App, inst_a, config = Config::default()) };
     }
 
     #[test]
     #[traced_test]
     fn test_entry_with_scope_with_finalizer() {
-        let mut builder = crate::macros_utils::sync::RegistryBuilder::new();
+        let mut builder = RegistryBuilder::new();
         registry_internal! { @clause builder; provide(DefaultScope::App, inst_a, finalizer = fin_a) };
     }
 
     #[test]
     #[traced_test]
     fn test_entry_with_scope_with_config_and_finalizer() {
-        let mut builder = crate::macros_utils::sync::RegistryBuilder::new();
+        let mut builder = RegistryBuilder::new();
         registry_internal! { @clause builder; provide(DefaultScope::App, inst_a, config = Config::default(), finalizer = fin_a) };
     }
 
     #[test]
     #[traced_test]
     fn test_entry_with_scope_with_finalizer_and_config_swapped() {
-        let mut builder = crate::macros_utils::sync::RegistryBuilder::new();
+        let mut builder = RegistryBuilder::new();
         registry_internal! { @clause builder; provide(DefaultScope::App, inst_a, finalizer = fin_a, config = Config::default()) };
     }
 
     #[test]
     #[traced_test]
     fn test_multiple_entries_in_scope() {
-        let mut builder = crate::macros_utils::sync::RegistryBuilder::new();
+        let mut builder = RegistryBuilder::new();
         registry_internal! {
             @clause builder;
             scope(DefaultScope::App) [
@@ -894,7 +925,7 @@ mod tests {
     #[test]
     #[traced_test]
     fn test_multiple_entries_with_scope() {
-        let mut builder = crate::macros_utils::sync::RegistryBuilder::new();
+        let mut builder = RegistryBuilder::new();
         registry_internal! { @clause builder; provide(DefaultScope::App, inst_a) };
         registry_internal! { @clause builder; provide(DefaultScope::App, inst_b) };
         registry_internal! { @clause builder; provide(DefaultScope::App, inst_c, config = Config::default(), finalizer = fin_c) };
@@ -905,7 +936,7 @@ mod tests {
     #[test]
     #[traced_test]
     fn test_entries_in_scope_trailing_comma_and_spaces() {
-        let mut builder = crate::macros_utils::sync::RegistryBuilder::new();
+        let mut builder = RegistryBuilder::new();
         registry_internal! {
             @clause builder;
             scope(DefaultScope::App) [
@@ -917,7 +948,7 @@ mod tests {
     #[test]
     #[traced_test]
     fn test_entries_with_scope_trailing_comma_and_spaces() {
-        let mut builder = crate::macros_utils::sync::RegistryBuilder::new();
+        let mut builder = RegistryBuilder::new();
         registry_internal! { @clause builder; provide(DefaultScope::App, inst_a, config = Config::default(), finalizer = fin_a) };
     }
 

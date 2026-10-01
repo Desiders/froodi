@@ -1,0 +1,23 @@
+error[E0603]: module `instantiator` is private
+ --> tests/ui/compiled/forged_executor.rs:2:21
+  |
+2 |     let _ = froodi::instantiator::compiled::ErasedInstantiator {
+  |                     ^^^^^^^^^^^^            ------------------ struct `ErasedInstantiator` is not publicly re-exported
+  |                     |
+  |                     private module
+  |
+note: the module `instantiator` is defined here
+ --> src/lib.rs
+  |
+  | pub(crate) mod instantiator;
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unreachable expression
+ --> tests/ui/compiled/forged_executor.rs:4:15
+  |
+3 |         owner: todo!(),
+  |                ------- any code following this expression is unreachable
+4 |         item: core::ptr::null(),
+  |               ^^^^^^^^^^^^^^^^^ unreachable expression
+  |
+  = note: `#[warn(unreachable_code)]` (part of `#[warn(unused)]`) on by default

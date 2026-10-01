@@ -1,6 +1,6 @@
-//! Run with: rustc --edition=2021 tools/compile_bench.rs -o /tmp/compile-bench
-//! Then: /tmp/compile-bench <repo> <output-dir> [repetitions=3] [stages|full|all]
-//! Generated app crates share dependency artifacts; only the app is cleaned per sample.
+//! rustc --edition=2021 tools/compile_bench.rs -o /tmp/froodi-build-bench
+//! /tmp/froodi-build-bench <repo> <fresh-output> [samples=3] [dynamic|compiled|both] [measurement]
+//! Only app artifacts are cleaned; dependencies stay warm. All generated files are disposable.
 use std::{
     env, fs,
     path::{Path, PathBuf},
@@ -8,28 +8,34 @@ use std::{
     time::Instant,
 };
 
-fn run(cmd: &mut Command, log: &Path) -> f64 {
+fn run(command: &mut Command, log: &Path) -> f64 {
     let start = Instant::now();
-    let output = cmd.output().expect("start command");
-    let elapsed = start.elapsed().as_secs_f64();
-    fs::write(log, &output.stderr).unwrap();
-    assert!(output.status.success(), "command failed: {cmd:?}; see {}", log.display());
-    elapsed
+    let output = command.output().expect("start command");
+    let seconds = start.elapsed().as_secs_f64();
+    fs::write(log, [&output.stdout[..], &output.stderr[..]].concat()).unwrap();
+    assert!(output.status.success(), "{command:?} failed; see {}", log.display());
+    seconds
 }
 
 fn cargo(dir: &Path, target: &Path) -> Command {
-    let mut cmd = Command::new("cargo");
-    cmd.current_dir(dir)
+    let mut command = Command::new("cargo");
+    command
+        .current_dir(dir)
         .env("CARGO_TARGET_DIR", target)
         .env("CARGO_INCREMENTAL", "1")
         .env("CARGO_PROFILE_DEV_DEBUG", "line-tables-only")
         .env("CARGO_PROFILE_RELEASE_DEBUG", "false");
-    cmd
+    command
 }
 
-fn source(shape: &str, stage: &str, edit: &str) -> String {
+fn source(shape: &str, edit: &str, engine: &str) -> String {
     let count = if shape == "chain100" { 100 } else { 500 };
-    let mut text = String::from("#![allow(unused_imports, dead_code)]\nuse froodi_compile::{registry, Container, Inject, InstantiateErrorKind, DefaultScope::App};\n");
+    let registry = if engine == "compiled" {
+        "froodi::compiled_registry"
+    } else {
+        "froodi::registry"
+    };
+    let mut text = format!("#![allow(unused_imports, dead_code)]\nuse {registry};\nuse froodi::{{Container, Inject, InstantiateErrorKind, DefaultScope::App}};\n");
     for i in 0..count {
         text.push_str(&format!("struct T{i}(usize);\n"));
         if i == 0 || shape == "flat500" {
@@ -51,78 +57,49 @@ fn source(shape: &str, stage: &str, edit: &str) -> String {
     if edit == "topology" {
         text.push_str("provide(App, || Ok::<u64, InstantiateErrorKind>(1)),\n");
     }
-    text.push_str("};\n");
-    match stage {
-        "typed" => text.push_str("std::hint::black_box(registry);\n"),
-        "full" => text.push_str(&format!(
-            "let c = Container::new(registry); std::hint::black_box(c.get::<T{}>().unwrap().0);\n",
-            count - 1
-        )),
-        stage => text.push_str(&format!("froodi_compile_runtime::compile_bench::{stage}(registry);\n")),
-    }
-    text.push_str("}\n");
+    text.push_str(&format!(
+        "}}; let c = Container::new(registry); std::hint::black_box(c.get::<T{}>().unwrap().0); }}\n",
+        count - 1
+    ));
     text
-}
-
-fn median(mut values: Vec<f64>) -> f64 {
-    values.sort_by(f64::total_cmp);
-    values[values.len() / 2]
 }
 
 fn main() {
     let args: Vec<_> = env::args().collect();
     assert!(
         args.len() >= 3,
-        "usage: compile-bench <repo> <output-dir> [repetitions=3] [stages|full|all]"
+        "usage: compile-bench <repo> <fresh-output> [samples=3] [dynamic|compiled|both] [measurement]"
     );
     let repo = fs::canonicalize(&args[1]).unwrap();
     let output = PathBuf::from(&args[2]);
-    let repetitions = args.get(3).map_or(3, |v| v.parse::<usize>().unwrap());
-    assert!(repetitions > 0);
-    let mode = args.get(4).map_or("all", String::as_str);
+    assert!(!output.exists(), "use a fresh output directory");
     fs::create_dir_all(&output).unwrap();
     let output = fs::canonicalize(output).unwrap();
+    let repetitions = args.get(3).map_or(3, |value| value.parse::<usize>().unwrap());
+    assert!(repetitions > 0);
+    let selected = args.get(4).map_or("both", String::as_str);
+    assert!(matches!(selected, "dynamic" | "compiled" | "both"));
+    let only = args.get(5).map(String::as_str);
+    assert!(matches!(only, None | Some("clean-app" | "body" | "topology" | "release")));
     let target = output.join("target");
     let version = Command::new("rustc").arg("-Vv").output().unwrap();
     fs::write(output.join("toolchain.txt"), version.stdout).unwrap();
-    let mut results = String::from("shape,stage,measurement,seconds,bytes\n");
-    for shape in ["chain100", "flat500"] {
-        for stage in ["typed", "linking", "validated", "metadata", "executors", "full"] {
-            if mode == "full" && stage != "full" {
-                continue;
-            }
-            let dir = output.join(format!("{shape}-{stage}"));
+    let mut results = String::from("engine,shape,measurement,seconds,bytes\n");
+    for engine in ["dynamic", "compiled"] {
+        if selected != "both" && selected != engine {
+            continue;
+        }
+        for shape in ["chain100", "flat500"] {
+            let dir = output.join(format!("{engine}-{shape}"));
             fs::create_dir_all(dir.join("src")).unwrap();
-            fs::write(
-                dir.join("Cargo.toml"),
-                format!(
-                    r#"[package]
-name = "compile-bench-app"
-version = "0.0.0"
-edition = "2021"
-[workspace]
-[dependencies]
-froodi-compile = {{ path = {:?} }}
-froodi-compile-runtime = {{ path = {:?}, features = ["compile-bench"] }}
-[profile.dev]
-debug = "line-tables-only"
-[profile.release]
-debug = false
-"#,
-                    repo.join("froodi-compile"),
-                    repo.join("froodi-compile-runtime")
-                ),
-            )
-            .unwrap();
+            let features = if engine == "compiled" { "[\"compiled\"]" } else { "[]" };
+            fs::write(dir.join("Cargo.toml"), format!("[package]\nname = \"compile-bench-app\"\nversion = \"0.0.0\"\nedition = \"2021\"\n[workspace]\n[dependencies]\nfroodi = {{ path = {:?}, features = {features} }}\n", repo.join("froodi"))).unwrap();
             let src = dir.join("src/main.rs");
-            let original = source(shape, stage, "none");
+            let original = source(shape, "none", engine);
             fs::write(&src, &original).unwrap();
             run(cargo(&dir, &target).args(["build", "--offline"]), &dir.join("warm.log"));
             for measurement in ["clean-app", "body", "topology", "release"] {
-                if stage != "full" && measurement != "clean-app" {
-                    continue;
-                }
-                if mode == "stages" && measurement != "clean-app" {
+                if only.is_some_and(|only| only != measurement) {
                     continue;
                 }
                 let mut samples = Vec::new();
@@ -135,7 +112,6 @@ debug = false
                     if release {
                         build.arg("--release");
                     }
-                    // Warm dependencies and establish the pre-edit incremental state.
                     run(&mut build, &dir.join("prepare.log"));
                     if measurement == "clean-app" || release {
                         let mut clean = cargo(&dir, &target);
@@ -145,28 +121,20 @@ debug = false
                         }
                         run(&mut clean, &dir.join("clean.log"));
                     } else {
-                        fs::write(&src, source(shape, stage, measurement)).unwrap();
+                        fs::write(&src, source(shape, measurement, engine)).unwrap();
                     }
-                    let seconds = run(&mut build, &dir.join(format!("{measurement}-{sample}.log")));
+                    samples.push(run(&mut build, &dir.join(format!("{measurement}-{sample}.log"))));
                     let binary = target.join(if release { "release" } else { "debug" }).join("compile-bench-app");
                     bytes = fs::metadata(&binary).unwrap().len();
-                    if stage == "full" {
-                        run(&mut Command::new(binary), &dir.join("run.log"));
-                    }
-                    samples.push(seconds);
+                    run(&mut Command::new(binary), &dir.join("run.log"));
                 }
-                let seconds = median(samples.clone());
-                println!("{shape}/{stage}/{measurement}: {seconds:.3}s {bytes} bytes ({samples:?})");
-                results.push_str(&format!("{shape},{stage},{measurement},{seconds:.6},{bytes}\n"));
+                let mut ordered = samples.clone();
+                ordered.sort_by(f64::total_cmp);
+                let seconds = ordered[ordered.len() / 2];
+                println!("{engine}/{shape}/{measurement}: {seconds:.3}s {bytes} bytes ({samples:?})");
+                results.push_str(&format!("{engine},{shape},{measurement},{seconds:.6},{bytes}\n"));
                 fs::write(output.join("results.csv"), &results).unwrap();
             }
-            // Attribute compiler time separately from Cargo, dependency builds and linking.
-            fs::write(&src, original).unwrap();
-            let mut profile = cargo(&dir, &target);
-            profile
-                .env("RUSTC_BOOTSTRAP", "1")
-                .args(["rustc", "--offline", "--", "-Ztime-passes"]);
-            run(&mut profile, &dir.join("time-passes.log"));
         }
     }
 }

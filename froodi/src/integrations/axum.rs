@@ -21,7 +21,7 @@ use tracing::error;
 use crate::async_impl::Container as AsyncContainer;
 use crate::{
     utils::future::BoxFuture,
-    Container,
+    Container, Context as InjectionContext,
     DefaultScope::{Request as RequestScope, Session as SessionScope},
     Inject, InjectTransient, ResolveErrorKind, Scope,
 };
@@ -118,7 +118,7 @@ where
     fn call(&mut self, request: Request<ResBody>) -> Self::Future {
         let (parts, body) = request.into_parts();
         let is_websocket = is_websocket_request(&parts);
-        let mut context = crate::Context::new();
+        let mut context = InjectionContext::new();
         context.insert(parts.clone());
         let mut request = Request::from_parts(parts, body);
 
@@ -194,7 +194,7 @@ where
     fn call(&mut self, request: Request<ResBody>) -> Self::Future {
         let (parts, body) = request.into_parts();
         let is_websocket = is_websocket_request(&parts);
-        let mut context = crate::Context::new();
+        let mut context = InjectionContext::new();
         context.insert(parts.clone());
         let mut request = Request::from_parts(parts, body);
 
