@@ -111,8 +111,7 @@ where
         entries.push(CollectedRegistration {
             key: TypeInfo::of::<Out>(),
             data: Some(InstantiatorData {
-                // SAFETY: linking preserved parameter order and target types; assembly remaps IDs before execution.
-                instantiator: unsafe { RegistrationInstantiator::compiled::<Inst, Deps>(inst, self.targets) },
+                instantiator: RegistrationInstantiator::compiled::<Inst, Deps>(inst, self.targets),
                 dependencies: BTreeSet::new(),
                 finalizer: fin.map(boxed_finalizer_factory),
                 scope_data: scope,
@@ -126,11 +125,11 @@ pub struct ContainerLeaf {
     pub(super) scope: ScopeData,
 }
 
-unsafe impl RegistryIndex for ContainerLeaf {
+impl RegistryIndex for ContainerLeaf {
     type Index = Provider<Container>;
 }
 
-unsafe impl<Root> Link<Root, ()> for ContainerLeaf {
+impl<Root> Link<Root, ()> for ContainerLeaf {
     type Linked = Self;
 
     const TOPOLOGY: Topology = Topology::leaf(&[]);

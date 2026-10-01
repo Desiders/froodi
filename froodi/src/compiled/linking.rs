@@ -12,11 +12,11 @@ pub struct R<Path>(PhantomData<Path>);
 
 pub struct Empty;
 
-unsafe impl Size for Empty {
+impl Size for Empty {
     const SIZE: usize = 0;
 }
 
-unsafe impl<Root> Link<Root, ()> for Empty {
+impl<Root> Link<Root, ()> for Empty {
     type Linked = Empty;
 
     const TOPOLOGY: Topology = Topology::EMPTY;
@@ -29,31 +29,27 @@ unsafe impl<Root> Link<Root, ()> for Empty {
 
 pub struct Node<Left, Right>(pub Left, pub Right);
 
-/// # Safety
-/// `SIZE` must equal the number of indexed provider leaves in declaration order.
-pub unsafe trait Size {
+/// Counts declaration leaves before replacement assembly.
+pub trait Size {
     const SIZE: usize;
 }
 
-unsafe impl<Left: Size, Right: Size> Size for Node<Left, Right> {
+impl<Left: Size, Right: Size> Size for Node<Left, Right> {
     const SIZE: usize = Left::SIZE + Right::SIZE;
 }
 
 /// Omits instantiators, dependency tuples and finalizers from provider lookup.
-///
-/// # Safety
-/// The index must preserve the value tree's provider types, execution kinds and leaf order.
-pub unsafe trait RegistryIndex {
+pub trait RegistryIndex {
     type Index;
 }
 
 pub struct Provider<Out>(PhantomData<fn() -> Out>);
 
-unsafe impl<Out> Size for Provider<Out> {
+impl<Out> Size for Provider<Out> {
     const SIZE: usize = 1;
 }
 
-unsafe impl<Out> ProviderPath<Out, Here> for Provider<Out> {
+impl<Out> ProviderPath<Out, Here> for Provider<Out> {
     type Provider = Self;
 
     const INDEX: usize = 0;
@@ -61,36 +57,33 @@ unsafe impl<Out> ProviderPath<Out, Here> for Provider<Out> {
 
 impl<Out, Execution> SupportsExecution<Execution> for Provider<Out> {}
 
-unsafe impl<Left: RegistryIndex, Right: RegistryIndex> RegistryIndex for Node<Left, Right> {
+impl<Left: RegistryIndex, Right: RegistryIndex> RegistryIndex for Node<Left, Right> {
     type Index = Node<Left::Index, Right::Index>;
 }
 
-unsafe impl RegistryIndex for Empty {
+impl RegistryIndex for Empty {
     type Index = Empty;
 }
 
 /// rustc infers `Path`; missing or ambiguous providers fail trait resolution.
-///
-/// # Safety
-/// `INDEX` must select the provider of exactly `T` at `Path` in this index.
 #[diagnostic::on_unimplemented(
     message = "no registration provides `{T}`",
     label = "`{T}` is requested here, but no `provide(...)` in the registry produces it",
     note = "register an instantiator or `instance(...)` that returns `{T}`, or `extend(...)` a registry that does"
 )]
-pub unsafe trait ProviderPath<T, Path> {
+pub trait ProviderPath<T, Path> {
     type Provider;
 
     const INDEX: usize;
 }
 
-unsafe impl<T, Path, Left: ProviderPath<T, Path>, Right> ProviderPath<T, L<Path>> for Node<Left, Right> {
+impl<T, Path, Left: ProviderPath<T, Path>, Right> ProviderPath<T, L<Path>> for Node<Left, Right> {
     type Provider = Left::Provider;
 
     const INDEX: usize = Left::INDEX;
 }
 
-unsafe impl<T, Path, Left: Size, Right: ProviderPath<T, Path>> ProviderPath<T, R<Path>> for Node<Left, Right> {
+impl<T, Path, Left: Size, Right: ProviderPath<T, Path>> ProviderPath<T, R<Path>> for Node<Left, Right> {
     type Provider = Right::Provider;
 
     const INDEX: usize = Left::SIZE + Right::INDEX;
@@ -123,12 +116,8 @@ macro_rules! impl_supports_execution {
 
 all_the_tuples!(impl_supports_execution);
 
-/// `Links` mirrors the tree shape and is inferred by rustc.
-///
-/// # Safety
-/// Linked values, topology targets and provider index positions must describe the same
-/// registrations. Implementations must not forge dependency types or reorder registrations.
-pub unsafe trait Link<Root, Links> {
+/// `Links` is inferred alongside the tree; collection preserves its declaration order.
+pub trait Link<Root, Links> {
     type Linked;
 
     const TOPOLOGY: Topology;
@@ -137,7 +126,7 @@ pub unsafe trait Link<Root, Links> {
     fn link(self) -> Self::Linked;
 }
 
-unsafe impl<Root, Left: Link<Root, LLinks>, Right: Link<Root, RLinks>, LLinks, RLinks> Link<Root, (LLinks, RLinks)> for Node<Left, Right> {
+impl<Root, Left: Link<Root, LLinks>, Right: Link<Root, RLinks>, LLinks, RLinks> Link<Root, (LLinks, RLinks)> for Node<Left, Right> {
     type Linked = Node<Left::Linked, Right::Linked>;
 
     const TOPOLOGY: Topology = Topology::branch(&Left::TOPOLOGY, &Right::TOPOLOGY);
