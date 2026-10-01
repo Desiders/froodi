@@ -17,7 +17,7 @@ mod thread_safe {
 }
 
 #[cfg(not(feature = "thread_safe"))]
-mod thread_unsafe {
+mod local {
     use alloc::rc::Rc;
     use core::any::Any;
 
@@ -40,6 +40,6 @@ pub use thread_safe::RcThreadSafety;
 pub(crate) use thread_safe::{RcAnyThreadSafety, SendSafety, SyncSafety};
 
 #[cfg(not(feature = "thread_safe"))]
-pub use thread_unsafe::RcThreadSafety;
+pub use local::RcThreadSafety;
 #[cfg(not(feature = "thread_safe"))]
-pub(crate) use thread_unsafe::{RcAnyThreadSafety, SendSafety, SyncSafety};
+pub(crate) use local::{RcAnyThreadSafety, SendSafety, SyncSafety};
