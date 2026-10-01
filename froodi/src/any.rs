@@ -111,7 +111,7 @@ mod tests {
     use alloc::{collections::BTreeMap, format, string::ToString as _};
     use core::{
         cmp::Ordering,
-        hash::{Hash as _, Hasher as _},
+        hash::{Hash as _, Hasher},
     };
 
     struct Foo;
@@ -181,7 +181,7 @@ mod tests {
         #[derive(Default)]
         struct CountingHasher(u64);
 
-        impl core::hash::Hasher for CountingHasher {
+        impl Hasher for CountingHasher {
             fn finish(&self) -> u64 {
                 self.0
             }

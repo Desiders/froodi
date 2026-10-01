@@ -11,7 +11,10 @@ use crate::{
         Finalizer, RegistryWithSync,
     },
     dependency_resolver::DependencyResolver,
-    macros_utils::types::{RegistryKind, RegistryKindOrEntry},
+    macros_utils::{
+        aliases::Box,
+        types::{RegistryKind, RegistryKindOrEntry},
+    },
     registry::InstantiatorData as SyncInstantiatorData,
     utils::thread_safety::{SendSafety, SyncSafety},
     Config, InstantiateErrorKind, Registry, ResolveErrorKind, Scope, Scopes,
@@ -153,7 +156,7 @@ where
 }
 
 #[cfg(feature = "thread_safe")]
-pub type FinDummy<T> = fn(T) -> Pin<super::aliases::Box<dyn Future<Output = ()> + Send>>;
+pub type FinDummy<T> = fn(T) -> Pin<Box<dyn Future<Output = ()> + Send>>;
 
 #[cfg(not(feature = "thread_safe"))]
-pub type FinDummy<T> = fn(T) -> Pin<super::aliases::Box<dyn Future<Output = ()>>>;
+pub type FinDummy<T> = fn(T) -> Pin<Box<dyn Future<Output = ()>>>;

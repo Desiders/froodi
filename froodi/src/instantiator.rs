@@ -5,13 +5,20 @@ use tracing::debug;
 use super::{
     dependency_resolver::DependencyResolver,
     errors::{InstantiateErrorKind, InstantiatorErrorKind},
-    service::{service_fn, BoxCloneService},
+    service::{service_fn, BoxCloneService, Service},
 };
+#[cfg(feature = "compiled")]
+mod compiled;
+
+#[cfg(feature = "compiled")]
+use crate::compiled::RegistrationId;
 use crate::{
     dependency::Dependency,
     utils::thread_safety::{SendSafety, SyncSafety},
     Container, ResolveErrorKind,
 };
+#[cfg(feature = "compiled")]
+use compiled::ErasedInstantiator;
 
 pub trait Instantiator<Deps>: Clone + 'static
 where
@@ -24,6 +31,19 @@ where
 
     #[must_use]
     fn dependencies() -> BTreeSet<Dependency>;
+
+    #[cfg(feature = "compiled")]
+    #[doc(hidden)]
+    fn instantiate_compiled(
+        &self,
+        container: &Container,
+        edges: &[RegistrationId],
+    ) -> Result<Self::Provides, InstantiatorErrorKind<ResolveErrorKind, InstantiateErrorKind>> {
+        let dependencies = Deps::resolve_compiled(container, &mut edges.iter()).map_err(|err| InstantiatorErrorKind::Deps(err.into()))?;
+        self.clone()
+            .instantiate(dependencies)
+            .map_err(|err| InstantiatorErrorKind::Factory(err.into()))
+    }
 }
 
 pub(crate) type BoxedCloneInstantiator<DepsErr, FactoryErr> =
@@ -133,6 +153,29 @@ macro_rules! boxed {
     }};
 }
 
+#[derive(Clone)]
+pub(crate) enum RegistrationInstantiator {
+    Dynamic(BoxedCloneInstantiator<ResolveErrorKind, InstantiateErrorKind>),
+    #[cfg(feature = "compiled")]
+    Compiled(ErasedInstantiator),
+}
+
+impl From<BoxedCloneInstantiator<ResolveErrorKind, InstantiateErrorKind>> for RegistrationInstantiator {
+    fn from(inst: BoxedCloneInstantiator<ResolveErrorKind, InstantiateErrorKind>) -> Self {
+        Self::Dynamic(inst)
+    }
+}
+
+impl RegistrationInstantiator {
+    pub(crate) fn call(&self, container: Container) -> Result<Box<dyn Any>, InstantiatorErrorKind<ResolveErrorKind, InstantiateErrorKind>> {
+        match self {
+            Self::Dynamic(inst) => Service::call(&mut inst.clone(), container),
+            #[cfg(feature = "compiled")]
+            Self::Compiled(inst) => inst.call(container),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     extern crate std;
@@ -162,6 +205,7 @@ mod tests {
     #[allow(dead_code)]
     fn test_factory_helper() {
         fn resolver<Deps: DependencyResolver, F: Instantiator<Deps>>(_f: F) {}
+
         fn resolver_with_dep<Deps: DependencyResolver>() {
             resolver(|| Ok::<_, InstantiateErrorKind>(()));
         }

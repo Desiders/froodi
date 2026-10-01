@@ -3,22 +3,24 @@ use alloc::{
     vec::Vec,
 };
 
+#[cfg(feature = "compiled")]
+use crate::compiled::async_impl::Selected;
 use crate::{
     any::TypeInfo,
     async_impl::{
         finalizer::BoxedCloneFinalizer,
-        instantiator::{boxed_container_instantiator, BoxedCloneInstantiator},
+        instantiator::{boxed_container_instantiator, RegistrationInstantiator},
         Container,
     },
     dependency::{Dependency, EMPTY_DEPENDENCIES},
     errors::ValidationErrorKind,
     scope::{ScopeData, ScopeDataWithChildScopesData},
-    Config, DefaultScope, InstantiateErrorKind, Registry as SyncRegistry, ResolveErrorKind, Scope, Scopes,
+    Config, DefaultScope, Registry as SyncRegistry, Scope, Scopes,
 };
 
 #[derive(Clone)]
 pub struct InstantiatorData {
-    pub(crate) instantiator: BoxedCloneInstantiator<ResolveErrorKind, InstantiateErrorKind>,
+    pub(crate) instantiator: RegistrationInstantiator,
     pub(crate) dependencies: BTreeSet<Dependency>,
     pub(crate) finalizer: Option<BoxedCloneFinalizer>,
     pub(crate) config: Config,
@@ -29,6 +31,8 @@ pub struct InstantiatorData {
 pub struct Registry {
     pub(crate) entries: BTreeMap<TypeInfo, InstantiatorData>,
     pub(crate) scopes_data: Vec<ScopeData>,
+    #[cfg(feature = "compiled")]
+    pub(crate) indexed: Vec<(TypeInfo, Selected)>,
 }
 
 impl Registry {
@@ -55,7 +59,7 @@ impl Registry {
                 }
             },
             InstantiatorData {
-                instantiator: boxed_container_instantiator(),
+                instantiator: boxed_container_instantiator().into(),
                 dependencies: EMPTY_DEPENDENCIES,
                 finalizer: None,
                 // Caching the container in its own cache creates an cycle
@@ -70,7 +74,12 @@ impl Registry {
             scopes_data.push(scope.into());
         }
 
-        Self { entries, scopes_data }
+        Self {
+            entries,
+            scopes_data,
+            #[cfg(feature = "compiled")]
+            indexed: Vec::new(),
+        }
     }
 
     #[inline]
@@ -651,6 +660,7 @@ mod tests {
     use crate::{
         any::TypeInfo,
         async_impl::{registry::RegistryWithSync, Container},
+        macros_utils::async_impl::RegistryBuilder,
         registry,
         utils::thread_safety::RcThreadSafety,
         Config, DefaultScope, Inject, InjectTransient, InstantiateErrorKind,
@@ -662,9 +672,10 @@ mod tests {
         extern crate std;
 
         use crate::{
+            any::TypeInfo,
             async_impl::Container,
             scope::{Scope, ScopeData, Scopes},
-            InstantiateErrorKind,
+            InjectTransient, InstantiateErrorKind,
         };
         use alloc::{
             format,
@@ -723,6 +734,7 @@ mod tests {
         async fn inst_a() -> Result<A, InstantiateErrorKind> {
             Ok(A)
         }
+
         async fn inst_b() -> Result<B, InstantiateErrorKind> {
             Ok(B)
         }
@@ -752,11 +764,11 @@ mod tests {
 
             assert_eq!(registry.registry.entries.len(), 3);
             assert_eq!(
-                registry.registry.get(&crate::any::TypeInfo::of::<A>()).unwrap().scope_data,
+                registry.registry.get(&TypeInfo::of::<A>()).unwrap().scope_data,
                 TestScope::Work.into()
             );
             assert_eq!(
-                registry.registry.get(&crate::any::TypeInfo::of::<B>()).unwrap().scope_data,
+                registry.registry.get(&TypeInfo::of::<B>()).unwrap().scope_data,
                 TestScope::Task.into()
             );
         }
@@ -787,7 +799,7 @@ mod tests {
         #[traced_test]
         fn test_custom_scope_validate_rejects_narrower_dependency() {
             async_registry! {
-                scope(TestScope::Work) [ provide(|crate::InjectTransient(_): crate::InjectTransient<B>| async { Ok(A) }) ],
+                scope(TestScope::Work) [ provide(|InjectTransient(_): InjectTransient<B>| async { Ok(A) }) ],
                 scope(TestScope::Task) [ provide(inst_b) ],
             };
         }
@@ -796,30 +808,41 @@ mod tests {
     async fn inst_a() -> Result<(), InstantiateErrorKind> {
         Ok(())
     }
+
     async fn inst_b() -> Result<((), ()), InstantiateErrorKind> {
         Ok(((), ()))
     }
+
     async fn inst_b_with_c(_dependency: InjectTransient<((), (), ())>) -> Result<((), ()), InstantiateErrorKind> {
         Ok(((), ()))
     }
+
     async fn inst_c() -> Result<((), (), ()), InstantiateErrorKind> {
         Ok(((), (), ()))
     }
+
     async fn inst_d() -> Result<((), (), (), ()), InstantiateErrorKind> {
         Ok(((), (), (), ()))
     }
+
     async fn inst_e() -> Result<((), (), (), (), ()), InstantiateErrorKind> {
         Ok(((), (), (), (), ()))
     }
+
     async fn inst_f() -> Result<((), (), (), (), (), ()), InstantiateErrorKind> {
         Ok(((), (), (), (), (), ()))
     }
 
     async fn fin_a(_val: RcThreadSafety<()>) {}
+
     async fn fin_b(_val: RcThreadSafety<((), ())>) {}
+
     async fn fin_c(_val: RcThreadSafety<((), (), ())>) {}
+
     async fn fin_d(_val: RcThreadSafety<((), (), (), ())>) {}
+
     async fn fin_e(_val: RcThreadSafety<((), (), (), (), ())>) {}
+
     async fn fin_f(_val: RcThreadSafety<((), (), (), (), (), ())>) {}
 
     #[test]
@@ -857,77 +880,77 @@ mod tests {
     #[test]
     #[traced_test]
     fn test_entry_in_scope() {
-        let mut builder = crate::macros_utils::async_impl::RegistryBuilder::new();
+        let mut builder = RegistryBuilder::new();
         async_registry_internal! { @clause builder; scope(DefaultScope::App) [ provide(inst_a) ] };
     }
 
     #[test]
     #[traced_test]
     fn test_entry_in_scope_with_config() {
-        let mut builder = crate::macros_utils::async_impl::RegistryBuilder::new();
+        let mut builder = RegistryBuilder::new();
         async_registry_internal! { @clause builder; scope(DefaultScope::App) [ provide(inst_a, config = Config::default()) ] };
     }
 
     #[test]
     #[traced_test]
     fn test_entry_in_scope_with_finalizer() {
-        let mut builder = crate::macros_utils::async_impl::RegistryBuilder::new();
+        let mut builder = RegistryBuilder::new();
         async_registry_internal! { @clause builder; scope(DefaultScope::App) [ provide(inst_a, finalizer = fin_a) ] };
     }
 
     #[test]
     #[traced_test]
     fn test_entry_in_scope_with_config_and_finalizer() {
-        let mut builder = crate::macros_utils::async_impl::RegistryBuilder::new();
+        let mut builder = RegistryBuilder::new();
         async_registry_internal! { @clause builder; scope(DefaultScope::App) [ provide(inst_a, config = Config::default(), finalizer = fin_a) ] };
     }
 
     #[test]
     #[traced_test]
     fn test_entry_in_scope_with_finalizer_and_config_swapped() {
-        let mut builder = crate::macros_utils::async_impl::RegistryBuilder::new();
+        let mut builder = RegistryBuilder::new();
         async_registry_internal! { @clause builder; scope(DefaultScope::App) [ provide(inst_a, finalizer = fin_a, config = Config::default()) ] };
     }
 
     #[test]
     #[traced_test]
     fn test_entry_with_scope() {
-        let mut builder = crate::macros_utils::async_impl::RegistryBuilder::new();
+        let mut builder = RegistryBuilder::new();
         async_registry_internal! { @clause builder; provide(DefaultScope::App, inst_a) };
     }
 
     #[test]
     #[traced_test]
     fn test_entry_with_scope_with_config() {
-        let mut builder = crate::macros_utils::async_impl::RegistryBuilder::new();
+        let mut builder = RegistryBuilder::new();
         async_registry_internal! { @clause builder; provide(DefaultScope::App, inst_a, config = Config::default()) };
     }
 
     #[test]
     #[traced_test]
     fn test_entry_with_scope_with_finalizer() {
-        let mut builder = crate::macros_utils::async_impl::RegistryBuilder::new();
+        let mut builder = RegistryBuilder::new();
         async_registry_internal! { @clause builder; provide(DefaultScope::App, inst_a, finalizer = fin_a) };
     }
 
     #[test]
     #[traced_test]
     fn test_entry_with_scope_with_config_and_finalizer() {
-        let mut builder = crate::macros_utils::async_impl::RegistryBuilder::new();
+        let mut builder = RegistryBuilder::new();
         async_registry_internal! { @clause builder; provide(DefaultScope::App, inst_a, config = Config::default(), finalizer = fin_a) };
     }
 
     #[test]
     #[traced_test]
     fn test_entry_with_scope_with_finalizer_and_config_swapped() {
-        let mut builder = crate::macros_utils::async_impl::RegistryBuilder::new();
+        let mut builder = RegistryBuilder::new();
         async_registry_internal! { @clause builder; provide(DefaultScope::App, inst_a, finalizer = fin_a, config = Config::default()) };
     }
 
     #[test]
     #[traced_test]
     fn test_multiple_entries_in_scope() {
-        let mut builder = crate::macros_utils::async_impl::RegistryBuilder::new();
+        let mut builder = RegistryBuilder::new();
         async_registry_internal! {
             @clause builder;
             scope(DefaultScope::App) [
@@ -943,7 +966,7 @@ mod tests {
     #[test]
     #[traced_test]
     fn test_multiple_entries_with_scope() {
-        let mut builder = crate::macros_utils::async_impl::RegistryBuilder::new();
+        let mut builder = RegistryBuilder::new();
         async_registry_internal! { @clause builder; provide(DefaultScope::App, inst_a) };
         async_registry_internal! { @clause builder; provide(DefaultScope::App, inst_b) };
         async_registry_internal! { @clause builder; provide(DefaultScope::App, inst_c, config = Config::default(), finalizer = fin_c) };
@@ -954,7 +977,7 @@ mod tests {
     #[test]
     #[traced_test]
     fn test_entries_in_scope_trailing_comma_and_spaces() {
-        let mut builder = crate::macros_utils::async_impl::RegistryBuilder::new();
+        let mut builder = RegistryBuilder::new();
         async_registry_internal! {
             @clause builder;
             scope(DefaultScope::App) [
@@ -966,7 +989,7 @@ mod tests {
     #[test]
     #[traced_test]
     fn test_entries_with_scope_trailing_comma_and_spaces() {
-        let mut builder = crate::macros_utils::async_impl::RegistryBuilder::new();
+        let mut builder = RegistryBuilder::new();
         async_registry_internal! { @clause builder; provide(DefaultScope::App, inst_a, config = Config::default(), finalizer = fin_a) };
     }
 

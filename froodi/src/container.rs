@@ -5,6 +5,8 @@ use tracing::trace;
 use tracing::{debug, error};
 
 use super::cache::Cache;
+#[cfg(feature = "compiled")]
+use crate::compiled::{finish, prepare, IntoRegistry};
 #[cfg(feature = "thread_safe")]
 use crate::lock::PerTypeLocks;
 use crate::{
@@ -12,7 +14,7 @@ use crate::{
     cache::Resolved,
     context::Context,
     errors::{InstantiatorErrorKind, ResolveErrorKind, ScopeErrorKind, ScopeWithErrorKind},
-    registry::{InstantiatorData, Registry},
+    registry::{InstantiatorData, Registry, Selection},
     scope::{Scope, ScopeData, ScopeDataWithChildScopesData},
     service::Service as _,
     utils::thread_safety::{RcThreadSafety, SendSafety, SyncSafety},
@@ -40,8 +42,21 @@ impl Container {
     ///   This can occur if count of scopes is 1.
     /// - Panics if all scopes except the first one are skipped by default.
     #[must_use]
+    #[cfg(not(feature = "compiled"))]
     pub fn new(registry: Registry) -> Self {
         Self::build_root(registry, |scope_data| !scope_data.is_skipped_by_default)
+    }
+
+    /// Creates a container from a dynamic or typed registry at the first non-skipped scope.
+    /// For a skipped scope, use [`Self::new_with_start_scope`] with a dynamic registry
+    /// or [`Self::new_compiled_with_start_scope`] with a typed registry.
+    ///
+    /// # Panics
+    /// Panics if no scope can be selected or compiled-registry runtime validation fails.
+    #[must_use]
+    #[cfg(feature = "compiled")]
+    pub fn new<Links>(registry: impl IntoRegistry<Links>) -> Self {
+        Self::build_root(finish(registry), |scope_data| !scope_data.is_skipped_by_default)
     }
 
     /// Creates container with start scope
@@ -56,6 +71,18 @@ impl Container {
         Self::build_root(registry, move |scope_data| scope_data.priority == priority)
     }
 
+    /// Creates a container from a typed registry at the requested scope.
+    ///
+    /// # Panics
+    /// Panics if the scope is absent or compiled-registry runtime validation fails.
+    #[must_use]
+    #[allow(clippy::needless_pass_by_value)]
+    #[cfg(feature = "compiled")]
+    pub fn new_compiled_with_start_scope<S: Scope, Links>(registry: impl IntoRegistry<Links>, scope: S) -> Self {
+        let priority = scope.priority();
+        Self::build_root(finish(registry), move |scope_data| scope_data.priority == priority)
+    }
+
     /// Builds the root container chain: starts at the registry's lowest-priority scope and descends
     /// (keeping each level as a parent with `close_parent = true`) until `is_target` accepts a scope.
     /// Shared by [`Self::new`] (target = first non-skipped scope) and [`Self::new_with_start_scope`]
@@ -65,6 +92,8 @@ impl Container {
     /// Panics if the scopes are exhausted before `is_target` accepts one (e.g. no scopes at all, or
     /// every scope is skipped / none matches the requested priority).
     fn build_root(registry: Registry, is_target: impl Fn(&ScopeData) -> bool) -> Self {
+        #[cfg(feature = "compiled")]
+        let registry = prepare(registry);
         let mut scopes = registry.get_scope_with_child_scopes();
         let registry = RcThreadSafety::new(registry);
         let mut container = BoxedContainerInner {
@@ -116,6 +145,13 @@ impl Container {
     /// and with optional finalizer.
     #[allow(clippy::missing_errors_doc, clippy::missing_panics_doc)]
     pub fn get<Dep: SendSafety + SyncSafety + 'static>(&self) -> Result<RcThreadSafety<Dep>, ResolveErrorKind> {
+        self.get_selected::<Dep>(Selection::ByType)
+    }
+
+    pub(crate) fn get_selected<Dep: SendSafety + SyncSafety + 'static>(
+        &self,
+        selected: Selection<'_, InstantiatorData>,
+    ) -> Result<RcThreadSafety<Dep>, ResolveErrorKind> {
         let type_info = TypeInfo::of::<Dep>();
         let dep_name = type_info.name;
         let scope_name = self.inner.scope_data.name;
@@ -126,13 +162,15 @@ impl Container {
         }
         debug!("Not found in cache");
 
-        let Some(InstantiatorData {
-            instantiator,
-            finalizer,
-            config,
-            scope_data,
-            ..
-        }) = self.inner.registry.get(&type_info)
+        let Some(
+            data @ InstantiatorData {
+                instantiator,
+                finalizer,
+                config,
+                scope_data,
+                ..
+            },
+        ) = selected.or_lookup(|| self.inner.registry.get(&type_info))
         else {
             let err = ResolveErrorKind::NoInstantiator { type_info };
             error!(dependency = dep_name, scope = scope_name, error = %err, "Failed to resolve dependency");
@@ -152,7 +190,7 @@ impl Container {
                 parent = parent.inner.parent.as_ref().expect("parent with target priority should exist");
             }
 
-            return match parent.get::<Dep>() {
+            return match parent.get_selected::<Dep>(Selection::Indexed(Some(data))) {
                 Ok(dependency) => {
                     if config.cache_provides {
                         self.inner.cache.write().insert_rc(type_info, dependency.clone());
@@ -184,7 +222,7 @@ impl Container {
             return Ok(dependency);
         }
 
-        match instantiator.clone().call(self.clone()) {
+        match instantiator.call(self.clone()) {
             Ok(dependency) => match dependency.downcast::<Dep>() {
                 Ok(dependency) => {
                     let dependency = RcThreadSafety::new(*dependency);
@@ -236,13 +274,19 @@ impl Container {
     /// Context isn't used here. To get dependencies from the context, use [`Self::get`]
     #[allow(clippy::missing_errors_doc, clippy::missing_panics_doc)]
     pub fn get_transient<Dep: 'static>(&self) -> Result<Dep, ResolveErrorKind> {
+        self.get_transient_selected::<Dep>(Selection::ByType)
+    }
+
+    pub(crate) fn get_transient_selected<Dep: 'static>(&self, selected: Selection<'_, InstantiatorData>) -> Result<Dep, ResolveErrorKind> {
         let type_info = TypeInfo::of::<Dep>();
         let dep_name = type_info.name;
         let scope_name = self.inner.scope_data.name;
 
-        let Some(InstantiatorData {
-            instantiator, scope_data, ..
-        }) = self.inner.registry.get(&type_info)
+        let Some(
+            data @ InstantiatorData {
+                instantiator, scope_data, ..
+            },
+        ) = selected.or_lookup(|| self.inner.registry.get(&type_info))
         else {
             let err = ResolveErrorKind::NoInstantiator { type_info };
             error!(dependency = dep_name, scope = scope_name, error = %err, "Failed to resolve transient dependency");
@@ -261,7 +305,7 @@ impl Container {
             while parent.inner.scope_data.priority != dep_priority {
                 parent = parent.inner.parent.as_ref().expect("parent with target priority should exist");
             }
-            return parent.get_transient();
+            return parent.get_transient_selected(Selection::Indexed(Some(data)));
         }
         if dep_priority > current_priority {
             let err = ResolveErrorKind::NoAccessible {
@@ -272,7 +316,7 @@ impl Container {
             return Err(err);
         }
 
-        match instantiator.clone().call(self.clone()) {
+        match instantiator.call(self.clone()) {
             Ok(dependency) => match dependency.downcast::<Dep>() {
                 Ok(dependency) => Ok(*dependency),
                 Err(incorrect_type) => {
@@ -692,14 +736,18 @@ mod tests {
         registry,
         scope::DefaultScope::*,
         utils::thread_safety::{RcThreadSafety, SendSafety, SyncSafety},
-        ResolveErrorKind, Scope,
+        Config, InstantiateErrorKind, ResolveErrorKind, Scope,
     };
 
     use alloc::{
         format,
         string::{String, ToString as _},
     };
+    #[cfg(not(feature = "thread_safe"))]
+    use core::marker::PhantomData;
     use core::sync::atomic::{AtomicU8, Ordering};
+    #[cfg(feature = "thread_safe")]
+    use std::thread;
     use tracing::debug;
     use tracing_test::traced_test;
 
@@ -1131,7 +1179,6 @@ mod tests {
 
         struct Type1;
         struct Type2(RcThreadSafety<Type1>);
-
         struct DropWrapper<T> {
             val: T,
             call_count: RcThreadSafety<AtomicU8>,
@@ -1239,7 +1286,7 @@ mod tests {
     fn test_thread_safe() {
         struct Request1 {
             #[cfg(not(feature = "thread_safe"))]
-            _phantom: core::marker::PhantomData<*const ()>,
+            _phantom: PhantomData<*const ()>,
         }
 
         fn impl_bounds<T: SendSafety + SyncSafety + 'static>() {}
@@ -1253,7 +1300,7 @@ mod tests {
             ],
         });
         #[cfg(feature = "thread_safe")]
-        std::thread::spawn(move || {
+        thread::spawn(move || {
             let request1 = app_container.get_transient::<Request1>();
             let request2 = app_container.get::<Request1>();
 
@@ -1274,8 +1321,8 @@ mod tests {
         let app = Container::new(registry! {
             scope(App) [
                 provide(
-                    move || Ok::<_, crate::InstantiateErrorKind>(for_factory.fetch_add(1, Ordering::SeqCst)),
-                    config = crate::Config { cache_provides: false },
+                    move || Ok::<_, InstantiateErrorKind>(for_factory.fetch_add(1, Ordering::SeqCst)),
+                    config = Config { cache_provides: false },
                 ),
             ],
         });

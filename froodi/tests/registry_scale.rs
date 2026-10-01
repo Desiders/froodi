@@ -146,3 +146,19 @@ fn n500_async_provides_in_a_single_scope() {
 
     registry.validate().unwrap();
 }
+
+#[cfg(feature = "compiled")]
+mod compiled {
+    use super::*;
+
+    macro_rules! entries {
+        ($($i:literal)+) => { froodi::compiled_registry! { scope(App) [ $(provide(inst::<$i>)),+ ] } };
+    }
+
+    #[test]
+    fn flat_500_without_dependencies() {
+        let container = Container::new(with_500_ids!(entries));
+        container.get::<T<0>>().unwrap();
+        container.get::<T<499>>().unwrap();
+    }
+}

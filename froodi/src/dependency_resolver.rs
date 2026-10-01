@@ -4,7 +4,11 @@ use core::future::Future;
 use super::errors::ResolveErrorKind;
 #[cfg(feature = "async")]
 use crate::async_impl::Container as AsyncContainer;
+#[cfg(feature = "compiled")]
+use crate::compiled::RegistrationId;
 use crate::{any::TypeInfo, utils::thread_safety::SendSafety, Container};
+#[cfg(feature = "compiled")]
+use core::slice::Iter;
 
 pub trait DependencyResolver: Sized {
     type Error: Into<ResolveErrorKind>;
@@ -13,6 +17,22 @@ pub trait DependencyResolver: Sized {
 
     #[cfg(feature = "async")]
     fn resolve_async(container: &AsyncContainer) -> impl Future<Output = Result<Self, Self::Error>> + SendSafety;
+
+    // Custom resolvers remain opaque and consume no compiled edge.
+    #[cfg(feature = "compiled")]
+    #[doc(hidden)]
+    fn resolve_compiled(container: &Container, _: &mut Iter<'_, RegistrationId>) -> Result<Self, Self::Error> {
+        Self::resolve(container)
+    }
+
+    #[cfg(all(feature = "compiled", feature = "async"))]
+    #[doc(hidden)]
+    fn resolve_async_compiled(
+        container: &AsyncContainer,
+        _: &mut Iter<'_, RegistrationId>,
+    ) -> impl Future<Output = Result<Self, Self::Error>> + SendSafety {
+        Self::resolve_async(container)
+    }
 
     #[inline]
     #[must_use]
@@ -46,6 +66,23 @@ macro_rules! impl_dependency_resolver {
             #[cfg(feature = "async")]
             async fn resolve_async(container: &AsyncContainer) -> Result<Self, Self::Error> {
                 Ok(($($ty::resolve_async(container).await.map_err(Into::into)?,)*))
+            }
+
+            #[inline]
+            #[allow(unused_variables)]
+            #[cfg(feature = "compiled")]
+            fn resolve_compiled(container: &Container, edges: &mut Iter<'_, RegistrationId>) -> Result<Self, Self::Error> {
+                Ok(($($ty::resolve_compiled(container, edges).map_err(Into::into)?,)*))
+            }
+
+            #[inline]
+            #[allow(unused_variables)]
+            #[cfg(all(feature = "compiled", feature = "async"))]
+            async fn resolve_async_compiled(
+                container: &AsyncContainer,
+                edges: &mut Iter<'_, RegistrationId>,
+            ) -> Result<Self, Self::Error> {
+                Ok(($($ty::resolve_async_compiled(container, edges).await.map_err(Into::into)?,)*))
             }
         }
     };

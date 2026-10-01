@@ -7,6 +7,8 @@ pub(crate) mod macros;
 
 pub(crate) mod any;
 pub(crate) mod cache;
+#[cfg(feature = "compiled")]
+pub(crate) mod compiled;
 pub(crate) mod config;
 pub(crate) mod container;
 pub(crate) mod context;
@@ -40,6 +42,9 @@ pub use inject::{Inject, InjectTransient};
 pub use instantiator::{instance, Instantiator};
 pub use registry::{InstantiatorData, Registry};
 pub use scope::{DefaultScope, Scope, ScopeData, Scopes};
+
+#[cfg(feature = "compiled")]
+pub use compiled::{context, runtime, RuntimeDependency};
 
 #[cfg(feature = "axum")]
 pub use integrations::axum;

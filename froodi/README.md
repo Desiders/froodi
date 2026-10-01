@@ -215,9 +215,9 @@ fn main() {
 
 7. **(Optional) Add async support or framework integration.**
 
-- For async containers and factories, see [async provide][examples/async_provide]
-- For `froodi-auto`, see [sync auto provide][examples/sync_auto_provide] and [async auto provide][examples/async_auto_provide]
-- For framework integration, see [axum][examples/axum], [dptree][examples/dptree], [telers][examples/telers], and [ruststream][examples/ruststream]
+- For async containers and factories, see [async registration][examples/async_registration]
+- For `froodi-auto`, see [sync auto registration][examples/sync_auto_registration] and [async auto registration][examples/async_auto_registration]
+- For framework integration, see [axum][examples/axum_integration], [dptree][examples/dptree_integration], [telers][examples/telers_integration], and [ruststream][examples/ruststream_integration]
 
 ## Concepts
 
@@ -355,6 +355,7 @@ Important feature flags:
 
 - `thread_safe` (enabled by default)
 - `async`
+- `compiled` (opt-in typed registries through the existing Container)
 - `axum`
 - `http2-axum`
 - `dptree`
@@ -363,18 +364,30 @@ Important feature flags:
 
 Disable default features if you want to turn off `thread_safe`.
 
+### Compiled registrations
+
+Enable `compiled` and use `froodi::compiled_registry!` or, with `async`,
+`froodi::compiled_async_registry!`.
+Ordinary Froodi macros remain dynamic. The existing `Container`, injection modes
+and lifecycle are shared. Custom parameters use `froodi::RuntimeDependency<T>`;
+opaque boundaries use `froodi::runtime::<T>()` and `froodi::context::<T>()`.
+Validation limits, API differences and the macro package publication prerequisite
+are described in the
+[compiled-backend documentation](https://github.com/Desiders/froodi/tree/master/docs/compile-time).
+
 ## Examples
 
-- [Sync provide][examples/sync_provide]. Basic sync container setup
-- [Async provide][examples/async_provide]. Basic async container setup
-- [Sync finalizer][examples/sync_finalizer]. Scoped cleanup with sync finalizers
-- [Async finalizer][examples/async_finalizer]. Scoped cleanup with async finalizers
-- [Sync auto provide][examples/sync_auto_provide]. Sync auto-registration with `froodi-auto`
-- [Async auto provide][examples/async_auto_provide]. Async auto-registration with `froodi-auto`
-- [Axum][examples/axum]. Request injection in `axum`
-- [Dptree][examples/dptree]. Endpoint injection in `dptree`
-- [Telers][examples/telers]. Handler injection in `telers`
-- [RustStream][examples/ruststream]. Handler injection in `ruststream`
+- [Sync registration][examples/sync_registration]. Basic sync container setup
+- [Sync compiled registration][examples/sync_compiled_registration]. Typed registration with the existing container
+- [Async registration][examples/async_registration]. Basic async container setup
+- [Sync finalization][examples/sync_finalization]. Scoped cleanup with sync finalizers
+- [Async finalization][examples/async_finalization]. Scoped cleanup with async finalizers
+- [Sync auto registration][examples/sync_auto_registration]. Sync auto-registration with `froodi-auto`
+- [Async auto registration][examples/async_auto_registration]. Async auto-registration with `froodi-auto`
+- [Axum integration][examples/axum_integration]. Request injection in `axum`
+- [Dptree integration][examples/dptree_integration]. Endpoint injection in `dptree`
+- [Telers integration][examples/telers_integration]. Handler injection in `telers`
+- [RustStream integration][examples/ruststream_integration]. Handler injection in `ruststream`
 
 Browse the full [examples directory][examples].
 
@@ -391,16 +404,17 @@ Contributions are welcome.
 [Apache License, Version 2.0][license_apache]
 
 [examples]: https://github.com/Desiders/froodi/tree/master/examples
-[examples/sync_provide]: https://github.com/Desiders/froodi/tree/master/examples/sync_provide
-[examples/async_provide]: https://github.com/Desiders/froodi/tree/master/examples/async_provide
-[examples/sync_auto_provide]: https://github.com/Desiders/froodi/tree/master/examples/sync_auto_provide
-[examples/async_auto_provide]: https://github.com/Desiders/froodi/tree/master/examples/async_auto_provide
-[examples/sync_finalizer]: https://github.com/Desiders/froodi/tree/master/examples/sync_finalizer
-[examples/async_finalizer]: https://github.com/Desiders/froodi/tree/master/examples/async_finalizer
-[examples/axum]: https://github.com/Desiders/froodi/tree/master/examples/axum
-[examples/dptree]: https://github.com/Desiders/froodi/tree/master/examples/dptree
-[examples/telers]: https://github.com/Desiders/froodi/tree/master/examples/telers
-[examples/ruststream]: https://github.com/Desiders/froodi/tree/master/examples/ruststream
+[examples/sync_registration]: https://github.com/Desiders/froodi/tree/master/examples/sync_registration
+[examples/sync_compiled_registration]: https://github.com/Desiders/froodi/tree/master/examples/sync_compiled_registration
+[examples/async_registration]: https://github.com/Desiders/froodi/tree/master/examples/async_registration
+[examples/sync_auto_registration]: https://github.com/Desiders/froodi/tree/master/examples/sync_auto_registration
+[examples/async_auto_registration]: https://github.com/Desiders/froodi/tree/master/examples/async_auto_registration
+[examples/sync_finalization]: https://github.com/Desiders/froodi/tree/master/examples/sync_finalization
+[examples/async_finalization]: https://github.com/Desiders/froodi/tree/master/examples/async_finalization
+[examples/axum_integration]: https://github.com/Desiders/froodi/tree/master/examples/axum_integration
+[examples/dptree_integration]: https://github.com/Desiders/froodi/tree/master/examples/dptree_integration
+[examples/telers_integration]: https://github.com/Desiders/froodi/tree/master/examples/telers_integration
+[examples/ruststream_integration]: https://github.com/Desiders/froodi/tree/master/examples/ruststream_integration
 
 [docs-badge]: https://docs.rs/froodi/badge.svg
 [docs-url]: https://docs.rs/froodi

@@ -32,10 +32,18 @@ test-integrations:
 
 test: test-basic test-default test-all-features test-async test-integrations
 
-# Regenerate trybuild UI snapshots (tests/ui/*.stderr) after changing a macro error message/branch.
+test-compilation:
+    cargo test -p froodi --features compiled,async --test compile_fail --test validation --test downstream
+
 overwrite-ui-tests:
-    TRYBUILD=overwrite cargo test -p froodi --test compile_fail
-    TRYBUILD=overwrite cargo test -p froodi --features async --test compile_fail
+    TRYBUILD=overwrite cargo test -p froodi --features compiled,async --test compile_fail errors
+
+bench-compiled:
+    cargo bench -p froodi --features compiled,async --bench compiled_registry
+
+bench-compilation:
+    rustc --edition=2021 tools/compile_bench.rs -o /tmp/froodi-build-bench
+    /tmp/froodi-build-bench "$PWD" /tmp/froodi-build-measurements 3 both
 
 bench-init:
     cargo bench --profile release --frozen --bench sync_container_init

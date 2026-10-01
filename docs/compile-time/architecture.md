@@ -1,170 +1,124 @@
-# Compiled backend architecture
+# Compiled registrations in Froodi
 
-The backend executes through the original `froodi::Container`. Enable
-`froodi/compiled` and import `froodi::compiled::{registry, async_registry}`.
-The original dynamic macros keep their existing behavior. The experimental
-container remains a regression and benchmark reference during integration.
+Enable `froodi/compiled` and use `froodi::compiled_registry!`.
+With `async`, use `froodi::compiled_async_registry!`.
+Both frontends execute through Froodi's existing containers. The ordinary macros
+keep their dynamic semantics, including when a dependency enables `compiled`.
 
 ```text
-registry! / async_registry!
+compiled_registry! / compiled_async_registry!
     ↓
 balanced typed registration tree
     ↓
-rustc links Inject<T> / InjectTransient<T> to providers
+rustc proves Inject<T> / InjectTransient<T> → provider
     ↓
-bounded const cycle validation at typed container construction
+bounded const cycle validation at final typed construction
     ↓
-materialized RegistrationId edges → explicit final-registry remapping
+RegistrationId edges → final-registry remapping
     ↓
-indexed selection → Froodi scope/cache/construction/finalization
+indexed selection → existing scope/cache/construction/finalization
 ```
 
-## Crates and integration seam
+## Implementation boundary
 
-| Crate | Responsibility |
+| Location | Responsibility |
 |---|---|
-| `froodi` with `compiled` | Typed registration adapters and the original container lifecycle |
-| `froodi-compile-core` | Shared provider index/linker, const topology, experimental graph IR/compiler; `no_std + alloc` |
-| `froodi-compile-macros` | Both frontends' registry syntax to balanced trees; host proc macro |
-| `froodi-compile-runtime` | Experimental executor retained for comparison |
-| `froodi-compile` | Experimental facade, compatibility scenarios and benchmarks |
+| `froodi/src/compiled.rs`, `froodi/src/compiled/async_impl.rs` | Private compiled frontend modules |
+| `froodi/src/compiled/linking.rs` | Provider index, dependency-link witnesses and typed traversal |
+| `froodi/src/compiled/topology.rs` | Const numeric adjacency and bounded cycle validation |
+| `froodi/src/compiled/{registry,async_impl/registry}.rs` | Collection, native registry assembly, ID remapping and validation |
+| `froodi/src/compiled/{registration,async_impl/registration}.rs` | Registration adapters |
+| `froodi/src/{dependency_resolver,inject}.rs` | Dependency resolution, including indexed injection |
+| `froodi/src/compiled/dependency_resolver.rs` | Explicit runtime dependency marker |
+| `froodi/src/{instantiator,async_impl/instantiator}.rs` | Native instantiator traits and compiled hooks |
+| `froodi/src/{instantiator,async_impl/instantiator}/compiled.rs` | Owned erased instantiators |
+| `froodi/src/compiled/boundary.rs` | Opaque runtime and Context fragments |
+| `froodi/src/compiled/macros.rs` | Hygienic macro wrappers |
+| `froodi::macros_utils::compiled` | Hidden public macro expansion helpers |
+| `froodi-macros/src/compiled.rs` | Syntax parsing and balanced tree expansion; host only |
+| Existing Froodi runtime | Container API, scopes, Context, cache, synchronization and finalizers |
 
-Froodi depends on core and macros only. It does not depend on the experimental
-runtime. Core's provider witnesses and const DFS are shared, rather than copied.
+There is no separate compiler-core, facade, build experiment or second runtime.
+The shared `froodi-macros` package also provides auto-registration attributes;
+its `compiled` feature enables the registry parser. Froodi uses its normal
+versioned path dependency policy. Parsing dependencies stay on the host side.
 
-The seam is `Container::get_selected` / `get_transient_selected`. Public requests
-select by type; compiled parameters index the final registration table. Both enter
-the **same** lifecycle code. Selection includes the complete `InstantiatorData`:
-instantiator, scope, cache policy, dependencies and finalizer. Parent traversal
-forwards that selection rather than looking up a provider again.
+Macros pass a hygienic `$crate::macros_utils::compiled` path through hidden public
+helpers. The compiled backend itself is private. This supports
+renamed dependencies without downstream imports of implementation crates.
+`#[doc(hidden)]` controls documentation, not safety: provider-proof traits retain
+explicit unsafe contracts and executor construction remains private.
 
-A compiled `RegistrationExecutor` only needs the native container and its ordered
-edge slice to assemble `Deps` and call the original `Instantiator<Deps>`. Its erased
-function specializes on `Inst, Deps`; no runtime abstraction or second container
-is inserted. Async uses Froodi's existing async container and embedded sync
-container, sharing the linker and topology representation.
+## Linking and execution
 
-## Typed linking
+`Registration<Out, Inst, Deps, Fin>` stores independently defined instantiators, captured
+closures and `instance(value)`. Finalizers use native `Finalizer<Out>` traits and
+are stored as `Option<Fin>`. `RegistryIndex` projects only provider types and
+execution kinds. `ProviderPath<T, Path>` proves the declaration-order index;
+`LinkDependencies` preserves parameter order and repeated targets.
 
-`Reg<Out, Inst, Deps, Fin>` retains independently defined functions, captured
-closures and `instance(value)` without invoking them. Scope, configuration and
-finalization remain registration concerns.
+`LinkedInject<Path>` / `LinkedInjectTransient<Path>` are temporary witnesses.
+`Link::TOPOLOGY` uses those same inferred targets, without another provider search.
+`Root`, `Path` and `Links` end at linking/validation. `Linked<Out, Inst, Deps, Fin>`
+and executor functions retain numeric edges alone. Prototype source-origin and
+value-source metadata was never consumed by the native adapters and is removed.
 
-| Abstraction | Role |
-|---|---|
-| `RegistryIndex` | Projects the value tree to provided types and execution kinds |
-| `ProviderPath<T, Path>` | Proves provider identity and declaration-order index |
-| `LinkDependency` / `LinkDependencies` | Infers paths and exposes ordered numeric targets |
-| `LinkedInject<Path>` / `LinkedInjectTransient<Path>` | Temporary linking witnesses |
-| `SupportsExecution` | Rejects a static sync dependency on an async provider |
-| `Linked<Out, Inst, Deps, Fin>` | Stores materialized targets, without paths |
-| `Collect` / `CollectAsync` | Builds native registration data and owned executors |
-| `ResolveDependencies` / `ResolveAsyncDependencies` | Consumes indexed edges in parameter order |
-
-The provider index omits instantiator, dependency and finalizer types. Linking is
-shallow even for deep graphs. `Root`, `Path` and `Links` end at linking/validation;
-they are absent from executor function signatures. `Link::TOPOLOGY` uses the same
-inferred targets, without a second provider search.
-
-Numeric target conversion and runtime registry assembly live in nongeneric
-helpers. Otherwise iterator closures inside linking/conversion methods would
-retain `Root`/`Links` in their own types and specialize runtime-only work again.
-
-Typed custom parameters use `compiled::Resolver<T>`. They consume no indexed edge
-and make topology open. A blanket implementation for every native
-`DependencyResolver` would also accept unresolved `Inject<T>` and weaken static
-missing/ambiguity checks. Ordinary dynamic registrations accept custom resolvers
-without a wrapper. Both injection modes construct immediate dependencies;
+Native sync/async `Instantiator<Deps>` traits supply default `instantiate_compiled`
+hooks, resolving `Deps` through the original `DependencyResolver` before invoking
+`instantiate`. The resolver's compiled methods default to ordinary resolution for custom
+resolvers; tuples preserve edge order, while `Inject` and `InjectTransient` use
+indexed overrides. They select complete registration data through `get_selected` /
+`get_transient_selected`, then enter the existing lifecycle without repeating
+provider lookup by type. Public get, native caches/locks,
+custom resolvers and ordinary dynamic instantiators still do type-based work.
 `cache_provides` remains independent of injection mode.
 
-## Composition and registration identity
+## Composition and validation
 
-Typed `extend(...)` joins trees before linking. Original runtime registries are
-opaque fragments, contribute no provider index, and keep native later-wins
-replacement behavior. Declare `runtime::<T>()` or `context::<T>()` to link a typed
-parameter crossing such a boundary. These are witnesses, not duplicate runtime
-registrations or independent cache policies.
+Typed `extend(...)` joins fragments before linking. Dynamic registries remain
+opaque fragments with native later-wins replacement semantics. Typed consumers
+use `froodi::runtime::<T>()` or `froodi::context::<T>()` at those boundaries. Custom
+parameters use `froodi::RuntimeDependency<T>` to request runtime resolution and
+consume no edge; their arbitrary lookups remain opaque.
 
-Declaration-order IDs are converted to ordered exact `TypeInfo` keys while the
-collection order is known. At container construction, after native merging and
-implicit registrations, `prepare` creates the final table and remaps every edge.
-Repeated parameters remain repeated; resolvers have no slot. This startup-only
-mapping also supports erasing a typed fragment with `IntoRegistry::into_registry`
-and composing it later. Erasure defers cycle validation to runtime.
+Collection converts declaration IDs to exact type keys. After composition and
+implicit registrations, `prepare` builds the winning registration table and
+remaps edges. Scope, cache policy, instantiator and finalizer travel together.
+Sync and async retain their native namespaces and async-first selection rules.
+Erased fragments retain indexed edges but defer cycle validation to runtime.
 
-Sync and async retain the native registry namespaces: sync adapters use the sync
-table; async adapters use a combined table with native async-first selection.
-Each table contains the entire winning registration. Sync registrations remain
-sync-only, including inside an async container. A missing opaque target has an
-empty table entry: native Context/cache can satisfy normal injection, otherwise
-resolution reports `NoInstantiator`. Transient injection bypasses Context/cache.
+Closed typed constructors evaluate `IntoRegistry::VALIDATE` through `finish`.
+The const DFS checks all retained immediate edges, including transient and
+unrequested registrations, within **1,024 typed declaration leaves**, before native
+later-wins assembly. This includes one implicit sync container or both containers
+in async composition. Boundary fixtures compose repeated unit leaves: their
+declaration count, rather than the smaller final winning table, controls the limit.
 
-Runtime cycle and scope validation operates on the effective registry after
-replacement. The integration also checks async-to-sync scope reachability.
-Opaque resolver/user lookups remain unknown. No blanket validation flag skips
-scope/config checks.
+On the tested rustc 1.98.1, instantiated `cargo build` / `cargo test` constructors
+fail with E0080 for cycles. `cargo check`, uninstantiated wrappers and unused code
+accept them. Fragment construction does not validate an intermediate topology.
+Open, erased and oversized compositions use effective runtime cycle validation;
+opaque lookups cannot be fully checked. Scope/config validation remains runtime
+and is never skipped by a general validation flag.
 
-## Bounded static cycle validation
+## Executor safety contract
 
-The shared const topology flattens numeric adjacency slices and runs iterative
-DFS with scratch space for **1,024 total registrations**. The count includes the
-implicit container (both native containers in async composition). It checks all
-retained declared edges, including unrequested nodes and transient injection.
+The owning abstraction documents these invariants beside native `ErasedInstantiator`:
 
-Typed `Container::new` and `new_with_start_scope` consume `IntoRegistry::VALIDATE`
-through `finish`, before witnesses disappear. Creating or extending a fragment,
-or explicitly erasing it to a native registry, does not evaluate the check.
+- Allocate each Inst in its final Rc/Arc before deriving its pointer; keep its
+  owner alive through every call and future.
+- Pair the pointer only with its exact `construct::<Inst, Deps>` function.
+  Safe extension points cannot manufacture that pairing.
+- Preserve edge position, repeats and exact provided Rust types through remapping.
+  Custom resolvers consume no indexed position.
+- IDs select immutable complete registrations. Imports/replacements select their
+  matching scope, cache policy and finalization path.
+- Native cached/transient downcasts are checked. Box owns aligned, initialized
+  transient output; finalizers receive values from their matching registration.
 
-| Composition | Cycle guarantee |
-|---|---|
-| Closed typed tree, including typed fragments, within limit | Const check of all declared edges |
-| Runtime fragments/replacements, imports, Context, custom resolvers | Native effective-graph validation; opaque lookups remain unknown |
-| Erased or oversized registry | Native runtime validation |
-
-**Evaluation is at monomorphization, not ordinary type checking.** With rustc
-1.98.1, `cargo build` and `cargo test` reject instantiated cycle constructors with
-E0080. `cargo check`, uninstantiated generic wrappers and unreachable private
-functions accept them. Instantiated generic wrappers fail. The integrated
-[compilation harness](../../froodi/tests/compiled_diagnostics.rs) verifies these
-stages, static missing/ambiguity/sync-to-async failures, an executable diamond with
-aliases/captures/instances/reordered fragments, and runtime fallback above the
-limit. Its large debug fixture needs a larger test-thread stack.
-
-Arbitrary scope/config values remain runtime values. No guarantee covers arbitrary
-lookups made inside an instantiator or resolver.
-
-## Safety contract
-
-The contract is beside the native `RegistrationExecutor` in
-[`compiled/mod.rs`](../../froodi/src/compiled/mod.rs), shared by its async adapter:
-
-- Allocate each instantiator in its final `Rc`/`Arc` before deriving a pointer.
-  Executors own a shared reference; borrowing async calls cannot outlive it.
-- Only private constructors pair a pointer with `construct::<Inst, Deps>`.
-  Raw calls remain unsafe. Safe extension points cannot forge this pairing.
-  Shared provider-proof traits carry explicit unsafe contracts.
-- Remapping preserves parameter order, repeated requests and exact Rust type
-  identity. IDs select immutable complete registrations, including finalizers.
-- Native cache/transient downcasts are checked. Transient output uses an owned,
-  aligned, initialized `Box`; the integrated adapter adds no unchecked output write.
-- Finalizers receive native recorded values and the matching winning registration.
-  Rc/Arc ownership survives fragment moves, child ownership and executor clones.
-
-Focused Miri suites cover local execution and thread-safe adapters/async calls.
-Contended native parking_lot futex calls hit a dependency/Miri blocker, reproduced
-with ordinary registries; see [verification limits](compatibility.md#verification-and-limits).
-This reviews the changed materialized-edge/ownership boundary, not shutdown,
-cancellation or general lifecycle behavior.
-
-## Lifecycle and retirement
-
-Froodi owns scope traversal, cache/Context, construction serialization, close/drop
-and finalizer scheduling. Serialization still spans instantiation, finalizer
-recording and publication; cache write locks do not span instantiator calls.
-Local async construction still serializes even without `thread_safe`.
-
-The experimental runtime's separate lifecycle is retained only as a
-test/performance reference; it is not an
-integration dependency. Retirement can follow broader compatibility coverage and
-a decision on the opt-in frontend. See [compatibility](compatibility.md),
-[benchmarks](benchmarks.md), and the [integration ADR](decisions/native-runtime-integration.md).
+The prior Miri allocation/provenance finding is addressed by establishing ownership
+before pointer collection. Move, child-ownership and aligned-output cases retain
+regression coverage. Focused local and thread-safe adapter Miri suites pass after consolidation.
+Contended parking_lot futex calls still report unresolved UB in the shared path;
+see [compatibility](compatibility.md). This does not establish a complete lifecycle
+or shutdown soundness audit. Measurements live in [benchmarks](benchmarks.md).

@@ -1,0 +1,36 @@
+error[E0277]: no static registration provides the instantiator parameter `Custom`
+ --> tests/ui/compiled/bare_resolver.rs
+  |
+  |       let _ = Container::new(registry! {
+  |  _____________--------------_^
+  | |             |
+  | |             required by a bound introduced by this call
+  | |         provide(App, |_: Custom| Ok::<_, InstantiateErrorKind>(7u32)),
+  | |     });
+  | |_____^ unsatisfied trait bound
+  |
+help: the trait `froodi::compiled::linking::LinkDependency<froodi::macros_utils::compiled::Node<froodi::compiled::linking::Provider<u32>, froodi::compiled::linking::Provider<Container>>, _>` is not implemented for `Custom`
+ --> tests/ui/compiled/bare_resolver.rs
+  |
+  | struct Custom;
+  | ^^^^^^^^^^^^^
+  = note: custom resolvers in typed registrations use RuntimeDependency<T>; ordinary runtime fragments accept them directly
+help: the following other types implement trait `froodi::compiled::linking::LinkDependency<Root, Path>`
+ --> src/compiled/linking.rs
+  |
+  | impl<Root: ProviderPath<T, Path>, T, Path> LinkDependency<Root, LinkedInject<Path>> for Inject<T> {
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Inject<T>` implements `froodi::compiled::linking::LinkDependency<Root, froodi::compiled::linking::LinkedInject<Path>>`
+...
+  | impl<Root: ProviderPath<T, Path>, T, Path> LinkDependency<Root, LinkedInjectTransient<Path>> for InjectTransient<T> {
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `InjectTransient<T>` implements `froodi::compiled::linking::LinkDependency<Root, froodi::compiled::linking::LinkedInjectTransient<Path>>`
+...
+  | impl<Root, T> LinkDependency<Root, ByResolver> for RuntimeDependency<T> {
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `RuntimeDependency<T>` implements `froodi::compiled::linking::LinkDependency<Root, froodi::compiled::linking::ByResolver>`
+  = note: required for `(Custom,)` to implement `froodi::compiled::linking::LinkDependencies<froodi::macros_utils::compiled::Node<froodi::compiled::linking::Provider<u32>, froodi::compiled::linking::Provider<Container>>, (_,)>`
+  = note: required for `froodi::compiled::registration::Registration<u32, {closure@$DIR/tests/ui/compiled/bare_resolver.rs:20:22: 20:33}, (Custom,), froodi::macros_utils::compiled::NoFinalizer>` to implement `froodi::compiled::linking::Link<froodi::macros_utils::compiled::Node<froodi::compiled::linking::Provider<u32>, froodi::compiled::linking::Provider<Container>>, (_,)>`
+  = note: required for `froodi::macros_utils::compiled::Registry<froodi::compiled::registration::Registration<u32, {closure@$DIR/tests/ui/compiled/bare_resolver.rs:20:22: 20:33}, (Custom,), froodi::macros_utils::compiled::NoFinalizer>>` to implement `froodi::compiled::registry::IntoRegistry<((_,), ())>`
+note: required by a bound in `Container::new`
+ --> src/container.rs
+  |
+  |     pub fn new<Links>(registry: impl IntoRegistry<Links>) -> Self {
+  |                                      ^^^^^^^^^^^^^^^^^^^ required by this bound in `Container::new`

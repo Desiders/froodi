@@ -1,0 +1,25 @@
+error[E0603]: module `compiled` is private
+ --> tests/ui/compiled/forged_index.rs:3:14
+  |
+3 | impl froodi::compiled::linking::RegistryIndex for Forged {
+  |              ^^^^^^^^           ------------- trait `RegistryIndex` is not publicly re-exported
+  |              |
+  |              private module
+  |
+note: the module `compiled` is defined here
+ --> src/lib.rs
+  |
+  | pub(crate) mod compiled;
+  | ^^^^^^^^^^^^^^^^^^^^^^^
+
+error[E0200]: the trait `froodi::compiled::linking::RegistryIndex` requires an `unsafe impl` declaration
+ --> tests/ui/compiled/forged_index.rs:3:1
+  |
+3 | impl froodi::compiled::linking::RegistryIndex for Forged {
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: the trait `froodi::compiled::linking::RegistryIndex` enforces invariants that the compiler can't check. Review the trait documentation and make sure this implementation upholds those invariants before adding the `unsafe` keyword
+help: add `unsafe` to this trait implementation
+  |
+3 | unsafe impl froodi::compiled::linking::RegistryIndex for Forged {
+  | ++++++

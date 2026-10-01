@@ -7,6 +7,8 @@ use super::{
     registry::{InstantiatorData, Registry},
     service::Service as _,
 };
+#[cfg(feature = "compiled")]
+use crate::compiled::async_impl::{finish, prepare, IntoRegistry};
 #[cfg(feature = "thread_safe")]
 use crate::lock::PerTypeLocks;
 use crate::{
@@ -17,15 +19,15 @@ use crate::{
     context::Context,
     errors::{InstantiatorErrorKind, ResolveErrorKind, ScopeErrorKind, ScopeWithErrorKind},
     lock::PerTypeSharedLocks,
-    registry::Registry as SyncRegistry,
+    registry::{Registry as SyncRegistry, Selection},
     scope::{Scope, ScopeData, ScopeDataWithChildScopesData},
     utils::thread_safety::{RcThreadSafety, SendSafety, SyncSafety},
 };
 
 #[derive(Clone)]
 pub struct Container {
-    inner: RcThreadSafety<ContainerInner>,
-    sync: SyncContainer,
+    pub(crate) inner: RcThreadSafety<ContainerInner>,
+    pub(crate) sync: SyncContainer,
     per_type_locks: PerTypeSharedLocks,
 }
 
@@ -44,8 +46,21 @@ impl Container {
     ///   This can occur if count of scopes is 1.
     /// - Panics if all scopes except the first one are skipped by default.
     #[must_use]
+    #[cfg(not(feature = "compiled"))]
     pub fn new(registry: RegistryWithSync) -> Self {
         Self::build_root(registry, |scope_data| !scope_data.is_skipped_by_default)
+    }
+
+    /// Creates a container from a dynamic or typed registry at the first non-skipped scope.
+    /// For a skipped scope, use [`Self::new_with_start_scope`] with a dynamic registry
+    /// or [`Self::new_compiled_with_start_scope`] with a typed registry.
+    ///
+    /// # Panics
+    /// Panics if no scope can be selected or compiled-registry runtime validation fails.
+    #[must_use]
+    #[cfg(feature = "compiled")]
+    pub fn new<Links>(registry: impl IntoRegistry<Links>) -> Self {
+        Self::build_root(finish(registry), |scope_data| !scope_data.is_skipped_by_default)
     }
 
     /// Creates container with start scope
@@ -60,6 +75,18 @@ impl Container {
         Self::build_root(registry, move |scope_data| scope_data.priority == priority)
     }
 
+    /// Creates a container from a typed registry at the requested scope.
+    ///
+    /// # Panics
+    /// Panics if the scope is absent or compiled-registry runtime validation fails.
+    #[must_use]
+    #[allow(clippy::needless_pass_by_value)]
+    #[cfg(feature = "compiled")]
+    pub fn new_compiled_with_start_scope<S: Scope + Clone, Links>(registry: impl IntoRegistry<Links>, scope: S) -> Self {
+        let priority = scope.priority();
+        Self::build_root(finish(registry), move |scope_data| scope_data.priority == priority)
+    }
+
     /// Builds the root container chain (the async inner and the embedded sync inner in lockstep):
     /// starts at the registry's lowest-priority scope and descends, keeping each level as a parent
     /// with `close_parent = true`, until `is_target` accepts a scope. Shared by [`Self::new`]
@@ -67,7 +94,10 @@ impl Container {
     ///
     /// # Panics
     /// Panics if the scopes are exhausted before `is_target` accepts one.
-    fn build_root(RegistryWithSync { registry, sync }: RegistryWithSync, is_target: impl Fn(&ScopeData) -> bool) -> Self {
+    fn build_root(registries: RegistryWithSync, is_target: impl Fn(&ScopeData) -> bool) -> Self {
+        #[cfg(feature = "compiled")]
+        let registries = prepare(registries);
+        let RegistryWithSync { registry, sync } = registries;
         let mut scopes = registry.get_scope_with_child_scopes();
         let registry = RcThreadSafety::new(registry);
         let sync_registry = RcThreadSafety::new(sync);
@@ -133,6 +163,13 @@ impl Container {
     pub fn get<Dep: SendSafety + SyncSafety + 'static>(
         &self,
     ) -> impl Future<Output = Result<RcThreadSafety<Dep>, ResolveErrorKind>> + SendSafety + '_ {
+        self.get_selected::<Dep>(Selection::ByType)
+    }
+
+    pub(crate) fn get_selected<'a, Dep: SendSafety + SyncSafety + 'static>(
+        &'a self,
+        selected: Selection<'a, InstantiatorData>,
+    ) -> impl Future<Output = Result<RcThreadSafety<Dep>, ResolveErrorKind>> + SendSafety + 'a {
         let type_info = TypeInfo::of::<Dep>();
         let dep_name = type_info.name;
         let scope_name = self.inner.scope_data.name;
@@ -143,16 +180,23 @@ impl Container {
             }
             debug!("Not found in cache");
 
-            let Some(InstantiatorData {
-                instantiator,
-                finalizer,
-                config,
-                scope_data,
-                ..
-            }) = self.inner.registry.get(&type_info)
+            let by_type = matches!(selected, Selection::ByType);
+            let Some(
+                data @ InstantiatorData {
+                    instantiator,
+                    finalizer,
+                    config,
+                    scope_data,
+                    ..
+                },
+            ) = selected.or_lookup(|| self.inner.registry.get(&type_info))
             else {
                 debug!("No instantiator found, trying sync container");
-                return self.sync.get();
+                return if by_type {
+                    self.sync.get()
+                } else {
+                    self.sync.get_selected(Selection::Indexed(None))
+                };
             };
 
             let current_priority = self.inner.scope_data.priority;
@@ -173,7 +217,7 @@ impl Container {
                     sync: self.sync.clone(),
                     per_type_locks: self.per_type_locks.clone(),
                 })
-                .get::<Dep>()
+                .get_selected::<Dep>(Selection::Indexed(Some(data)))
                 .await
                 {
                     Ok(dependency) => {
@@ -203,7 +247,7 @@ impl Container {
                 return Ok(dependency);
             }
 
-            match instantiator.clone().call(self.clone()).await {
+            match instantiator.call(self.clone()).await {
                 Ok(dependency) => match dependency.downcast::<Dep>() {
                     Ok(dependency) => {
                         let dependency = RcThreadSafety::new(*dependency);
@@ -255,16 +299,30 @@ impl Container {
     #[inline]
     #[allow(clippy::missing_errors_doc, clippy::multiple_bound_locations, clippy::missing_panics_doc)]
     pub fn get_transient<Dep: 'static>(&self) -> impl Future<Output = Result<Dep, ResolveErrorKind>> + SendSafety + '_ {
+        self.get_transient_selected::<Dep>(Selection::ByType)
+    }
+
+    pub(crate) fn get_transient_selected<'a, Dep: 'static>(
+        &'a self,
+        selected: Selection<'a, InstantiatorData>,
+    ) -> impl Future<Output = Result<Dep, ResolveErrorKind>> + SendSafety + 'a {
         let type_info = TypeInfo::of::<Dep>();
         let dep_name = type_info.name;
         let scope_name = self.inner.scope_data.name;
         let fut = async move {
-            let Some(InstantiatorData {
-                instantiator, scope_data, ..
-            }) = self.inner.registry.get(&type_info)
+            let by_type = matches!(selected, Selection::ByType);
+            let Some(
+                data @ InstantiatorData {
+                    instantiator, scope_data, ..
+                },
+            ) = selected.or_lookup(|| self.inner.registry.get(&type_info))
             else {
                 debug!("No instantiator found, trying sync container");
-                return self.sync.get_transient();
+                return if by_type {
+                    self.sync.get_transient()
+                } else {
+                    self.sync.get_transient_selected(Selection::Indexed(None))
+                };
             };
 
             let current_priority = self.inner.scope_data.priority;
@@ -284,7 +342,7 @@ impl Container {
                     sync: self.sync.clone(),
                     per_type_locks: self.per_type_locks.clone(),
                 })
-                .get_transient()
+                .get_transient_selected(Selection::Indexed(Some(data)))
                 .await;
             }
             if dep_priority > current_priority {
@@ -296,7 +354,7 @@ impl Container {
                 return Err(err);
             }
 
-            match instantiator.clone().call(self.clone()).await {
+            match instantiator.call(self.clone()).await {
                 Ok(dependency) => match dependency.downcast::<Dep>() {
                     Ok(dependency) => Ok(*dependency),
                     Err(incorrect_type) => {
@@ -716,10 +774,10 @@ impl From<(BoxedContainerInner, BoxedSyncContainerInner)> for Container {
     }
 }
 
-struct ContainerInner {
+pub(crate) struct ContainerInner {
     cache: RwLock<Cache>,
     context: Context,
-    registry: RcThreadSafety<Registry>,
+    pub(crate) registry: RcThreadSafety<Registry>,
     scope_data: ScopeData,
     child_scopes_data: Vec<ScopeData>,
     parent: Option<RcThreadSafety<ContainerInner>>,
@@ -780,14 +838,18 @@ mod tests {
         async_registry, registry,
         scope::DefaultScope::*,
         utils::thread_safety::{RcThreadSafety, SendSafety, SyncSafety},
-        Inject, InjectTransient, ResolveErrorKind, Scope,
+        Config, Inject, InjectTransient, InstantiateErrorKind, ResolveErrorKind, Scope,
     };
 
     use alloc::{
         format,
         string::{String, ToString as _},
     };
+    #[cfg(not(feature = "thread_safe"))]
+    use core::marker::PhantomData;
     use core::sync::atomic::{AtomicU8, Ordering};
+    #[cfg(feature = "thread_safe")]
+    use tokio::spawn;
     use tracing::debug;
     use tracing_test::traced_test;
 
@@ -1366,7 +1428,6 @@ mod tests {
 
         struct Type1;
         struct Type2(RcThreadSafety<Type1>);
-
         struct DropWrapper<T> {
             val: T,
             call_count: RcThreadSafety<AtomicU8>,
@@ -1465,7 +1526,6 @@ mod tests {
 
         struct Type1;
         struct Type2(RcThreadSafety<Type1>);
-
         struct DropWrapper<T> {
             val: T,
             call_count: RcThreadSafety<AtomicU8>,
@@ -1561,7 +1621,7 @@ mod tests {
     async fn test_thread_safe() {
         struct Request1 {
             #[cfg(not(feature = "thread_safe"))]
-            _phantom: core::marker::PhantomData<*const ()>,
+            _phantom: PhantomData<*const ()>,
         }
 
         fn impl_bounds<T: SendSafety + SyncSafety + 'static>() {}
@@ -1575,7 +1635,7 @@ mod tests {
             ],
         });
         #[cfg(feature = "thread_safe")]
-        tokio::spawn(async move {
+        spawn(async move {
             let request1 = app_container.get_transient::<RequestTransient1>().await;
             let request2 = app_container.get::<Request1>().await;
 
@@ -1592,7 +1652,7 @@ mod tests {
         let container = Container::new(async_registry! {
             scope(App) [
                 provide(
-                    || async { Ok::<_, crate::InstantiateErrorKind>(Thing) },
+                    || async { Ok::<_, InstantiateErrorKind>(Thing) },
                     finalizer = |_dep: RcThreadSafety<Thing>| async {}
                 ),
             ],
@@ -1615,7 +1675,7 @@ mod tests {
         let container = Container::new(async_registry! {
             scope(App) [
                 provide(
-                    || async { Ok::<_, crate::InstantiateErrorKind>(Thing) },
+                    || async { Ok::<_, InstantiateErrorKind>(Thing) },
                     finalizer = |_dep: RcThreadSafety<Thing>| async {}
                 ),
             ],
@@ -1642,9 +1702,9 @@ mod tests {
                 provide(
                     move || {
                         let for_factory = for_factory.clone();
-                        async move { Ok::<_, crate::InstantiateErrorKind>(for_factory.fetch_add(1, Ordering::SeqCst)) }
+                        async move { Ok::<_, InstantiateErrorKind>(for_factory.fetch_add(1, Ordering::SeqCst)) }
                     },
-                    config = crate::Config { cache_provides: false },
+                    config = Config { cache_provides: false },
                 ),
             ],
         });

@@ -1,139 +1,128 @@
 # Compile-time and runtime benchmarks
 
-## Reproduce compile-time measurements
+The supported comparison is dynamic and compiled registrations in the original
+Froodi containers. Both use native scopes, caches, synchronization and finalizers.
 
-The Rust helper creates isolated app crates with 100-dependency chains and 500
-independent registrations, matching the scale-test shapes. It cleans only the app
-between clean-build samples; dependency artifacts stay warm. It measures provider
-body edits, topology edits (one extra unused registration), release builds and
-release executable sizes. Full-engine binaries are also executed after building.
+## Compile-time measurements
 
 ```sh
-rustc --edition=2021 tools/compile_bench.rs -o /tmp/compile-bench
-/tmp/compile-bench "$PWD" /tmp/froodi-compile-measurements 3 all
+rustc --edition=2021 tools/compile_bench.rs -o /tmp/froodi-build-bench
+/tmp/froodi-build-bench "$PWD" /tmp/froodi-build-measurements 3 both
 ```
 
-Populate the dependency cache first with `cargo build -p froodi-compile`; the helper
-uses Cargo offline. Use a fresh output directory per revision. `stages` measures only clean app builds;
-`full` measures only the full engine, including edits and release builds. Reports
-include `results.csv`, individual Cargo logs and `time-passes.log` for each stage.
-The helper enables the internal `compile-bench` runtime feature for stage hooks.
+Use a fresh output directory. The helper creates disposable downstream apps and
+records sample logs, `results.csv` and `toolchain.txt`. Dependencies stay warm;
+clean builds remove only app artifacts. Provider edits change the first
+instantiator's result; shape edits add one unused `u64` registration. Release
+executables are built and run. No compiler-internal stage hooks are required.
 
-The phase logs use `RUSTC_BOOTSTRAP=1 cargo rustc -- -Ztime-passes` for measurement
-only. Normal builds use stable Cargo settings. Record the toolchain and host, and
-run without competing builds or benchmarks.
+Actual shapes:
 
-## Native Froodi integration
+- **Chain 100:** 100 distinct value types, 99 immediate `Inject` edges. Each
+  instantiator adds one to its predecessor's integer; the app requests the last.
+- **Flat 500:** 500 distinct value types with independently defined, zero-parameter
+  instantiators. There are **no dependency edges**. The app requests only the last
+  value, but all registrations participate in linking and plan creation.
 
-Baseline `6e6ab97`; rustc 1.98.1 / LLVM 22.1.8, Ryzen 5 7500F, x86_64 Linux.
-Dependencies were warm, dev incremental compilation enabled, `debug =
-"line-tables-only"`, default `std`/`thread_safe`. No other task builds ran during
-measurements. Host scheduling still produced outliers; clean builds were repeated
-with five samples. Shape edits use three-sample medians. Do not read small timing
-differences as precise speedups.
+Consolidation measurements use rustc 1.98.1 (`48a229cea`), LLVM 22.1.8,
+Ryzen 5 7500F, `x86_64-unknown-linux-gnu`, default `std`/`thread_safe` plus
+`compiled`. Dev builds enable incremental compilation and line-table debug info;
+release debug info is disabled. Three-sample medians, without competing builds:
 
-| App / measurement | Native before | Experimental before | Integrated final |
-|---|---:|---:|---:|
-| Chain 100 clean | 1.28 s | 1.10 s | 1.63 s |
-| Chain 100 shape edit | 0.47 s | 1.08 s | 2.02 s |
-| Flat 500 clean | 1.70 s | 4.11 s | 3.69 s |
-| Flat 500 shape edit | 1.37 s | 4.59 s | 3.86 s |
+| Compiled app measurement | Chain 100 before / after | Flat 500 before / after |
+|---|---:|---:|
+| Clean build | 1.629 / 1.853 s | 3.576 / 3.617 s |
+| Provider body edit | 0.249 / 0.293 s | 0.474 / 0.443 s |
+| Registry-shape edit | 1.434 / 1.709 s | 3.548 / 3.511 s |
+| Release build | 4.741 / 4.856 s | 8.131 / 7.818 s |
+| Release executable | 1,934,104 / 1,932,584 B | 2,426,560 / 2,409,120 B |
 
-Final flat-500 clean samples were 3.48–5.71 s; shape-edit samples were
-3.43–6.18 s. Tables report medians; host variability limits precision.
+After clean samples: chain 1.781–1.870 s, flat 3.570–3.858 s. Shape samples:
+chain 1.653–4.406 s, flat 3.406–3.977 s. Chain body edits also included a
+0.760 s outlier. Flat cost remains about 3.5–3.6 s; these data do not establish
+a small speedup. Chain medians increased, with substantial shape-edit variability.
 
-Reproduce against an untouched baseline checkout and the integration checkout:
+Current dynamic/compiled comparison, using the same apps and warm-dependency policy:
 
-```sh
-rustc --edition=2021 tools/compile_bench.rs -o /tmp/compile-bench
-/tmp/compile-bench "$baseline_repo" /tmp/native-before 3 full froodi
-/tmp/compile-bench "$baseline_repo" /tmp/experimental-before 3 full experimental
-/tmp/compile-bench "$PWD" /tmp/native-integrated 3 full integrated
-# Optional last argument selects one measurement, e.g. repeat noisy clean samples:
-/tmp/compile-bench "$PWD" /tmp/native-confirm 5 full integrated clean-app
-```
+| App / measurement | Dynamic | Compiled |
+|---|---:|---:|
+| Chain 100 clean | 1.287 s | 1.853 s |
+| Chain 100 shape edit | 0.674 s | 1.709 s |
+| Flat 500 clean | 1.876 s | 3.617 s |
+| Flat 500 shape edit | 1.702 s | 3.511 s |
 
-### Runtime
+Dynamic clean ranges were 1.256–1.311 / 1.714–1.900 s; shape ranges were
+0.566–0.856 / 1.496–2.044 s. Compiled timing includes its additional static
+guarantees; dynamic timing does not enable that feature.
 
-Criterion median point estimates, 40 samples, 0.5 s warm-up and 1.5 s measurement.
-The native before column uses the untouched baseline. The after columns use the
-integrated revision and shared graph types, with the `compiled` feature enabled.
-The retained-container case was measured separately after adding its instrumentation.
-
-| Scenario | Native before | Native dynamic after | Experimental after | Integrated after |
-|---|---:|---:|---:|---:|
-| Container creation, chain 100 | 15.01 µs | 16.22 µs | 24.21 µs | 46.14 µs |
-| Cached get | 22.72 ns | 25.50 ns | 23.74 ns | 26.36 ns |
-| First get, chain 100, including teardown | 21.80 µs | 22.90 µs | 7.92 µs | 25.93 µs |
-| First get, chain 100, retained container | 18.88 µs | 17.56 µs | 4.58 µs | 15.03 µs |
-| Enter/resolve Request chain 100 | 15.23 µs | 15.31 µs | 6.15 µs | 12.63 µs |
-| Scope transition | 131.02 ns | 124.55 ns | 103.64 ns | 124.80 ns |
-| Transient chain 100 | 7.03 µs | 7.82 µs | 4.10 µs | 6.79 µs |
-| First get, wide 16, including teardown | 498.30 ns | 595.98 ns | 456.55 ns | 823.22 ns |
-| Enter/resolve captured closure | 178.51 ns | 194.00 ns | 139.01 ns | 182.05 ns |
-
-The existing `first_get` cases consume their container inside the timed closure.
-The added `first_get_chain_100_retained` uses `iter_batched_ref` to exclude input
-and plan destruction. It was added to baseline benchmark instrumentation too;
-baseline runtime code was unchanged. This separates construction from the larger
-integrated plan's teardown cost. The experimental retained-container baseline
-was 4.45 µs.
-
-Static parameters now select providers by ID, including static edges into runtime
-registrations. Public get, native caches/locks, custom resolvers and dependencies
-inside ordinary dynamic adapters still do type-based work. Startup remapping is
-also type-based. The integration improves some dependency-heavy cases but does
-**not** inherit the experimental executor's overall speed: native lifecycle work
-remains, and construction/teardown costs are higher. These are remaining tuning
-costs before enabling the frontend by default, not evidence of a fallback to
-provider lookup on static edges.
+## Runtime measurements
 
 ```sh
-cargo bench -p froodi-compile --bench compare -- '(froodi|static|integrated)$' \
+cargo bench -p froodi --features compiled,async --bench compiled_registry -- \
   --warm-up-time 0.5 --measurement-time 1.5 --sample-size 40 --noplot
 ```
 
-## Static-validation cost
+The existing Criterion dependency and release profile are used. The toolchain and
+host match the compilation measurements; features are default `std`/`thread_safe`
+plus `compiled,async`. Each case has 40 samples, 0.5 s warm-up and at least 1.5 s
+requested measurement. Criterion saves iterations and confidence intervals under
+`target/criterion`. No competing builds ran during these measurements.
 
-The experimental stage fixture isolates linking from mandatory const validation
-without creating a container or executors. On rustc 1.98.1 / Ryzen 5 7500F, with
-warm dependencies and three-sample medians:
+The shared [fixtures](../../froodi/benches/support/graphs.rs) contain 100 distinct
+values: one chain retains predecessor `Arc`s using `Inject`; another owns
+predecessors through `InjectTransient` and `Box`. Application work is limited to
+retaining those values. The instantiator functions are shared between frontends.
 
-| Stage | Chain 100 | Flat 500 |
+Retained-container resolution excludes setup and container destruction. Startup,
+scope entry and teardown are timed separately. The complete case creates App,
+enters 32 Request scopes, performs first and pointer-identical cached gets plus
+transient root construction in each, closes/drops each Request, then closes/drops
+App. Its values all belong to Request. No custom finalizer work is timed.
+
+Median estimates immediately before and after consolidation:
+
+| Scenario | Dynamic before / after | Compiled before / after |
 |---|---:|---:|
-| Linking | 0.549 s | 1.913 s |
-| Linking + const validation | 0.594 s | 2.213 s |
-| Additional time | 0.045 s | 0.300 s |
+| App startup, Request chain | 14.73 / 17.87 µs | 37.84 / 45.41 µs |
+| Enter Request | 80.57 / 79.46 ns | 79.48 / 81.73 ns |
+| First Request get, chain 100 | 15.05 / 19.32 µs | 12.29 / 13.97 µs |
+| Cached Request get | 29.47 / 23.24 ns | 28.72 / 22.36 ns |
+| Transient root, warm injected dependencies | 60.58 / 53.90 ns | 47.38 / 54.81 ns |
+| Close/drop populated Request | 1.63 / 1.80 µs | 1.57 / 1.97 µs |
+| Close/drop App plan | 3.12 / 4.28 µs | 8.42 / 10.72 µs |
+| Complete 32 requests | 535.82 / 724.93 µs | 483.96 / 591.71 µs |
+| First App get, retained chain 100 | 16.18 / 24.50 µs | 14.49 / 22.63 µs |
+| Entire transient chain 100 | 7.54 / 8.65 µs | 6.43 / 7.55 µs |
 
-These measurements predate native integration; they isolate the shared validation
-mechanism, not total integrated build cost. Both pairs produced identical executable
-sizes. Use the helper's `stages` mode to repeat this comparison when changing the
-validation limit or algorithm.
+Startup, cached access, retained first access, deep transient construction and
+the complete scenario were repeated. Complete-scenario after medians changed
+from 758.89 / 611.37 µs to 724.93 / 591.71 µs. The latter 95% confidence intervals
+were 709.89–743.13 / 582.30–599.06 µs, from 2,460 / 3,280 timed iterations.
+Request-first-access intervals were 18.71–20.24 / 13.80–14.08 µs. App teardown
+was noisier: 3.57–4.73 / 9.60–13.68 µs. These timings are not interchangeable
+with cached or cold-resolution costs.
 
-## Runtime fixtures
+The saved pre-consolidation benchmark executable was also rerun: complete totals
+were 526.93 / 516.32 µs. The new complete-case slowdown therefore persists beyond
+one run. Consolidating fixtures changes nominal type identities, instantiator
+placement and code layout; the native runtime still uses type-keyed caches and
+maps. This comparison cannot isolate those effects from moving the backend.
+It does **not** demonstrate unchanged runtime performance. Construction and
+teardown differences need focused profiling before claiming a runtime improvement
+from consolidation; no executor redesign was attempted here.
 
-The checked-in [graphs.rs](../../froodi-compile/benches/support/graphs.rs) compares
-native Froodi (`froodi`), experimental static registrations (`static`), experimental
-runtime registrations (`indexed`) and the integrated native container
-(`integrated`). Both experimental variants use indexed execution. Cases cover
-construction, cached and first access, deep transient resolution, scopes, captured
-instantiators and runtime boundaries. Default `thread_safe` features keep all
-engines on `Arc`.
+Within the current suite, compiled first dependency-chain access is faster, but
+startup and App-plan destruction cost more. Cached-access intervals overlap.
+Static dependency adapters select by registration ID; outer `get`, native caches,
+custom resolvers, dynamic adapters and startup remapping still use type keys.
 
-To compare a future change:
+## Historical design measurements
 
-```sh
-cargo bench -p froodi-compile --bench compare -- --save-baseline before
-# Apply the change, then:
-cargo bench -p froodi-compile --bench compare -- --baseline before
-```
+Ending path/Root propagation at linking reduced the old flat-500 build from about
+12 s to about 3–4 s. Before native integration, isolated linking versus linking
+plus const validation measured 0.549 / 0.594 s for chain 100 and 1.913 / 2.213 s
+for flat 500. Those stage hooks and the experimental container are retired.
 
-## Prior execution experiment
-
-The removed `direct-edges` backend reduced measured cold-chain resolution by about
-7% and transient-chain resolution by about 35% versus indexed dispatch. It also
-made dependency depth drive recursive trait obligations: the 100-dependency debug
-build took about 13.8 s versus 3.9 s for the table, and ordinary chains hit recursion
-limits. These results motivate keeping one indexed backend. Revisit direct dispatch
-only if profiling identifies indexed calls as a bottleneck; the experiment is not
-an available feature.
+The removed direct-edge experiment saved about 7% cold-chain and 35% transient
+time, but increased the debug chain build from about 3.9 s to 13.8 s and made
+dependency depth drive trait recursion. Indexed execution remains the sole backend.

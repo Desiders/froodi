@@ -1,11 +1,5 @@
-//! Compile-fail (UI) tests for the `registry!` / `async_registry!` macro diagnostics, via
-//! `trybuild`. Each fixture in `tests/ui/` deliberately misuses a macro; its `.stderr` snapshot
-//! pins the exact `compile_error!` message produced for every error branch.
-//!
-//! Snapshots are toolchain-sensitive (they capture rustc's rendered diagnostic). Run these on a
-//! stable toolchain and regenerate after a compiler/macro change with:
-//!     TRYBUILD=overwrite cargo test -p froodi --test compile_fail
-//! (add `--features async` to also refresh the async fixture).
+//! Compile-time diagnostics through the public registration macros.
+#![cfg(not(miri))]
 
 #[test]
 fn registry_macro_errors() {
@@ -16,4 +10,48 @@ fn registry_macro_errors() {
 #[test]
 fn async_registry_macro_errors() {
     trybuild::TestCases::new().compile_fail("tests/ui/async_registry_errors.rs");
+}
+
+#[cfg(feature = "compiled")]
+#[test]
+fn compiled_registration_errors() {
+    // A fail-only trybuild suite uses checking; const cycles need code generation below.
+    let cases = trybuild::TestCases::new();
+    for case in [
+        "missing",
+        "ambiguous",
+        "forged_executor",
+        "forged_index",
+        "bare_resolver",
+        "resolver_ambiguity",
+        "unknown_clause",
+    ] {
+        // rustc qualifies type paths differently when async types are also present.
+        let prefix = if !cfg!(feature = "async") && matches!(case, "missing" | "ambiguous" | "bare_resolver") {
+            "no_async_"
+        } else {
+            ""
+        };
+        cases.compile_fail(format!("tests/ui/compiled/{prefix}{case}.rs"));
+    }
+    #[cfg(feature = "async")]
+    for case in ["sync_async", "sync_transient_async"] {
+        cases.compile_fail(format!("tests/ui/compiled/{case}.rs"));
+    }
+}
+
+#[cfg(feature = "compiled")]
+#[test]
+fn compiled_cycle_errors() {
+    let cases = trybuild::TestCases::new();
+    // A pass case makes trybuild build this suite, evaluating generic const validation.
+    cases.pass("tests/ui/compiled/uninstantiated.rs");
+    cases.pass("tests/ui/compiled/resolver_fallback.rs");
+    for case in ["self_cycle", "indirect", "unrequested", "generic", "limit_sync_cycle"] {
+        cases.compile_fail(format!("tests/ui/compiled/{case}.rs"));
+    }
+    #[cfg(feature = "async")]
+    for case in ["async_cycle", "limit_async_cycle"] {
+        cases.compile_fail(format!("tests/ui/compiled/{case}.rs"));
+    }
 }
