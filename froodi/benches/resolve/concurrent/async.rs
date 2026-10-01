@@ -1,7 +1,11 @@
 #![allow(dead_code)]
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
-use froodi::{async_impl::Container, async_registry, DefaultScope::*, Inject, InjectTransient};
+#[cfg(not(feature = "compiled"))]
+use froodi::async_registry;
+#[cfg(feature = "compiled")]
+use froodi::compiled_async_registry as async_registry;
+use froodi::{async_impl::Container, DefaultScope::*, Inject, InjectTransient};
 use std::{
     future::Future,
     sync::{

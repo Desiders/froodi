@@ -1,7 +1,11 @@
 #![allow(dead_code)]
 
 use criterion::{criterion_group, criterion_main, Criterion};
-use froodi::{async_impl::Container, async_registry, utils::thread_safety::RcThreadSafety, DefaultScope::*};
+#[cfg(not(feature = "compiled"))]
+use froodi::async_registry;
+#[cfg(feature = "compiled")]
+use froodi::compiled_async_registry as async_registry;
+use froodi::{async_impl::Container, utils::thread_safety::RcThreadSafety, DefaultScope::*};
 
 fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("async_new", |b| {
@@ -29,29 +33,30 @@ fn criterion_benchmark(c: &mut Criterion) {
         });
     })
     .bench_function("async_child_start_scope", |b| {
-        let runtime_container = Container::new_with_start_scope(
-            async_registry! {
-                scope(Runtime) [
-                    provide(async || Ok(())),
-                ],
-                scope(App) [
-                    provide(async || Ok(((), ()))),
-                ],
-                scope(Session) [
-                    provide(async || Ok(((), (), ()))),
-                ],
-                scope(Request) [
-                    provide(async || Ok(((), (), (), ()))),
-                ],
-                scope(Action) [
-                    provide(async || Ok(((), (), (), (), ()))),
-                ],
-                scope(Step) [
-                    provide(async || Ok(((), (), (), (), (), ()))),
-                ],
-            },
-            Runtime,
-        );
+        let registry = async_registry! {
+            scope(Runtime) [
+                provide(async || Ok(())),
+            ],
+            scope(App) [
+                provide(async || Ok(((), ()))),
+            ],
+            scope(Session) [
+                provide(async || Ok(((), (), ()))),
+            ],
+            scope(Request) [
+                provide(async || Ok(((), (), (), ()))),
+            ],
+            scope(Action) [
+                provide(async || Ok(((), (), (), (), ()))),
+            ],
+            scope(Step) [
+                provide(async || Ok(((), (), (), (), (), ()))),
+            ],
+        };
+        #[cfg(not(feature = "compiled"))]
+        let runtime_container = Container::new_with_start_scope(registry, Runtime);
+        #[cfg(feature = "compiled")]
+        let runtime_container = Container::new_compiled_with_start_scope(registry, Runtime);
         b.iter(|| {
             let app_container = runtime_container.clone().enter().with_scope(App).build().unwrap();
             let session_container = app_container.enter().with_scope(Session).build().unwrap();

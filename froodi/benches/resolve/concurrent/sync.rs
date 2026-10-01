@@ -1,7 +1,11 @@
 #![allow(dead_code)]
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
-use froodi::{registry, Container, DefaultScope::*, Inject, InjectTransient};
+#[cfg(feature = "compiled")]
+use froodi::compiled_registry as registry;
+#[cfg(not(feature = "compiled"))]
+use froodi::registry;
+use froodi::{Container, DefaultScope::*, Inject, InjectTransient};
 use std::{
     sync::{
         atomic::{AtomicU64, Ordering},
