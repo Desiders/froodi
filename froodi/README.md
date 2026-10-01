@@ -371,9 +371,6 @@ Enable `compiled` and use `froodi::compiled_registry!` or, with `async`,
 Ordinary Froodi macros remain dynamic. The existing `Container`, injection modes
 and lifecycle are shared. Custom parameters use `froodi::RuntimeDependency<T>`;
 opaque boundaries use `froodi::runtime::<T>()` and `froodi::context::<T>()`.
-Validation limits, API differences and the macro package publication prerequisite
-are described in the
-[compiled-backend documentation](https://github.com/Desiders/froodi/tree/master/docs/compile-time).
 
 ## Examples
 
