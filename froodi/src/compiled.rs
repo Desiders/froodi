@@ -17,7 +17,7 @@ pub(crate) mod async_impl;
 
 pub use boundary::{context, runtime};
 pub use dependency_resolver::RuntimeDependency;
-pub use registration::{reg, NoFinalizer};
+pub use registration::{reg, LocatedRegistration, NoFinalizer, RegistrationSource};
 pub use registry::{IntoFragment, Registry};
 
 pub(crate) use registry::{finish, prepare, IntoRegistry, RegistrationId};

@@ -7,6 +7,36 @@ use crate::{utils::thread_safety::RcThreadSafety, Config, DependencyResolver, Fi
 use alloc::vec::Vec;
 use core::marker::PhantomData;
 
+// Macro-generated labels survive only until linking, never in the runtime executor.
+pub trait RegistrationSource {
+    const DESCRIPTION: &'static str;
+}
+
+pub struct LocatedRegistration<Reg, Source> {
+    reg: Reg,
+    marker: PhantomData<fn() -> Source>,
+}
+
+impl<Reg, Source> LocatedRegistration<Reg, Source> {
+    pub fn new(reg: Reg) -> Self {
+        Self { reg, marker: PhantomData }
+    }
+}
+
+impl<Reg: RegistryIndex, Source> RegistryIndex for LocatedRegistration<Reg, Source> {
+    type Index = Reg::Index;
+}
+
+impl<Root, Links, Reg: Link<Root, Links>, Source: RegistrationSource> Link<Root, Links> for LocatedRegistration<Reg, Source> {
+    type Linked = Reg::Linked;
+
+    const TOPOLOGY: Topology = Reg::TOPOLOGY.with_source(Source::DESCRIPTION);
+
+    fn link(self) -> Self::Linked {
+        self.reg.link()
+    }
+}
+
 #[derive(Clone)]
 pub enum NoFinalizer {}
 
@@ -33,12 +63,18 @@ pub fn reg<Inst: Provide<SyncExecution, Deps, Fin>, Deps, Fin>(
     inst.into_leaf(scope, config.unwrap_or_default(), fin)
 }
 
+#[diagnostic::on_unimplemented(
+    message = "`provide(...)` requires a Froodi instantiator; `{Self}` is not supported",
+    label = "expected an instantiator returning `Result<T, InstantiateErrorKind>` (or a future returning it for async registration)",
+    note = "instantiators must be Clone + 'static, with resolvable parameters and Error = InstantiateErrorKind"
+)]
 pub trait Provide<Execution, Deps, Fin> {
     type Leaf;
 
     fn into_leaf(self, scope: ScopeData, config: Config, fin: Option<Fin>) -> Self::Leaf;
 }
 
+#[diagnostic::do_not_recommend]
 impl<Inst: Instantiator<Deps, Error = InstantiateErrorKind>, Deps: DependencyResolver, Fin> Provide<SyncExecution, Deps, Fin> for Inst {
     type Leaf = Registration<Inst::Provides, Inst, Deps, Fin>;
 
@@ -65,7 +101,7 @@ pub struct Linked<Out, Inst, Deps, Fin> {
 impl<Root, Out, Inst, Deps, Fin, Links> Link<Root, Links> for Registration<Out, Inst, Deps, Fin>
 where
     Deps: LinkDependencies<Root, Links>,
-    Deps::Providers: SupportsExecution<SyncExecution>,
+    Deps::Providers: SupportsExecution<SyncExecution, Deps>,
 {
     type Linked = Linked<Out, Inst, Deps, Fin>;
 

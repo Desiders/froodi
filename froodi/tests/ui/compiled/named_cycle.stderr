@@ -1,0 +1,37 @@
+error[E0080]: evaluation panicked: dependency cycle in closed static registry:
+                provide(greeter) at $DIR/tests/ui/compiled/named_cycle.rs:18:22
+                -- parameter #1 --> provide(welcome_handler) at $DIR/tests/ui/compiled/named_cycle.rs:16:45
+                -- parameter #1 --> provide(greeter) at $DIR/tests/ui/compiled/named_cycle.rs:18:22
+
+   --> src/compiled/linking.rs
+    |
+    |     const VALIDATE: () = Self::TOPOLOGY.validate();
+    |                          ^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `<froodi::macros_utils::compiled::Node<froodi::macros_utils::compiled::Node<froodi::macros_utils::compiled::LocatedRegistration<froodi::compiled::registration::Registration<Greeter, fn(froodi::Inject<WelcomeHandler>) -> std::result::Result<Greeter, froodi::InstantiateErrorKind> {greeter}, (froodi::Inject<WelcomeHandler>,), froodi::macros_utils::compiled::NoFinalizer>, main::__FroodiRegistrationSource>, froodi::macros_utils::compiled::LocatedRegistration<froodi::compiled::registration::Registration<WelcomeHandler, fn(froodi::Inject<Greeter>) -> std::result::Result<WelcomeHandler, froodi::InstantiateErrorKind> {welcome_handler}, (froodi::Inject<Greeter>,), froodi::macros_utils::compiled::NoFinalizer>, main::__FroodiRegistrationSource>>, froodi::compiled::registry::ContainerLeaf> as froodi::compiled::linking::Link<froodi::macros_utils::compiled::Node<froodi::macros_utils::compiled::Node<froodi::compiled::linking::Provider<Greeter>, froodi::compiled::linking::Provider<WelcomeHandler>>, froodi::compiled::linking::Provider<froodi::Container>>, (((froodi::compiled::linking::LinkedInject<froodi::compiled::linking::L<froodi::compiled::linking::R<froodi::compiled::linking::Here>>>,), (froodi::compiled::linking::LinkedInject<froodi::compiled::linking::L<froodi::compiled::linking::L<froodi::compiled::linking::Here>>>,)), ())>>::VALIDATE` failed inside this call
+    |
+note: inside `froodi::compiled::topology::Topology::validate`
+ --> $RUST/core/src/panic.rs
+  |
+  = note: the failure occurred here
+  |
+ ::: src/compiled/topology.rs
+  |
+  | ...                   panic!("{}", diagnostic.message());
+  |                       ---------------------------------- in this macro invocation
+
+note: erroneous constant encountered
+ --> src/compiled/registry.rs
+  |
+  |     const VALIDATE: () = <Root<Tree> as Link<Index<Tree>, Links>>::VALIDATE;
+  |                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+note: erroneous constant encountered
+ --> src/compiled/registry.rs
+  |
+  |     let () = Reg::VALIDATE;
+  |              ^^^^^^^^^^^^^
+
+note: the above error was encountered while instantiating `fn froodi::compiled::registry::finish::<(((froodi::compiled::linking::LinkedInject<froodi::compiled::linking::L<froodi::compiled::linking::R<froodi::compiled::linking::Here>>>,), (froodi::compiled::linking::LinkedInject<froodi::compiled::linking::L<froodi::compiled::linking::L<froodi::compiled::linking::Here>>>,)), ()), froodi::macros_utils::compiled::Registry<froodi::macros_utils::compiled::Node<froodi::macros_utils::compiled::LocatedRegistration<froodi::compiled::registration::Registration<Greeter, fn(Inject<WelcomeHandler>) -> Result<Greeter, InstantiateErrorKind> {greeter}, (Inject<WelcomeHandler>,), froodi::macros_utils::compiled::NoFinalizer>, main::__FroodiRegistrationSource>, froodi::macros_utils::compiled::LocatedRegistration<froodi::compiled::registration::Registration<WelcomeHandler, fn(Inject<Greeter>) -> Result<WelcomeHandler, InstantiateErrorKind> {welcome_handler}, (Inject<Greeter>,), froodi::macros_utils::compiled::NoFinalizer>, main::__FroodiRegistrationSource>>>>`
+ --> src/container.rs
+  |
+  |         Self::build_root(finish(registry), |scope_data| !scope_data.is_skipped_by_default)
+  |                          ^^^^^^^^^^^^^^^^

@@ -25,6 +25,7 @@ pub fn async_reg<Inst: Provide<AsyncExecution, Deps, Fin>, Deps, Fin>(
     inst.into_leaf(scope, config.unwrap_or_default(), fin)
 }
 
+#[diagnostic::do_not_recommend]
 impl<Inst: Instantiator<Deps, Error = InstantiateErrorKind>, Deps: DependencyResolver, Fin> Provide<AsyncExecution, Deps, Fin> for Inst {
     type Leaf = AsyncRegistration<Inst::Provides, Inst, Deps, Fin>;
 
@@ -51,7 +52,7 @@ impl<Out> ProviderPath<Out, Here> for AsyncProvider<Out> {
     const INDEX: usize = 0;
 }
 
-impl<Out> SupportsExecution<AsyncExecution> for AsyncProvider<Out> {}
+impl<Out, Request> SupportsExecution<AsyncExecution, Request> for AsyncProvider<Out> {}
 
 impl<Out, Inst, Deps, Fin> RegistryIndex for AsyncRegistration<Out, Inst, Deps, Fin> {
     type Index = AsyncProvider<Out>;
@@ -62,7 +63,7 @@ pub struct AsyncLinked<Out, Inst, Deps, Fin>(pub(super) Linked<Out, Inst, Deps, 
 impl<Root, Out, Inst, Deps, Fin, Links> Link<Root, Links> for AsyncRegistration<Out, Inst, Deps, Fin>
 where
     Deps: LinkDependencies<Root, Links>,
-    Deps::Providers: SupportsExecution<AsyncExecution>,
+    Deps::Providers: SupportsExecution<AsyncExecution, Deps>,
 {
     type Linked = AsyncLinked<Out, Inst, Deps, Fin>;
 
