@@ -1,7 +1,11 @@
 #![allow(dead_code)]
 
 use criterion::{criterion_group, criterion_main, Criterion};
-use froodi::{async_impl::Container, async_registry, utils::thread_safety::RcThreadSafety, DefaultScope::*, Inject, InjectTransient};
+#[cfg(not(feature = "compiled"))]
+use froodi::async_registry;
+#[cfg(feature = "compiled")]
+use froodi::compiled_async_registry as async_registry;
+use froodi::{async_impl::Container, utils::thread_safety::RcThreadSafety, DefaultScope::*, Inject, InjectTransient};
 use tokio::runtime::Builder;
 
 fn criterion_benchmark(c: &mut Criterion) {

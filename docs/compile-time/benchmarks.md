@@ -90,6 +90,13 @@ guarantees; dynamic timing does not enable that feature.
 
 ## Runtime measurements
 
+`just bench-compiled` runs compiled variants of the existing initialization,
+resolution and concurrent-resolution benchmarks using the same fixtures.
+Each category also has a `bench-*-compiled` recipe. `just bench-compare-compiled`
+and `just bench-compare-concurrent-compiled` compare compiled Froodi with the
+other containers; `just bench-compare-registries` compares dynamic and compiled
+Froodi, including the complete request lifecycle.
+
 ```sh
 cargo bench -p froodi --features compiled,async --bench compiled_registry -- \
   --warm-up-time 0.5 --measurement-time 1.5 --sample-size 40 --noplot

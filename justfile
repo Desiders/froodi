@@ -24,7 +24,7 @@ test-integrations:
     cargo test --no-default-features --features axum,http2-axum
 
     cargo test --no-default-features --features dptree
-    
+
     cargo test --no-default-features --features telers
 
     cargo test --no-default-features --features ruststream
@@ -38,9 +38,6 @@ test-compilation:
 overwrite-ui-tests:
     TRYBUILD=overwrite cargo test -p froodi --features compiled,async --test compile_fail errors
 
-bench-compiled:
-    cargo bench -p froodi --features compiled,async --bench compiled_registry
-
 bench-compilation:
     rustc --edition=2021 tools/compile_bench.rs -o /tmp/froodi-build-bench
     /tmp/froodi-build-bench "$PWD" /tmp/froodi-build-measurements 3 both
@@ -49,18 +46,41 @@ bench-init:
     cargo bench --profile release --frozen --bench sync_container_init
     cargo bench --profile release --frozen --bench async_container_init --features async
 
+bench-init-compiled:
+    cargo bench -p froodi --profile release --frozen --bench sync_container_init --features compiled
+    cargo bench -p froodi --profile release --frozen --bench async_container_init --features compiled,async
+
 bench-resolve:
     cargo bench --profile release --frozen --bench container_resolve --no-default-features
     cargo bench --profile release --frozen --bench async_container_resolve --no-default-features --features async
+
+bench-resolve-compiled:
+    cargo bench -p froodi --profile release --frozen --bench container_resolve --no-default-features --features compiled
+    cargo bench -p froodi --profile release --frozen --bench async_container_resolve --no-default-features --features compiled,async
 
 bench-resolve-concurrent:
     cargo bench --profile release --frozen --bench container_resolve_concurrent --no-default-features --features thread_safe
     cargo bench --profile release --frozen --bench async_container_resolve_concurrent --no-default-features --features async,thread_safe
 
+bench-resolve-concurrent-compiled:
+    cargo bench -p froodi --profile release --frozen --bench container_resolve_concurrent --no-default-features --features compiled,thread_safe
+    cargo bench -p froodi --profile release --frozen --bench async_container_resolve_concurrent --no-default-features --features compiled,async,thread_safe
+
 bench-compare:
     cargo bench --profile release --frozen --bench compare_container_resolve --no-default-features
+
+bench-compare-compiled:
+    cargo bench -p froodi --profile release --frozen --bench compare_container_resolve --no-default-features --features compiled
 
 bench-compare-concurrent:
     cargo bench --profile release --frozen --bench compare_container_resolve --no-default-features --features thread_safe
 
+bench-compare-concurrent-compiled:
+    cargo bench -p froodi --profile release --frozen --bench compare_container_resolve --no-default-features --features compiled,thread_safe
+
+bench-compare-registries:
+    cargo bench -p froodi --profile release --frozen --bench compiled_registry --features compiled,async
+
 bench: bench-init bench-resolve bench-resolve-concurrent
+
+bench-compiled: bench-init-compiled bench-resolve-compiled bench-resolve-concurrent-compiled
