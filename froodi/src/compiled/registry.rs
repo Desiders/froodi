@@ -34,20 +34,32 @@ pub struct Registry<Tree> {
 
 impl Registry<Empty> {
     pub fn empty() -> Self {
-        Self::from_tree::<DefaultScope, 5, 0>(Empty, [])
+        let (_, scopes, _) = Self::scope_data(DefaultScope::Runtime);
+        Self::from_parts(Empty, scopes)
+    }
+
+    #[doc(hidden)]
+    pub fn scope_data<S: Scope + Scopes<N, Scope = S>, const N: usize>(scope: S) -> (ScopeData, Vec<ScopeData>, fn(S) -> ScopeData) {
+        let (root, children) = S::all();
+        let mut scopes = vec![root.into()];
+        scopes.extend(children.into_iter().map(Into::into));
+        // Preserve the scope type for later clauses after consuming its first value.
+        (scope.into(), scopes, Into::into)
     }
 }
 
 impl<Tree> Registry<Tree> {
-    pub fn from_tree<S: Scope + Scopes<N, Scope = S>, const N: usize, const M: usize>(tree: Tree, _: [S; M]) -> Self {
-        let (root, children) = S::all();
-        let mut scopes = vec![root.into()];
-        scopes.extend(children.into_iter().map(Into::into));
+    pub fn from_parts(tree: Tree, scopes: Vec<ScopeData>) -> Self {
         Self { tree, scopes }
     }
 
-    pub fn from_parts(tree: Tree, scopes: Vec<ScopeData>) -> Self {
-        Self { tree, scopes }
+    /// Materializes linked edges into a native registry for later composition.
+    /// Cycle and scope validation are deferred to final container construction.
+    pub fn into_registry<Links>(self) -> RuntimeRegistry
+    where
+        Self: IntoRegistry<Links>,
+    {
+        IntoRegistry::into_registry(self)
     }
 }
 

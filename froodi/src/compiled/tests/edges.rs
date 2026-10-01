@@ -14,7 +14,6 @@ use crate::{
     async_registry as dynamic_async_registry, compiled_async_registry as async_registry,
 };
 use crate::{
-    compiled::IntoRegistry,
     compiled_registry as registry, context,
     errors::InstantiatorErrorKind,
     instance, registry as dynamic_registry, runtime,
@@ -335,6 +334,38 @@ fn ids_remap_after_erasure_composition_and_replacement() {
 }
 
 #[test]
+fn runtime_fragments_override_later_typed_providers_in_fragment_order() {
+    let first = dynamic_registry! { provide(App, instance(Value("first".into()))) };
+    let last = dynamic_registry! { provide(App, instance(Value("last".into()))) };
+    let container = SyncContainer::new(registry! {
+        extend(first, last),
+        provide(App, instance(Value("typed".into()))),
+        provide(App, output),
+    });
+
+    assert_eq!(container.get::<Output>().unwrap().0, "last");
+    assert_eq!(container.get_transient::<Value>().unwrap().0, "last");
+}
+
+#[cfg(feature = "async")]
+#[tokio::test]
+async fn async_runtime_fragments_override_later_typed_providers_in_fragment_order() {
+    let first = dynamic_async_registry! { provide(App, async || Ok(Value("first".into()))) };
+    let last = dynamic_async_registry! { provide(App, async || Ok(Value("last".into()))) };
+    let container = AsyncContainer::new(async_registry! {
+        extend(first, last),
+        provide(App, async || Ok(Value("typed".into()))),
+        provide(App, async |cached: Inject<Value>, transient: InjectTransient<Value>| {
+            assert_eq!(cached.0.0, transient.0.0);
+            Ok(Output(transient.0.0))
+        }),
+    });
+
+    assert_eq!(container.get::<Output>().await.unwrap().0, "last");
+    assert_eq!(container.get_transient::<Value>().await.unwrap().0, "last");
+}
+
+#[test]
 fn runtime_import_and_context_use_original_lifecycle() {
     let dynamic = dynamic_registry! { provide(App, instance(Value("runtime".into()))) };
     let app = SyncContainer::new(registry! {
@@ -516,4 +547,126 @@ async fn async_import_and_context_declarations_link_to_native_values() {
     let request = app.enter().with_context(context).build().unwrap();
     assert_eq!(request.get::<Output>().await.unwrap().0, "imported-42");
     assert!(request.get_transient::<u32>().await.is_err());
+}
+
+mod custom_scope {
+    #[cfg(feature = "async")]
+    use crate::{async_impl::Container as AsyncContainer, compiled_async_registry as async_registry};
+    use crate::{
+        compiled_registry as registry, instance, utils::thread_safety::RcThreadSafety, Container, Context, Inject, ResolveErrorKind, Scope,
+        ScopeData, Scopes,
+    };
+
+    #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+    enum MyScope {
+        Boot,
+        Work,
+        Task,
+    }
+
+    impl From<MyScope> for ScopeData {
+        fn from(scope: MyScope) -> Self {
+            Self {
+                priority: scope.priority(),
+                name: scope.name(),
+                is_skipped_by_default: scope.is_skipped_by_default(),
+            }
+        }
+    }
+
+    impl Scope for MyScope {
+        fn name(&self) -> &'static str {
+            match self {
+                MyScope::Boot => "boot",
+                MyScope::Work => "work",
+                MyScope::Task => "task",
+            }
+        }
+
+        fn priority(&self) -> u8 {
+            *self as u8
+        }
+
+        fn is_skipped_by_default(&self) -> bool {
+            matches!(self, MyScope::Boot)
+        }
+    }
+
+    impl Scopes<2> for MyScope {
+        type Scope = Self;
+
+        fn all() -> (Self, [Self; 2]) {
+            (MyScope::Boot, [MyScope::Work, MyScope::Task])
+        }
+    }
+
+    struct Wide(u32);
+    struct Narrow(RcThreadSafety<Wide>);
+
+    #[test]
+    fn indexed_dependencies_use_their_owning_custom_scope() {
+        let container = Container::new(registry! {
+            scope(MyScope::Work) [
+                provide(instance(7u32)),
+                provide(|number: Inject<u32>| Ok(Wide(*number.0))),
+            ],
+            provide(MyScope::Task, |wide: Inject<Wide>| Ok(Narrow(wide.0))),
+        });
+
+        match container.get::<Narrow>() {
+            Err(ResolveErrorKind::NoAccessible {
+                expected_scope_data,
+                actual_scope_data,
+            }) => assert_eq!((expected_scope_data.name, actual_scope_data.name), ("task", "work")),
+            other => panic!("expected NoAccessible, got {:?}", other.err()),
+        }
+
+        let mut context = Context::new();
+        context.insert(99u32);
+        let task = container
+            .clone()
+            .enter()
+            .with_scope(MyScope::Task)
+            .with_context(context)
+            .build()
+            .unwrap();
+        let narrow = task.get::<Narrow>().unwrap();
+        assert_eq!(narrow.0 .0, 7);
+        assert!(RcThreadSafety::ptr_eq(&narrow.0, &container.get::<Wide>().unwrap()));
+        assert_eq!(task.get_transient::<Wide>().unwrap().0, 7);
+    }
+
+    #[cfg(feature = "async")]
+    #[tokio::test]
+    async fn async_indexed_dependencies_use_their_owning_custom_scope() {
+        let container = AsyncContainer::new(async_registry! {
+            scope(MyScope::Work) [
+                provide(async || Ok(7u32)),
+                provide(async |number: Inject<u32>| Ok(Wide(*number.0))),
+            ],
+            provide(MyScope::Task, async |wide: Inject<Wide>| Ok(Narrow(wide.0))),
+        });
+
+        match container.get::<Narrow>().await {
+            Err(ResolveErrorKind::NoAccessible {
+                expected_scope_data,
+                actual_scope_data,
+            }) => assert_eq!((expected_scope_data.name, actual_scope_data.name), ("task", "work")),
+            other => panic!("expected NoAccessible, got {:?}", other.err()),
+        }
+
+        let mut context = Context::new();
+        context.insert(99u32);
+        let task = container
+            .clone()
+            .enter()
+            .with_scope(MyScope::Task)
+            .with_context(context)
+            .build()
+            .unwrap();
+        let narrow = task.get::<Narrow>().await.unwrap();
+        assert_eq!(narrow.0 .0, 7);
+        assert!(RcThreadSafety::ptr_eq(&narrow.0, &container.get::<Wide>().await.unwrap()));
+        assert_eq!(task.get_transient::<Wide>().await.unwrap().0, 7);
+    }
 }

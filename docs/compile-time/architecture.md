@@ -76,7 +76,10 @@ custom resolvers and ordinary dynamic instantiators still do type-based work.
 ## Composition and validation
 
 Typed `extend(...)` joins fragments before linking. Dynamic registries remain
-opaque fragments with native later-wins replacement semantics. Typed consumers
+opaque fragments. Native fragments override typed registrations regardless of
+position, and later native fragments win among themselves. Typed ambiguity checks
+remain unchanged. Macro expressions evaluate once in source order before the
+balanced tree is assembled. Typed consumers
 use `froodi::runtime::<T>()` or `froodi::context::<T>()` at those boundaries. Custom
 parameters use `froodi::RuntimeDependency<T>` to request runtime resolution and
 consume no edge; their arbitrary lookups remain opaque.
@@ -85,7 +88,11 @@ Collection converts declaration IDs to exact type keys. After composition and
 implicit registrations, `prepare` builds the winning registration table and
 remaps edges. Scope, cache policy, instantiator and finalizer travel together.
 Sync and async retain their native namespaces and async-first selection rules.
-Erased fragments retain indexed edges but defer cycle validation to runtime.
+Public `.into_registry()` / `.into_async_registry()` conversions retain indexed
+edges but defer cycle and scope validation until final construction, so later
+replacements can remove an intermediate cycle. Mixed validation uses async-first
+selection with sync fallback whenever either namespace has compiled executors;
+an async indexed table is only built for compiled async executors.
 
 Closed typed constructors evaluate `IntoRegistry::VALIDATE` through `finish`.
 The const DFS checks all retained immediate edges, including transient and
