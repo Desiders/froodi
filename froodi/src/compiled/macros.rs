@@ -145,6 +145,9 @@
 ///   Runtime composition, erased and larger graphs defer cycle checks to runtime; opaque lookups remain unknown.
 ///   Opaque graphs still receive runtime validation; scope/config checks remain runtime.
 ///   Final construction reuses successful closed cycle checks; native erasure carries no validation exemption.
+/// - Typed compositions keep linked dependency IDs when building the indexed executor table.
+///   Native fragments, imports, Context declarations and erasure require ID remapping after composition.
+///   Instantiators and scope/cache/finalizer state are still constructed at runtime.
 #[macro_export]
 macro_rules! compiled_registry {
     ($($tokens:tt)*) => {

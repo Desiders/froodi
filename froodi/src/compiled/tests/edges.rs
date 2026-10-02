@@ -190,6 +190,112 @@ fn one_instantiator_preserves_parameter_positions_in_different_topologies() {
     });
     assert_eq!(first.get::<Combined>().unwrap().0, [11, 22, 11]);
     assert_eq!(second.get_transient::<Combined>().unwrap().0, [33, 44, 33]);
+    assert_eq!(
+        first.inner.registry.indexed.iter().map(|(key, _)| key.clone()).collect::<Vec<_>>(),
+        [
+            TypeInfo::of::<First>(),
+            TypeInfo::of::<Combined>(),
+            TypeInfo::of::<Second>(),
+            TypeInfo::of::<SyncContainer>()
+        ]
+    );
+    let RegistrationInstantiator::Compiled(executor) = &first.inner.registry.get(&TypeInfo::of::<Combined>()).unwrap().instantiator else {
+        panic!("expected compiled instantiator");
+    };
+    assert_eq!(executor.edges.iter().map(|id| id.index()).collect::<Vec<_>>(), [0, 2, 0]);
+}
+
+#[test]
+fn fixed_plan_keeps_linked_edge_storage() {
+    use crate::compiled::{prepare, IntoRegistry};
+
+    let (registry, plan) = registry! {
+        provide(App, instance(First(11))),
+        provide(App, combine),
+        provide(App, instance(Second(22))),
+    }
+    .materialize();
+    let RegistrationInstantiator::Compiled(executor) = &registry.get(&TypeInfo::of::<Combined>()).unwrap().instantiator else {
+        panic!("expected compiled instantiator");
+    };
+    let edges = executor.edges.clone();
+    assert!(plan.is_some());
+    let registry = prepare(registry, false, plan);
+    let RegistrationInstantiator::Compiled(executor) = &registry.get(&TypeInfo::of::<Combined>()).unwrap().instantiator else {
+        panic!("expected compiled instantiator");
+    };
+    assert!(RcThreadSafety::ptr_eq(&edges, &executor.edges));
+}
+
+#[test]
+fn fixed_plan_preserves_unused_duplicate_registration_precedence() {
+    let container = SyncContainer::new(registry! {
+        provide(App, instance(7u32)),
+        provide(App, instance(9u32)),
+    });
+    assert_eq!(*container.get::<u32>().unwrap(), 9);
+    assert_eq!(container.get_transient::<u32>().unwrap(), 9);
+}
+
+#[cfg(feature = "async")]
+#[tokio::test]
+async fn fixed_async_plan_shares_ids_with_sync_dependencies() {
+    let container = AsyncContainer::new(async_registry! {
+        provide(App, async |first: Inject<First>, _: RuntimeDependency<Opaque>, second: InjectTransient<Second>, repeated: Inject<First>| {
+            Ok(Combined([first.0.0, second.0.0, repeated.0.0]))
+        }),
+        extend(registry! {
+            provide(App, instance(First(11))),
+            provide(App, |first: Inject<First>| Ok(Second(first.0.0 * 2))),
+        }),
+    });
+    let keys = [
+        TypeInfo::of::<Combined>(),
+        TypeInfo::of::<First>(),
+        TypeInfo::of::<Second>(),
+        TypeInfo::of::<SyncContainer>(),
+        TypeInfo::of::<AsyncContainer>(),
+    ];
+    assert_eq!(
+        container
+            .inner
+            .registry
+            .indexed
+            .iter()
+            .map(|(key, _)| key.clone())
+            .collect::<Vec<_>>(),
+        keys
+    );
+    assert_eq!(
+        container
+            .sync
+            .inner
+            .registry
+            .indexed
+            .iter()
+            .map(|(key, _)| key.clone())
+            .collect::<Vec<_>>(),
+        keys
+    );
+    let RegistrationInstantiator::Compiled(executor) = &container.sync.inner.registry.get(&TypeInfo::of::<Second>()).unwrap().instantiator
+    else {
+        panic!("expected compiled instantiator");
+    };
+    assert_eq!(executor.edges.iter().map(|id| id.index()).collect::<Vec<_>>(), [1]);
+    assert_eq!(container.get::<Combined>().await.unwrap().0, [11, 22, 11]);
+    assert_eq!(container.sync.get::<Second>().unwrap().0, 22);
+}
+
+#[cfg(feature = "async")]
+#[tokio::test]
+async fn fixed_async_plan_preserves_native_namespace_precedence_without_edges() {
+    let container = AsyncContainer::new(async_registry! {
+        provide(App, async || Ok::<_, InstantiateErrorKind>(9u32)),
+        extend(registry! { provide(App, instance(7u32)) }),
+    });
+    assert_eq!(*container.get::<u32>().await.unwrap(), 9);
+    assert_eq!(container.get_transient::<u32>().await.unwrap(), 9);
+    assert_eq!(*container.sync.get::<u32>().unwrap(), 7);
 }
 
 #[cfg(feature = "async")]

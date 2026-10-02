@@ -69,7 +69,7 @@ impl Container {
     pub fn new_with_start_scope<S: Scope>(registry: Registry, scope: S) -> Self {
         let priority = scope.priority();
         #[cfg(feature = "compiled")]
-        let registry = prepare(registry, false);
+        let registry = prepare(registry, false, None);
         Self::build_root(registry, move |scope_data| scope_data.priority == priority)
     }
 
