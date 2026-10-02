@@ -93,6 +93,10 @@ impl Topology {
         self.closed && self.count <= LIMIT
     }
 
+    pub const fn has_fixed_ids(&self) -> bool {
+        self.fixed
+    }
+
     pub const fn validate(&self) {
         // Runtime composition can replace known edges; opaque parameters alone cannot.
         if !self.fixed || self.count > LIMIT {

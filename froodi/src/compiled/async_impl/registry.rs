@@ -200,6 +200,14 @@ pub trait IntoRegistry<Links> {
     fn validate_runtime(_: &RegistryWithSync) {}
 
     fn into_registry(self) -> RegistryWithSync;
+
+    #[doc(hidden)]
+    fn materialize(self) -> (RegistryWithSync, Option<Vec<TypeInfo>>)
+    where
+        Self: Sized,
+    {
+        (self.into_registry(), None)
+    }
 }
 
 impl IntoRegistry<()> for RegistryWithSync {
@@ -238,6 +246,10 @@ where
     }
 
     fn into_registry(self) -> RegistryWithSync {
+        IntoRegistry::<Links>::materialize(self).0
+    }
+
+    fn materialize(self) -> (RegistryWithSync, Option<Vec<TypeInfo>>) {
         let mut scopes = self.scopes;
         scopes.sort_by_key(|scope| scope.priority);
         let root = Node(
@@ -247,12 +259,22 @@ where
         let mut entries = Vec::new();
         let mut runtime = Vec::new();
         root.link().collect_async(&mut entries, &mut runtime);
-        assemble(entries, runtime, scopes)
+        assemble(
+            entries,
+            runtime,
+            scopes,
+            <Root<Tree> as Link<Index<Tree>, Links>>::TOPOLOGY.has_fixed_ids(),
+        )
     }
 }
 
 // Keep runtime assembly closures independent of Root and Links.
-fn assemble(entries: Vec<CollectedAsyncRegistration>, runtime: Vec<RegistryWithSync>, scopes: Vec<ScopeData>) -> RegistryWithSync {
+fn assemble(
+    entries: Vec<CollectedAsyncRegistration>,
+    runtime: Vec<RegistryWithSync>,
+    scopes: Vec<ScopeData>,
+    fixed_ids: bool,
+) -> (RegistryWithSync, Option<Vec<TypeInfo>>) {
     let keys: Vec<_> = entries.iter().map(|entry| entry.key.clone()).collect();
     let mut sync = SyncRegistry {
         scopes_data: scopes.clone(),
@@ -285,12 +307,13 @@ fn assemble(entries: Vec<CollectedAsyncRegistration>, runtime: Vec<RegistryWithS
         sync.entries.extend(fragment.sync.entries);
         registry.entries.extend(fragment.registry.entries);
     }
-    RegistryWithSync { registry, sync }
+    (RegistryWithSync { registry, sync }, fixed_ids.then_some(keys))
 }
 
-pub(crate) fn prepare(mut registries: RegistryWithSync, cycles_checked: bool) -> RegistryWithSync {
+pub(crate) fn prepare(mut registries: RegistryWithSync, cycles_checked: bool, plan: Option<Vec<TypeInfo>>) -> RegistryWithSync {
     let compiled_sync = has_compiled_sync_executors(&registries.sync);
-    registries.sync = prepare_sync(registries.sync, cycles_checked);
+    let sync_plan = if compiled_sync { plan.clone() } else { None };
+    registries.sync = prepare_sync(registries.sync, cycles_checked, sync_plan);
     let registry = &mut registries.registry;
     let compiled_async = has_compiled_executors(registry);
     if !compiled_sync && !compiled_async {
@@ -320,33 +343,38 @@ pub(crate) fn prepare(mut registries: RegistryWithSync, cycles_checked: bool) ->
     if !compiled_async {
         return registries;
     }
-    let mut keys: BTreeSet<_> = registry.entries.keys().chain(registries.sync.entries.keys()).cloned().collect();
-    for entry in registry.entries.values() {
-        if let AsyncRegistrationInstantiator::Compiled(executor) = &entry.instantiator {
-            keys.extend(executor.keys.iter().cloned());
+    let keys = if let Some(keys) = plan {
+        keys
+    } else {
+        let mut keys: BTreeSet<_> = registry.entries.keys().chain(registries.sync.entries.keys()).cloned().collect();
+        for entry in registry.entries.values() {
+            if let AsyncRegistrationInstantiator::Compiled(executor) = &entry.instantiator {
+                keys.extend(executor.keys.iter().cloned());
+            }
         }
-    }
-    let ids: BTreeMap<_, _> = keys
+        let ids: BTreeMap<_, _> = keys
+            .into_iter()
+            .enumerate()
+            .map(|(id, key)| (key, RegistrationId(u32::try_from(id).expect("too many registrations"))))
+            .collect();
+        for entry in registry.entries.values_mut() {
+            if let AsyncRegistrationInstantiator::Compiled(executor) = &mut entry.instantiator {
+                executor.remap(&ids);
+            }
+        }
+        ids.into_keys().collect()
+    };
+    registry.indexed = keys
         .into_iter()
-        .enumerate()
-        .map(|(id, key)| (key, RegistrationId(u32::try_from(id).expect("too many registrations"))))
-        .collect();
-    for entry in registry.entries.values_mut() {
-        if let AsyncRegistrationInstantiator::Compiled(executor) = &mut entry.instantiator {
-            executor.remap(&ids);
-        }
-    }
-    registry.indexed = ids
-        .keys()
         .map(|key| {
             let data = registry
                 .entries
-                .get(key)
+                .get(&key)
                 .cloned()
                 .map(Selected::Async)
-                .or_else(|| registries.sync.entries.get(key).cloned().map(Selected::Sync))
+                .or_else(|| registries.sync.entries.get(&key).cloned().map(Selected::Sync))
                 .unwrap_or(Selected::Missing);
-            (key.clone(), data)
+            (key, data)
         })
         .collect();
     registries
@@ -354,10 +382,10 @@ pub(crate) fn prepare(mut registries: RegistryWithSync, cycles_checked: bool) ->
 
 pub(crate) fn finish<Links, Reg: IntoRegistry<Links>>(registry: Reg) -> RegistryWithSync {
     let () = Reg::VALIDATE;
-    let registry = registry.into_registry();
+    let (registry, plan) = registry.materialize();
     Reg::validate_runtime(&registry);
     // The same final topology covers both namespaces; erasure never retains this proof.
-    prepare(registry, Reg::CYCLES_CHECKED)
+    prepare(registry, Reg::CYCLES_CHECKED, plan)
 }
 
 fn has_compiled_executors(registry: &AsyncRegistry) -> bool {

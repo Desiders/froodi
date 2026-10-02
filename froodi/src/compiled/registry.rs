@@ -165,6 +165,14 @@ pub trait IntoRegistry<Links> {
     fn validate_runtime(_: &RuntimeRegistry) {}
 
     fn into_registry(self) -> RuntimeRegistry;
+
+    #[doc(hidden)]
+    fn materialize(self) -> (RuntimeRegistry, Option<Vec<TypeInfo>>)
+    where
+        Self: Sized,
+    {
+        (self.into_registry(), None)
+    }
 }
 
 impl IntoRegistry<()> for RuntimeRegistry {
@@ -191,18 +199,32 @@ where
     }
 
     fn into_registry(self) -> RuntimeRegistry {
+        IntoRegistry::<Links>::materialize(self).0
+    }
+
+    fn materialize(self) -> (RuntimeRegistry, Option<Vec<TypeInfo>>) {
         let mut scopes = self.scopes;
         scopes.sort_by_key(|scope| scope.priority);
         let root = Node(self.tree, ContainerLeaf { scope: scopes[0] });
         let mut entries = Vec::new();
         let mut runtime = Vec::new();
         root.link().collect(&mut entries, &mut runtime);
-        assemble(entries, runtime, scopes)
+        assemble(
+            entries,
+            runtime,
+            scopes,
+            <Root<Tree> as Link<Index<Tree>, Links>>::TOPOLOGY.has_fixed_ids(),
+        )
     }
 }
 
 // Keep runtime assembly closures independent of Root and Links.
-fn assemble(mut entries: Vec<CollectedRegistration>, runtime: Vec<RuntimeRegistry>, scopes: Vec<ScopeData>) -> RuntimeRegistry {
+fn assemble(
+    mut entries: Vec<CollectedRegistration>,
+    runtime: Vec<RuntimeRegistry>,
+    scopes: Vec<ScopeData>,
+    fixed_ids: bool,
+) -> (RuntimeRegistry, Option<Vec<TypeInfo>>) {
     let keys: Vec<_> = entries.iter().map(|entry| entry.key.clone()).collect();
     for entry in &mut entries {
         let Some(data) = &mut entry.data else { continue };
@@ -222,10 +244,10 @@ fn assemble(mut entries: Vec<CollectedRegistration>, runtime: Vec<RuntimeRegistr
     for fragment in runtime {
         registry.entries.extend(fragment.entries);
     }
-    registry
+    (registry, fixed_ids.then_some(keys))
 }
 
-pub(crate) fn prepare(mut registry: RuntimeRegistry, cycles_checked: bool) -> RuntimeRegistry {
+pub(crate) fn prepare(mut registry: RuntimeRegistry, cycles_checked: bool, plan: Option<Vec<TypeInfo>>) -> RuntimeRegistry {
     if !has_compiled_executors(&registry) {
         return registry;
     }
@@ -233,6 +255,17 @@ pub(crate) fn prepare(mut registry: RuntimeRegistry, cycles_checked: bool) -> Ru
         registry.detect_cyclic_dependencies().expect("invalid compiled registry");
     }
     registry.detect_unreachable_scopes().expect("invalid compiled registry");
+    // Only final typed composition retains declaration-order IDs. Erasure discards this plan.
+    if let Some(keys) = plan {
+        registry.indexed = keys
+            .into_iter()
+            .map(|key| {
+                let data = registry.entries.get(&key).cloned();
+                (key, data)
+            })
+            .collect();
+        return registry;
+    }
     let mut keys: BTreeSet<_> = registry.entries.keys().cloned().collect();
     for entry in registry.entries.values() {
         if let RegistrationInstantiator::Compiled(executor) = &entry.instantiator {
@@ -255,10 +288,10 @@ pub(crate) fn prepare(mut registry: RuntimeRegistry, cycles_checked: bool) -> Ru
 
 pub(crate) fn finish<Links, Reg: IntoRegistry<Links>>(registry: Reg) -> RuntimeRegistry {
     let () = Reg::VALIDATE;
-    let registry = registry.into_registry();
+    let (registry, plan) = registry.materialize();
     Reg::validate_runtime(&registry);
     // Consume the proof only for this final composition; native registries retain no exemption.
-    prepare(registry, Reg::CYCLES_CHECKED)
+    prepare(registry, Reg::CYCLES_CHECKED, plan)
 }
 
 pub(super) fn has_compiled_executors(registry: &RuntimeRegistry) -> bool {
