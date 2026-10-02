@@ -43,12 +43,13 @@ fn compiled_registration_errors() {
 
 #[cfg(feature = "compiled")]
 #[test]
-fn compiled_cycle_errors() {
+fn compiled_topology_errors() {
     let cases = trybuild::TestCases::new();
     // A pass case makes trybuild build this suite, evaluating generic const validation.
     cases.pass("tests/ui/compiled/uninstantiated.rs");
     cases.pass("tests/ui/compiled/resolver_fallback.rs");
     cases.pass("tests/ui/compiled/opaque_dag.rs");
+    cases.pass("tests/ui/compiled/static_scope_uninstantiated.rs");
     for case in [
         "self_cycle",
         "indirect",
@@ -57,11 +58,14 @@ fn compiled_cycle_errors() {
         "generic",
         "opaque_cycle",
         "limit_sync_cycle",
+        "static_scope",
+        "static_scope_generic",
+        "static_scope_transient",
     ] {
         cases.compile_fail(format!("tests/ui/compiled/{case}.rs"));
     }
     #[cfg(feature = "async")]
-    for case in ["async_cycle", "opaque_async_cycle", "limit_async_cycle"] {
+    for case in ["async_cycle", "opaque_async_cycle", "limit_async_cycle", "static_scope_async"] {
         cases.compile_fail(format!("tests/ui/compiled/{case}.rs"));
     }
 }

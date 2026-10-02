@@ -16,6 +16,7 @@ use alloc::{
     vec,
     vec::Vec,
 };
+use core::marker::PhantomData;
 
 #[doc(hidden)]
 #[derive(Clone, Copy)]
@@ -32,6 +33,15 @@ pub struct Registry<Tree> {
     pub(super) scopes: Vec<ScopeData>,
 }
 
+pub struct ScopeConverter<ScopeType, const N: usize>(PhantomData<fn() -> ScopeType>);
+
+impl<ScopeType, const N: usize> ScopeConverter<ScopeType, N> {
+    #[allow(clippy::unused_self)]
+    pub fn convert<S: Scope + Scopes<N, Scope = ScopeType>>(&self, scope: S) -> ScopeData {
+        scope.into()
+    }
+}
+
 impl Registry<Empty> {
     pub fn empty() -> Self {
         let (_, scopes, _) = Self::scope_data(DefaultScope::Runtime);
@@ -39,12 +49,14 @@ impl Registry<Empty> {
     }
 
     #[doc(hidden)]
-    pub fn scope_data<S: Scope + Scopes<N, Scope = S>, const N: usize>(scope: S) -> (ScopeData, Vec<ScopeData>, fn(S) -> ScopeData) {
+    pub fn scope_data<S: Scope + Scopes<N>, const N: usize>(scope: S) -> (ScopeData, Vec<ScopeData>, ScopeConverter<S::Scope, N>)
+    where
+        S::Scope: Into<ScopeData>,
+    {
         let (root, children) = S::all();
         let mut scopes = vec![root.into()];
         scopes.extend(children.into_iter().map(Into::into));
-        // Preserve the scope type for later clauses after consuming its first value.
-        (scope.into(), scopes, Into::into)
+        (scope.into(), scopes, ScopeConverter(PhantomData))
     }
 }
 

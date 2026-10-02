@@ -1,10 +1,16 @@
 [package]
 name = "froodi-public-consumer"
+default-run = "froodi-public-consumer"
 version = "0.0.0"
 edition = "2021"
 publish = false
 
 [workspace]
+
+[[bin]]
+name = "static-scope"
+path = "src/bin/static_scope.rs"
+required-features = ["unified"]
 
 [features]
 compiled = ["di/compiled"]

@@ -1,4 +1,4 @@
-use alloc::collections::BTreeMap;
+use alloc::{collections::BTreeMap, string::String};
 use core::{
     any::{type_name, TypeId},
     cmp::Ordering,
@@ -96,8 +96,15 @@ impl TypeInfo {
 
     #[inline]
     #[must_use]
-    pub(crate) fn short_name(&self) -> &'static str {
-        self.name.rsplit_once("::").map_or(self.name, |(_, name)| name)
+    pub(crate) fn short_name(&self) -> String {
+        let mut short = String::new();
+        for part in self
+            .name
+            .split_inclusive(|ch: char| !ch.is_alphanumeric() && !matches!(ch, '_' | ':'))
+        {
+            short.push_str(part.rsplit_once("::").map_or(part, |(_, name)| name));
+        }
+        short
     }
 }
 
@@ -108,7 +115,7 @@ mod tests {
     extern crate std;
 
     use super::TypeInfo;
-    use alloc::{collections::BTreeMap, format, string::ToString as _};
+    use alloc::{boxed::Box, collections::BTreeMap, format, string::ToString as _, vec::Vec};
     use core::{
         cmp::Ordering,
         hash::{Hash as _, Hasher},
@@ -240,7 +247,7 @@ mod tests {
         assert!(ti.name.contains("::"), "name = {}", ti.name);
         assert_eq!(short, "Foo");
         assert!(!short.contains("::"), "short = {short}");
-        assert!(ti.name.ends_with(short), "name = {}, short = {short}", ti.name);
+        assert!(ti.name.ends_with(&short), "name = {}, short = {short}", ti.name);
     }
 
     #[test]
@@ -249,5 +256,15 @@ mod tests {
         let ti = TypeInfo::of::<u32>();
         assert_eq!(ti.name, "u32");
         assert_eq!(ti.short_name(), "u32");
+    }
+
+    #[test]
+    fn test_short_name_preserves_nested_type_syntax() {
+        trait Greeter {}
+
+        assert_eq!(TypeInfo::of::<Box<dyn Greeter>>().short_name(), "Box<dyn Greeter>");
+        assert_eq!(TypeInfo::of::<BTreeMap<Foo, Vec<Bar>>>().short_name(), "BTreeMap<Foo, Vec<Bar>>");
+        assert_eq!(TypeInfo::of::<&[(Foo, Box<Bar>); 2]>().short_name(), "&[(Foo, Box<Bar>); 2]");
+        assert_eq!(TypeInfo::of::<fn(Foo) -> Bar>().short_name(), "fn(Foo) -> Bar");
     }
 }

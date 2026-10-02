@@ -1,5 +1,5 @@
 //! rustc --edition=2021 tools/compile_bench.rs -o /tmp/froodi-build-bench
-//! /tmp/froodi-build-bench <repo> <fresh-output> [samples=3] [dynamic|compiled|both] [measurement]
+//! /tmp/froodi-build-bench <repo> <fresh-output> [samples=3] [dynamic|compiled|both] [measurement] [default|runtime|static] [shapes]
 //! Only app artifacts are cleaned; dependencies stay warm. All generated files are disposable.
 use std::{
     env, fs,
@@ -31,7 +31,7 @@ fn cargo(dir: &Path, target: &Path) -> Command {
     command
 }
 
-fn source(shape: &str, edit: &str, engine: &str) -> String {
+fn source(shape: &str, edit: &str, engine: &str, scope: &str) -> String {
     let count = if shape == "chain100" { 100 } else { 500 };
     let registry = if engine == "compiled" {
         "froodi::compiled_registry"
@@ -39,29 +39,83 @@ fn source(shape: &str, edit: &str, engine: &str) -> String {
         "froodi::registry"
     };
     let mut text = format!("#![allow(unused_imports, dead_code)]\nuse {registry} as registry;\nuse froodi::{{Container, Inject, InstantiateErrorKind, DefaultScope::App}};\n");
-    for i in 0..count {
-        text.push_str(&format!("struct T{i}(usize);\n"));
-        if i == 0 || shape == "flat500" {
-            let value = if edit == "body" && i == 0 { 2 } else { 1 };
+    if scope != "default" {
+        text.push_str(
+            r#"
+use froodi::{Scope, ScopeData, Scopes};
+
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+struct BenchScope;
+
+impl From<BenchScope> for ScopeData {
+    fn from(_: BenchScope) -> Self {
+        Self { name: "bench", priority: 1, is_skipped_by_default: false }
+    }
+}
+
+impl Scopes<0> for BenchScope {
+    type Scope = Self;
+
+    fn all() -> (Self, [Self; 0]) { (BenchScope, []) }
+}
+"#,
+        );
+        if scope == "static" {
+            text.push_str(
+                r#"
+impl froodi::StaticScope for BenchScope {
+    const DATA: ScopeData = ScopeData { name: "bench", priority: 1, is_skipped_by_default: false };
+}
+"#,
+            );
+        } else {
+            text.push_str(
+                r#"
+impl Scope for BenchScope {
+    fn name(&self) -> &'static str { "bench" }
+
+    fn priority(&self) -> u8 { 1 }
+}
+"#,
+            );
+        }
+    }
+    for index in 0..count {
+        text.push_str(&format!("struct T{index}(usize);\n"));
+        if index == 0 || shape == "flat500" {
+            let value = if edit == "body" && index == 0 { 2 } else { 1 };
             text.push_str(&format!(
-                "fn p{i}() -> Result<T{i}, InstantiateErrorKind> {{ Ok(T{i}({value})) }}\n"
+                "fn p{index}() -> Result<T{index}, InstantiateErrorKind> {{ Ok(T{index}({value})) }}\n"
+            ));
+        } else if shape == "chain100" && scope == "default" {
+            text.push_str(&format!(
+                "fn p{index}(dep: Inject<T{}>) -> Result<T{index}, InstantiateErrorKind> {{ Ok(T{index}(dep.0.0 + 1)) }}\n",
+                index - 1
             ));
         } else {
+            let edges = if shape == "edges2000" { index.min(4) } else { 1 };
+            let parameters = (1..=edges)
+                .map(|offset| format!("dep{offset}: Inject<T{}>", index - offset))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let work = (1..=edges)
+                .map(|offset| format!("std::hint::black_box(&dep{offset}.0);"))
+                .collect::<String>();
             text.push_str(&format!(
-                "fn p{i}(dep: Inject<T{}>) -> Result<T{i}, InstantiateErrorKind> {{ Ok(T{i}(dep.0.0 + 1)) }}\n",
-                i - 1
+                "fn p{index}({parameters}) -> Result<T{index}, InstantiateErrorKind> {{ {work} Ok(T{index}(1)) }}\n"
             ));
         }
     }
     text.push_str("fn main() { let registry = registry! {\n");
-    for i in 0..count {
-        text.push_str(&format!("provide(App, p{i}),\n"));
+    let value = if scope == "default" { "App" } else { "BenchScope" };
+    for index in 0..count {
+        text.push_str(&format!("provide({value}, p{index}),\n"));
     }
     if edit == "topology" {
-        text.push_str("provide(App, || Ok::<u64, InstantiateErrorKind>(1)),\n");
+        text.push_str(&format!("provide({value}, || Ok::<u64, InstantiateErrorKind>(1)),\n"));
     }
     text.push_str(&format!(
-        "}}; let c = Container::new(registry); std::hint::black_box(c.get::<T{}>().unwrap().0); }}\n",
+        "}}; let container = Container::new(registry); std::hint::black_box(container.get::<T{}>().unwrap().0); }}\n",
         count - 1
     ));
     text
@@ -71,7 +125,7 @@ fn main() {
     let args: Vec<_> = env::args().collect();
     assert!(
         args.len() >= 3,
-        "usage: compile-bench <repo> <fresh-output> [samples=3] [dynamic|compiled|both] [measurement]"
+        "usage: compile-bench <repo> <fresh-output> [samples=3] [dynamic|compiled|both] [measurement] [default|runtime|static] [shapes]"
     );
     let repo = fs::canonicalize(&args[1]).unwrap();
     let output = PathBuf::from(&args[2]);
@@ -83,6 +137,16 @@ fn main() {
     let selected = args.get(4).map_or("both", String::as_str);
     assert!(matches!(selected, "dynamic" | "compiled" | "both"));
     let only = args.get(5).map(String::as_str);
+    let scope = args.get(6).map_or("default", String::as_str);
+    assert!(matches!(scope, "default" | "runtime" | "static"));
+    assert!(
+        scope != "static" || selected == "compiled",
+        "static scopes require the compiled feature"
+    );
+    let shapes = args.get(7).map_or("chain100,flat500", String::as_str);
+    assert!(shapes
+        .split(',')
+        .all(|shape| matches!(shape, "chain100" | "flat500" | "edges500" | "edges2000")));
     assert!(only.is_none_or(|only| only
         .split(',')
         .all(|measurement| matches!(measurement, "clean-app" | "body" | "topology" | "release"))));
@@ -94,13 +158,13 @@ fn main() {
         if selected != "both" && selected != engine {
             continue;
         }
-        for shape in ["chain100", "flat500"] {
+        for shape in shapes.split(',') {
             let dir = output.join(format!("{engine}-{shape}"));
             fs::create_dir_all(dir.join("src")).unwrap();
             let features = if engine == "compiled" { "[\"compiled\"]" } else { "[]" };
             fs::write(dir.join("Cargo.toml"), format!("[package]\nname = \"compile-bench-app\"\nversion = \"0.0.0\"\nedition = \"2021\"\n[workspace]\n[dependencies]\nfroodi = {{ path = {:?}, features = {features} }}\n", repo.join("froodi"))).unwrap();
             let src = dir.join("src/main.rs");
-            let original = source(shape, "none", engine);
+            let original = source(shape, "none", engine, scope);
             fs::write(&src, &original).unwrap();
             run(cargo(&dir, &target).args(["build", "--offline"]), &dir.join("warm.log"));
             for measurement in ["clean-app", "body", "topology", "release"] {
@@ -126,7 +190,7 @@ fn main() {
                         }
                         run(&mut clean, &dir.join("clean.log"));
                     } else {
-                        fs::write(&src, source(shape, measurement, engine)).unwrap();
+                        fs::write(&src, source(shape, measurement, engine, scope)).unwrap();
                     }
                     samples.push(run(&mut build, &dir.join(format!("{measurement}-{sample}.log"))));
                     let binary = target.join(if release { "release" } else { "debug" }).join("compile-bench-app");

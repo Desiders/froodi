@@ -150,11 +150,13 @@ fn leaf(runtime: &TokenStream2, constructor: &TokenStream2, scope: &Ident, entry
             formatted
                 .strip_prefix("fn __froodi_diagnostic() { let _ = ")
                 .and_then(|signature| signature.strip_suffix(" { __froodi_body() }; }"))
-                .map(|signature| format!("{signature} ..."))
-                .unwrap_or_else(|| {
-                    let inputs = &closure.inputs;
-                    format!("|{}| ...", quote!(#inputs))
-                })
+                .map_or_else(
+                    || {
+                        let inputs = &closure.inputs;
+                        format!("|{}| ...", quote!(#inputs))
+                    },
+                    |signature| format!("{signature} ..."),
+                )
         }
         _ => "instantiator expression".into(),
     };
@@ -188,7 +190,7 @@ fn leaf(runtime: &TokenStream2, constructor: &TokenStream2, scope: &Ident, entry
         }
         let #inst_binding = #inst;
         #(#bindings)*
-        #runtime::LocatedRegistration::<_, #source>::new(#constructor(#scope, #inst_binding, #config, #finalizer))
+        #scope.locate::<_, #source>(#constructor(#scope.data, #inst_binding, #config, #finalizer))
     })
 }
 
@@ -197,7 +199,7 @@ fn expand(input: &RegistryInput, runtime: &TokenStream2, constructor: &TokenStre
     let mut first_scopes = None;
     let mut extensions = Vec::new();
     let mut bindings = Vec::new();
-    let scope_converter = format_ident!("__froodi_scope_data", span = Span::mixed_site());
+    let scope_converter = format_ident!("__froodi_scope_converter", span = Span::mixed_site());
     for clause in &input.clauses {
         let (scope, entries) = match clause {
             Clause::Scope { scope, entries } => (scope, entries.iter().collect::<Vec<_>>()),
@@ -214,16 +216,26 @@ fn expand(input: &RegistryInput, runtime: &TokenStream2, constructor: &TokenStre
             }
         };
         let index = leaves.len();
-        let scope_binding = format_ident!("__froodi_scope_{index}", span = Span::mixed_site());
+        let converted_scope = format_ident!("__froodi_scope_{index}", span = Span::mixed_site());
+        let raw_scope = format_ident!("__froodi_raw_scope_{index}", span = Span::mixed_site());
+        let scope_type = format_ident!("__froodi_scope_type_{index}", span = Span::mixed_site());
+        bindings.push(quote! {
+            let #raw_scope = #scope;
+            let #scope_type = #runtime::ScopeType::new(&#raw_scope);
+        });
         if first_scopes.is_none() {
             let scopes_binding = format_ident!("__froodi_scopes", span = Span::mixed_site());
-            bindings.push(quote!(let (#scope_binding, #scopes_binding, #scope_converter) = #runtime::Registry::scope_data(#scope);));
+            bindings.push(quote!(use #runtime::ClassifyScope as _;));
+            bindings.push(quote!(let (#converted_scope, #scopes_binding, #scope_converter) = #runtime::Registry::scope_data(#raw_scope);));
             first_scopes = Some(scopes_binding);
         } else {
-            bindings.push(quote!(let #scope_binding = #scope_converter(#scope);));
+            bindings.push(quote!(let #converted_scope = #scope_converter.convert(#raw_scope);));
         }
+        bindings.push(quote! {
+            let #converted_scope = (&&#scope_type).classify(#converted_scope);
+        });
         for entry in entries {
-            let value = leaf(runtime, constructor, &scope_binding, entry);
+            let value = leaf(runtime, constructor, &converted_scope, entry);
             let binding = format_ident!("__froodi_registration_{}", leaves.len(), span = Span::mixed_site());
             bindings.push(quote!(let #binding = #value;));
             leaves.push(quote!(#binding));

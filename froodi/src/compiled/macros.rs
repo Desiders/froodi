@@ -1,6 +1,9 @@
 /// The `compiled_registry!` macro is used to create a typed dependency registry with various configuration options.
 ///
 /// Requires the `compiled` feature. Use the result with [`Container::new`](crate::Container::new).
+/// Scope types implementing [`StaticScope`](crate::StaticScope) retain static
+/// metadata for earlier scope diagnostics. Ordinary scope values, including
+/// [`DefaultScope`](crate::DefaultScope), keep runtime validation and the same syntax.
 ///
 /// ### `provide` syntax
 ///

@@ -1,11 +1,15 @@
 //! Const topology exists only during linking; executors retain numeric edges alone.
 
+use crate::ScopeData;
+use core::str::from_utf8;
+
 const LIMIT: usize = 1024;
 
 pub struct Topology {
     count: usize,
     closed: bool,
     fixed: bool,
+    has_static_scopes: bool,
     shape: Shape,
 }
 
@@ -19,12 +23,14 @@ enum Shape {
 struct TopologyLeaf {
     targets: &'static [Option<usize>],
     source: &'static str,
+    scope: Option<&'static ScopeData>,
 }
 
 impl TopologyLeaf {
     const EMPTY: Self = Self {
         targets: &[],
         source: "unnamed registration",
+        scope: None,
     };
 }
 
@@ -33,12 +39,14 @@ impl Topology {
         count: 0,
         closed: true,
         fixed: true,
+        has_static_scopes: false,
         shape: Shape::Empty,
     };
     pub const OPEN: Self = Self {
         count: 0,
         closed: false,
         fixed: false,
+        has_static_scopes: false,
         shape: Shape::Empty,
     };
 
@@ -55,6 +63,7 @@ impl Topology {
             count: 1,
             closed,
             fixed: true,
+            has_static_scopes: false,
             shape: Shape::Leaf(TopologyLeaf {
                 targets,
                 ..TopologyLeaf::EMPTY
@@ -69,11 +78,20 @@ impl Topology {
         self
     }
 
+    pub const fn with_scope(mut self, scope: Option<&'static ScopeData>) -> Self {
+        if let Shape::Leaf(ref mut leaf) = self.shape {
+            leaf.scope = scope;
+            self.has_static_scopes = scope.is_some();
+        }
+        self
+    }
+
     pub const fn branch(left: &'static Self, right: &'static Self) -> Self {
         Self {
             count: left.count + right.count,
             closed: left.closed && right.closed,
             fixed: left.fixed && right.fixed,
+            has_static_scopes: left.has_static_scopes || right.has_static_scopes,
             shape: Shape::Branch(left, right),
         }
     }
@@ -104,6 +122,9 @@ impl Topology {
         }
         let mut nodes = [TopologyLeaf::EMPTY; LIMIT];
         self.flatten(&mut nodes, 0);
+        if self.closed && self.has_static_scopes {
+            validate_scopes(&nodes, self.count);
+        }
         let mut color = [0u8; LIMIT];
         let mut stack = [0usize; LIMIT];
         let mut next = [0usize; LIMIT];
@@ -143,6 +164,38 @@ impl Topology {
     }
 }
 
+const fn validate_scopes(nodes: &[TopologyLeaf; LIMIT], count: usize) {
+    let mut consumer = 0;
+    while consumer < count {
+        if let Some(from) = nodes[consumer].scope {
+            let mut parameter = 0;
+            while parameter < nodes[consumer].targets.len() {
+                if let Some(target) = nodes[consumer].targets[parameter] {
+                    assert!(target < count, "static dependency outside topology");
+                    if let Some(to) = nodes[target].scope {
+                        if !from.can_access(to) {
+                            let mut diagnostic = TopologyDiagnostic::new();
+                            diagnostic.append("incompatible static scopes: ");
+                            diagnostic.append(from.name);
+                            diagnostic.append(" -> ");
+                            diagnostic.append(to.name);
+                            diagnostic.append("\n  ");
+                            diagnostic.append(nodes[consumer].source);
+                            diagnostic.append("\n  -- parameter #");
+                            diagnostic.number(parameter + 1);
+                            diagnostic.append(" --> ");
+                            diagnostic.append(nodes[target].source);
+                            panic!("{}", diagnostic.message());
+                        }
+                    }
+                }
+                parameter += 1;
+            }
+        }
+        consumer += 1;
+    }
+}
+
 const fn describe_cycle(
     nodes: &[TopologyLeaf; LIMIT],
     stack: &[usize; LIMIT],
@@ -150,12 +203,12 @@ const fn describe_cycle(
     depth: usize,
     target: usize,
     closed: bool,
-) -> CycleDiagnostic {
+) -> TopologyDiagnostic {
     let mut start = 0;
     while stack[start] != target {
         start += 1;
     }
-    let mut diagnostic = CycleDiagnostic::new();
+    let mut diagnostic = TopologyDiagnostic::new();
     if closed {
         diagnostic.append("dependency cycle in closed static registry");
     } else {
@@ -195,21 +248,21 @@ const fn describe_cycle(
     diagnostic
 }
 
-// Bound const-evaluation work and compiler output even for long cycles or source paths.
-struct CycleDiagnostic {
+// Bound const-evaluation work and compiler output, including long names and source paths.
+struct TopologyDiagnostic {
     bytes: [u8; 4096],
     len: usize,
 }
 
-impl CycleDiagnostic {
+impl TopologyDiagnostic {
     const fn new() -> Self {
         Self { bytes: [0; 4096], len: 0 }
     }
 
     const fn message(&self) -> &str {
-        match core::str::from_utf8(self.bytes.split_at(self.len).0) {
+        match from_utf8(self.bytes.split_at(self.len).0) {
             Ok(message) => message,
-            Err(_) => panic!("invalid cycle diagnostic"),
+            Err(_) => panic!("invalid topology diagnostic"),
         }
     }
 
@@ -239,6 +292,9 @@ impl CycleDiagnostic {
                 break;
             }
         }
+        if self.len + len > self.bytes.len() {
+            return;
+        }
         while len != 0 {
             len -= 1;
             self.bytes[self.len] = digits[len];
@@ -251,7 +307,8 @@ impl CycleDiagnostic {
 mod tests {
     extern crate std;
 
-    use super::Topology;
+    use super::{from_utf8, Topology, TopologyDiagnostic};
+    use crate::ScopeData;
     use alloc::string::String;
     use std::panic::catch_unwind;
 
@@ -361,5 +418,55 @@ mod tests {
             error.downcast_ref::<String>().unwrap(),
             "dependency cycle in closed static registry (self-dependency):\n  provide(inst) at src/app.rs:12:5\n  parameter #2 requests this registration's own provided value\n"
         );
+    }
+
+    const APP: ScopeData = ScopeData {
+        priority: 1,
+        name: "app",
+        is_skipped_by_default: false,
+    };
+    const REQUEST: ScopeData = ScopeData {
+        priority: 3,
+        name: "request",
+        is_skipped_by_default: false,
+    };
+    const STATIC_DEPENDENCY: Topology = Topology::leaf(&[]).with_source("provide(repository)").with_scope(Some(&REQUEST));
+    const STATIC_CONSUMER: Topology = Topology::leaf(&[Some(1)]).with_source("provide(service)").with_scope(Some(&APP));
+    const INVALID_SCOPES: Topology = Topology::branch(&STATIC_CONSUMER, &STATIC_DEPENDENCY);
+
+    #[test]
+    fn scope_diagnostic_identifies_both_registrations_and_scopes() {
+        let error = catch_unwind(|| INVALID_SCOPES.validate()).unwrap_err();
+        assert_eq!(
+            error.downcast_ref::<String>().unwrap(),
+            "incompatible static scopes: app -> request\n  provide(service)\n  -- parameter #1 --> provide(repository)"
+        );
+    }
+
+    #[test]
+    fn long_scope_diagnostic_preserves_the_validation_error() {
+        const PREFIX: &str = "incompatible static scopes: app -> request\n  ";
+        const PARAMETER: &str = "\n  -- parameter #";
+        const SOURCE_LEN: usize = TopologyDiagnostic::new().bytes.len() - PREFIX.len() - PARAMETER.len();
+        const LONG_SOURCE: &str = match from_utf8(&[b'x'; SOURCE_LEN]) {
+            Ok(source) => source,
+            Err(_) => panic!("invalid test source"),
+        };
+        const CONSUMER: Topology = Topology::leaf(&[Some(1)]).with_source(LONG_SOURCE).with_scope(Some(&APP));
+        let error = catch_unwind(|| Topology::branch(&CONSUMER, &STATIC_DEPENDENCY).validate()).unwrap_err();
+        let message = error.downcast_ref::<String>().unwrap();
+        assert!(message.starts_with(PREFIX), "{message}");
+    }
+
+    #[test]
+    fn scopes_with_dynamic_or_changeable_selection_defer_to_runtime() {
+        const DYNAMIC_ENDPOINT: () = Topology::branch(&STATIC_CONSUMER, &Topology::leaf(&[])).validate();
+        const OPEN: () = Topology::branch(&INVALID_SCOPES, &Topology::OPEN).validate();
+        const OPAQUE: () = Topology::branch(&INVALID_SCOPES, &Topology::leaf(&[None])).validate();
+        const LARGE: () = Topology::branch(&OVER_LIMIT, &INVALID_SCOPES).validate();
+        let () = DYNAMIC_ENDPOINT;
+        let () = OPEN;
+        let () = OPAQUE;
+        let () = LARGE;
     }
 }
