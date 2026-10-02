@@ -19,7 +19,9 @@ use crate::{
     errors::InstantiatorErrorKind,
     instance,
     instantiator::RegistrationInstantiator,
-    registry as dynamic_registry, runtime,
+    registry as dynamic_registry,
+    registry::CYCLE_CHECKS,
+    runtime,
     utils::thread_safety::RcThreadSafety,
     Config, Container as SyncContainer, Context,
     DefaultScope::{App, Request},
@@ -317,6 +319,117 @@ fn opaque_resolvers_retain_runtime_cycle_validation_for_declared_edges() {
         provide(App, |_: RuntimeDependency<Opaque>, _: Inject<B>| Ok(A)),
         provide(App, |_: Inject<A>| Ok(B)),
     });
+}
+
+#[test]
+fn closed_composition_does_not_repeat_runtime_cycle_checks() {
+    CYCLE_CHECKS.with(|checks| checks.set(0));
+    let fragment = registry! {
+        provide(App, |number: Inject<u32>| Ok(number.0.to_string())),
+    };
+    let container = SyncContainer::new(registry! {
+        provide(App, instance(7u32)),
+        extend(fragment),
+    });
+    assert_eq!(&*container.get::<String>().unwrap(), "7");
+    let explicit = SyncContainer::new_compiled_with_start_scope(registry! { provide(App, instance(9u32)) }, App);
+    assert_eq!(*explicit.get::<u32>().unwrap(), 9);
+    assert_eq!(CYCLE_CHECKS.with(Cell::get), 0);
+
+    container.inner.registry.validate().unwrap();
+    assert_eq!(CYCLE_CHECKS.with(Cell::get), 1);
+}
+
+#[test]
+fn closed_composition_still_checks_scopes_at_runtime() {
+    CYCLE_CHECKS.with(|checks| checks.set(0));
+    let error = catch_unwind(|| {
+        SyncContainer::new(registry! {
+            provide(App, |_: Inject<u32>| Ok::<_, InstantiateErrorKind>(true)),
+            provide(Request, instance(7u32)),
+        })
+    })
+    .err()
+    .unwrap();
+    assert!(error.downcast_ref::<String>().unwrap().contains("Unreachable dependency"));
+    assert_eq!(CYCLE_CHECKS.with(Cell::get), 0);
+}
+
+#[test]
+fn erasure_retains_runtime_cycle_checks_for_both_constructors() {
+    CYCLE_CHECKS.with(|checks| checks.set(0));
+    let native = registry! { provide(App, instance(7u32)) }.into_registry();
+    assert_eq!(CYCLE_CHECKS.with(Cell::get), 0);
+    SyncContainer::new(native.clone()).get::<u32>().unwrap();
+    assert_eq!(CYCLE_CHECKS.with(Cell::get), 1);
+    SyncContainer::new_with_start_scope(native, App).get::<u32>().unwrap();
+    assert_eq!(CYCLE_CHECKS.with(Cell::get), 2);
+}
+
+#[cfg(feature = "async")]
+#[tokio::test]
+async fn closed_async_composition_skips_cycle_checks_in_both_namespaces() {
+    CYCLE_CHECKS.with(|checks| checks.set(0));
+    let sync = registry! { provide(App, instance(7u32)) };
+    let container = AsyncContainer::new(async_registry! {
+        extend(sync),
+    });
+    assert_eq!(*container.get::<u32>().await.unwrap(), 7);
+    let explicit = AsyncContainer::new_compiled_with_start_scope(
+        async_registry! {
+            provide(App, async |number: Inject<u32>| Ok(number.0.to_string())),
+            extend(registry! { provide(App, instance(9u32)) }),
+        },
+        App,
+    );
+    assert_eq!(&*explicit.get::<String>().await.unwrap(), "9");
+    assert_eq!(CYCLE_CHECKS.with(Cell::get), 0);
+
+    explicit.inner.registry.validate().unwrap();
+    explicit.sync.inner.registry.validate().unwrap();
+    assert_eq!(CYCLE_CHECKS.with(Cell::get), 2);
+}
+
+#[cfg(feature = "async")]
+#[test]
+fn closed_async_composition_still_checks_scopes_in_both_namespaces() {
+    CYCLE_CHECKS.with(|checks| checks.set(0));
+    for sync_dependency in [false, true] {
+        let error = catch_unwind(|| {
+            if sync_dependency {
+                AsyncContainer::new(async_registry! {
+                    provide(App, async |_: Inject<u32>| Ok::<_, InstantiateErrorKind>(true)),
+                    extend(registry! { provide(Request, instance(7u32)) }),
+                })
+            } else {
+                AsyncContainer::new(async_registry! {
+                    provide(App, async |_: Inject<u32>| Ok::<_, InstantiateErrorKind>(true)),
+                    provide(Request, async || Ok::<_, InstantiateErrorKind>(7u32)),
+                })
+            }
+        })
+        .err()
+        .unwrap();
+        let message = error.downcast_ref::<String>().unwrap().to_lowercase();
+        assert!(message.contains("unreachable dependency"));
+        assert_eq!(CYCLE_CHECKS.with(Cell::get), 0);
+    }
+}
+
+#[cfg(feature = "async")]
+#[tokio::test]
+async fn async_erasure_retains_runtime_cycle_checks_for_both_constructors() {
+    CYCLE_CHECKS.with(|checks| checks.set(0));
+    let native = async_registry! {
+        provide(App, async |number: Inject<u32>| Ok(number.0.to_string())),
+        extend(registry! { provide(App, instance(7u32)) }),
+    }
+    .into_async_registry();
+    assert_eq!(CYCLE_CHECKS.with(Cell::get), 0);
+    AsyncContainer::new(native.clone()).get::<String>().await.unwrap();
+    assert_eq!(CYCLE_CHECKS.with(Cell::get), 2);
+    AsyncContainer::new_with_start_scope(native, App).get::<String>().await.unwrap();
+    assert_eq!(CYCLE_CHECKS.with(Cell::get), 4);
 }
 
 #[test]

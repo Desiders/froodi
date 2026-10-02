@@ -5,6 +5,8 @@ use alloc::{
 
 #[cfg(feature = "compiled")]
 use crate::compiled::async_impl::Selected;
+#[cfg(all(test, feature = "compiled"))]
+use crate::registry::CYCLE_CHECKS;
 use crate::{
     any::TypeInfo,
     async_impl::{
@@ -129,7 +131,9 @@ impl Registry {
         self.detect_unreachable_scopes()
     }
 
-    fn detect_cyclic_dependencies(&self) -> Result<(), ValidationErrorKind> {
+    pub(crate) fn detect_cyclic_dependencies(&self) -> Result<(), ValidationErrorKind> {
+        #[cfg(all(test, feature = "compiled"))]
+        CYCLE_CHECKS.with(|checks| checks.set(checks.get() + 1));
         let mut visited = BTreeSet::new();
         let mut stack = Vec::new();
 
@@ -143,7 +147,7 @@ impl Registry {
         Ok(())
     }
 
-    fn detect_unreachable_scopes(&self) -> Result<(), ValidationErrorKind> {
+    pub(crate) fn detect_unreachable_scopes(&self) -> Result<(), ValidationErrorKind> {
         for (
             type_info,
             InstantiatorData {

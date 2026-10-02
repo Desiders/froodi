@@ -142,6 +142,7 @@
 ///   signatures, source locations and the parameters forming the cycle. Inferred type names
 ///   are unavailable to this stable const validator. `cargo check` does not evaluate these checks.
 ///   Open, erased and larger graphs retain runtime cycle validation; scope/config checks remain runtime.
+///   Final construction reuses successful closed cycle checks; native erasure carries no validation exemption.
 #[macro_export]
 macro_rules! compiled_registry {
     ($($tokens:tt)*) => {

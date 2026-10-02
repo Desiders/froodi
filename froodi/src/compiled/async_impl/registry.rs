@@ -194,6 +194,7 @@ impl<Tree> Registry<Tree> {
 
 pub trait IntoRegistry<Links> {
     const VALIDATE: () = ();
+    const CYCLES_CHECKED: bool = false;
 
     #[doc(hidden)]
     fn validate_runtime(_: &RegistryWithSync) {}
@@ -213,13 +214,26 @@ where
     <Root<Tree> as Link<Index<Tree>, Links>>::Linked: CollectAsync,
 {
     const VALIDATE: () = <Root<Tree> as Link<Index<Tree>, Links>>::VALIDATE;
+    const CYCLES_CHECKED: bool = <Root<Tree> as Link<Index<Tree>, Links>>::TOPOLOGY.can_validate_cycles();
 
     fn validate_runtime(registry: &RegistryWithSync) {
         if !has_compiled_sync_executors(&registry.sync) {
-            registry.sync.validate().expect("invalid compiled registry");
+            if !Self::CYCLES_CHECKED {
+                registry.sync.detect_cyclic_dependencies().expect("invalid compiled registry");
+            }
+            registry.sync.detect_unreachable_scopes().expect("invalid compiled registry");
         }
         if !has_compiled_executors(&registry.registry) {
-            registry.registry.validate().expect("invalid compiled async registry");
+            if !Self::CYCLES_CHECKED {
+                registry
+                    .registry
+                    .detect_cyclic_dependencies()
+                    .expect("invalid compiled async registry");
+            }
+            registry
+                .registry
+                .detect_unreachable_scopes()
+                .expect("invalid compiled async registry");
         }
     }
 
@@ -274,15 +288,18 @@ fn assemble(entries: Vec<CollectedAsyncRegistration>, runtime: Vec<RegistryWithS
     RegistryWithSync { registry, sync }
 }
 
-pub(crate) fn prepare(mut registries: RegistryWithSync) -> RegistryWithSync {
+pub(crate) fn prepare(mut registries: RegistryWithSync, cycles_checked: bool) -> RegistryWithSync {
     let compiled_sync = has_compiled_sync_executors(&registries.sync);
-    registries.sync = prepare_sync(registries.sync);
+    registries.sync = prepare_sync(registries.sync, cycles_checked);
     let registry = &mut registries.registry;
     let compiled_async = has_compiled_executors(registry);
     if !compiled_sync && !compiled_async {
         return registries;
     }
-    registry.validate().expect("invalid compiled async registry");
+    if !cycles_checked {
+        registry.detect_cyclic_dependencies().expect("invalid compiled async registry");
+    }
+    registry.detect_unreachable_scopes().expect("invalid compiled async registry");
     for (dependent, data) in &registry.entries {
         for dependency in &data.dependencies {
             let target_scope = registry
@@ -339,7 +356,8 @@ pub(crate) fn finish<Links, Reg: IntoRegistry<Links>>(registry: Reg) -> Registry
     let () = Reg::VALIDATE;
     let registry = registry.into_registry();
     Reg::validate_runtime(&registry);
-    registry
+    // The same final topology covers both namespaces; erasure never retains this proof.
+    prepare(registry, Reg::CYCLES_CHECKED)
 }
 
 fn has_compiled_executors(registry: &AsyncRegistry) -> bool {

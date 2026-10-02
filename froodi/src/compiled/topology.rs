@@ -84,9 +84,13 @@ impl Topology {
         }
     }
 
+    pub const fn can_validate_cycles(&self) -> bool {
+        self.closed && self.count <= LIMIT
+    }
+
     pub const fn validate(&self) {
         // Open compositions and larger graphs still use the runtime validation.
-        if !self.closed || self.count > LIMIT {
+        if !self.can_validate_cycles() {
             return;
         }
         let mut nodes = [TopologyLeaf::EMPTY; LIMIT];

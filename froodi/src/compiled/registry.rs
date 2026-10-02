@@ -159,6 +159,7 @@ type Index<Tree> = <Root<Tree> as RegistryIndex>::Index;
 
 pub trait IntoRegistry<Links> {
     const VALIDATE: () = ();
+    const CYCLES_CHECKED: bool = false;
 
     #[doc(hidden)]
     fn validate_runtime(_: &RuntimeRegistry) {}
@@ -178,10 +179,14 @@ where
     <Root<Tree> as Link<Index<Tree>, Links>>::Linked: Collect,
 {
     const VALIDATE: () = <Root<Tree> as Link<Index<Tree>, Links>>::VALIDATE;
+    const CYCLES_CHECKED: bool = <Root<Tree> as Link<Index<Tree>, Links>>::TOPOLOGY.can_validate_cycles();
 
     fn validate_runtime(registry: &RuntimeRegistry) {
         if !has_compiled_executors(registry) {
-            registry.validate().expect("invalid compiled registry");
+            if !Self::CYCLES_CHECKED {
+                registry.detect_cyclic_dependencies().expect("invalid compiled registry");
+            }
+            registry.detect_unreachable_scopes().expect("invalid compiled registry");
         }
     }
 
@@ -220,11 +225,14 @@ fn assemble(mut entries: Vec<CollectedRegistration>, runtime: Vec<RuntimeRegistr
     registry
 }
 
-pub(crate) fn prepare(mut registry: RuntimeRegistry) -> RuntimeRegistry {
+pub(crate) fn prepare(mut registry: RuntimeRegistry, cycles_checked: bool) -> RuntimeRegistry {
     if !has_compiled_executors(&registry) {
         return registry;
     }
-    registry.validate().expect("invalid compiled registry");
+    if !cycles_checked {
+        registry.detect_cyclic_dependencies().expect("invalid compiled registry");
+    }
+    registry.detect_unreachable_scopes().expect("invalid compiled registry");
     let mut keys: BTreeSet<_> = registry.entries.keys().cloned().collect();
     for entry in registry.entries.values() {
         if let RegistrationInstantiator::Compiled(executor) = &entry.instantiator {
@@ -249,7 +257,8 @@ pub(crate) fn finish<Links, Reg: IntoRegistry<Links>>(registry: Reg) -> RuntimeR
     let () = Reg::VALIDATE;
     let registry = registry.into_registry();
     Reg::validate_runtime(&registry);
-    registry
+    // Consume the proof only for this final composition; native registries retain no exemption.
+    prepare(registry, Reg::CYCLES_CHECKED)
 }
 
 pub(super) fn has_compiled_executors(registry: &RuntimeRegistry) -> bool {

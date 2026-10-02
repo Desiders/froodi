@@ -72,6 +72,8 @@ impl Container {
     #[allow(clippy::needless_pass_by_value)]
     pub fn new_with_start_scope<S: Scope + Clone>(registry: RegistryWithSync, scope: S) -> Self {
         let priority = scope.priority();
+        #[cfg(feature = "compiled")]
+        let registry = prepare(registry, false);
         Self::build_root(registry, move |scope_data| scope_data.priority == priority)
     }
 
@@ -95,8 +97,6 @@ impl Container {
     /// # Panics
     /// Panics if the scopes are exhausted before `is_target` accepts one.
     fn build_root(registries: RegistryWithSync, is_target: impl Fn(&ScopeData) -> bool) -> Self {
-        #[cfg(feature = "compiled")]
-        let registries = prepare(registries);
         let RegistryWithSync { registry, sync } = registries;
         let mut scopes = registry.get_scope_with_child_scopes();
         let registry = RcThreadSafety::new(registry);

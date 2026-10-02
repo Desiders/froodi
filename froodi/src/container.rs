@@ -68,6 +68,8 @@ impl Container {
     #[allow(clippy::needless_pass_by_value)]
     pub fn new_with_start_scope<S: Scope>(registry: Registry, scope: S) -> Self {
         let priority = scope.priority();
+        #[cfg(feature = "compiled")]
+        let registry = prepare(registry, false);
         Self::build_root(registry, move |scope_data| scope_data.priority == priority)
     }
 
@@ -92,8 +94,6 @@ impl Container {
     /// Panics if the scopes are exhausted before `is_target` accepts one (e.g. no scopes at all, or
     /// every scope is skipped / none matches the requested priority).
     fn build_root(registry: Registry, is_target: impl Fn(&ScopeData) -> bool) -> Self {
-        #[cfg(feature = "compiled")]
-        let registry = prepare(registry);
         let mut scopes = registry.get_scope_with_child_scopes();
         let registry = RcThreadSafety::new(registry);
         let mut container = BoxedContainerInner {
