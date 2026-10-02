@@ -166,8 +166,8 @@ impl Collect for ContainerLeaf {
     }
 }
 
-type Root<Tree> = Node<Tree, ContainerLeaf>;
-type Index<Tree> = <Root<Tree> as RegistryIndex>::Index;
+pub(super) type Root<Tree> = Node<Tree, ContainerLeaf>;
+pub(super) type Index<Tree> = <Root<Tree> as RegistryIndex>::Index;
 
 pub trait IntoRegistry<Links> {
     const VALIDATE: () = ();

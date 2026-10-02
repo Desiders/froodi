@@ -26,9 +26,17 @@ fn compiled_registration_errors() {
         "resolver_ambiguity",
         "unknown_clause",
         "invalid_instantiator",
+        "typed_missing",
+        "typed_boundaries",
+        "typed_forged",
+        "typed_variance",
     ] {
         // rustc qualifies type paths differently when async types are also present.
-        let prefix = if !cfg!(feature = "async") && matches!(case, "missing" | "ambiguous" | "bare_resolver") {
+        let prefix = if !cfg!(feature = "async")
+            && matches!(
+                case,
+                "missing" | "ambiguous" | "bare_resolver" | "typed_missing" | "typed_boundaries" | "typed_forged"
+            ) {
             "no_async_"
         } else {
             ""
@@ -36,7 +44,12 @@ fn compiled_registration_errors() {
         cases.compile_fail(format!("tests/ui/compiled/{prefix}{case}.rs"));
     }
     #[cfg(feature = "async")]
-    for case in ["sync_async", "sync_transient_async", "invalid_async_instantiator"] {
+    for case in [
+        "sync_async",
+        "sync_transient_async",
+        "invalid_async_instantiator",
+        "typed_async_missing",
+    ] {
         cases.compile_fail(format!("tests/ui/compiled/{case}.rs"));
     }
 }
@@ -61,6 +74,7 @@ fn compiled_topology_errors() {
         "static_scope",
         "static_scope_generic",
         "static_scope_transient",
+        "typed_cycle",
     ] {
         cases.compile_fail(format!("tests/ui/compiled/{case}.rs"));
     }

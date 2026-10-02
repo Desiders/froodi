@@ -4,6 +4,7 @@
 mod tuples;
 
 mod boundary;
+mod container;
 mod dependency_resolver;
 mod macros;
 mod registration;
@@ -16,6 +17,7 @@ pub(crate) mod async_impl;
 pub(crate) mod linking;
 
 pub use boundary::{context, runtime};
+pub use container::{TypedContainer, TypedContainerExt};
 pub use dependency_resolver::RuntimeDependency;
 pub use registration::{reg, LocatedRegistration, NoFinalizer, RegistrationSource};
 pub use registry::{IntoFragment, Registry};

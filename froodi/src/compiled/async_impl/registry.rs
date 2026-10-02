@@ -178,8 +178,8 @@ impl CollectAsync for RuntimeAsyncNode {
     }
 }
 
-type Root<Tree> = Node<Tree, Node<ContainerLeaf, AsyncContainerLeaf>>;
-type Index<Tree> = <Root<Tree> as RegistryIndex>::Index;
+pub(super) type Root<Tree> = Node<Tree, Node<ContainerLeaf, AsyncContainerLeaf>>;
+pub(super) type Index<Tree> = <Root<Tree> as RegistryIndex>::Index;
 
 impl<Tree> Registry<Tree> {
     /// Materializes linked sync/async edges for later native registry composition.

@@ -8,3 +8,6 @@ pub use container::Container;
 pub use finalizer::Finalizer;
 pub use instantiator::Instantiator;
 pub use registry::{InstantiatorData, Registry, RegistryWithSync};
+
+#[cfg(feature = "compiled")]
+pub use crate::compiled::async_impl::{TypedContainer, TypedContainerExt};

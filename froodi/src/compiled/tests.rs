@@ -9,3 +9,4 @@ mod local;
 #[cfg(feature = "async")]
 mod mixed_validation;
 mod scopes;
+mod typed_container;
