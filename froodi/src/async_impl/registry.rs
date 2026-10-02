@@ -161,7 +161,7 @@ impl Registry {
                     ..
                 }) = self.entries.get(dependency)
                 {
-                    if dependency_scope.priority > scope_data.priority {
+                    if !scope_data.can_access(dependency_scope) {
                         return Err(ValidationErrorKind::UnreachableDependency {
                             dependent: type_info.clone(),
                             dependent_scope: *scope_data,

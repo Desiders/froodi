@@ -28,9 +28,12 @@ fn downstream_frontends_and_feature_unification() {
     };
     fs::write(enabler.join("Cargo.toml"), toml::to_string_pretty(&enabler_manifest).unwrap()).unwrap();
     let source: syn::File = syn::parse_quote! {
+        use froodi as scope_api;
         pub use froodi::compiled_registry as registry;
+        pub mod scopes;
     };
     fs::write(enabler.join("src/lib.rs"), prettyplease::unparse(&source)).unwrap();
+    fs::copy(native.join("tests/ui/compiled/support/scopes.rs"), enabler.join("src/scopes.rs")).unwrap();
 
     let packaged = std::env::var_os("FROODI_PACKAGE_DIR").map(PathBuf::from);
     let (native, macros) = if let Some(packages) = &packaged {
@@ -59,6 +62,17 @@ fn downstream_frontends_and_feature_unification() {
             args.extend(["--features", features]);
         }
         project.success(&args);
+    }
+    project.success(&["check", "--offline", "--features", "unified", "--bin", "static-scope"]);
+    for command in ["build", "test"] {
+        let output = project.cargo(&[command, "--offline", "--features", "unified", "--bin", "static-scope"]);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            !output.status.success(),
+            "cargo {command} unexpectedly accepted invalid static scopes"
+        );
+        assert!(stderr.contains("E0080"), "{stderr}");
+        assert!(stderr.contains("incompatible static scopes: app -> request"), "{stderr}");
     }
     let output = project.success(&[
         "metadata",

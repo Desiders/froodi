@@ -45,6 +45,8 @@ pub use scope::{DefaultScope, Scope, ScopeData, Scopes};
 
 #[cfg(feature = "compiled")]
 pub use compiled::{context, runtime, RuntimeDependency};
+#[cfg(feature = "compiled")]
+pub use scope::StaticScope;
 
 #[cfg(feature = "axum")]
 pub use integrations::axum;

@@ -1,15 +1,18 @@
 use super::{
     linking::{Link, LinkDependencies, Provider, RegistryIndex, SupportsExecution, SyncExecution},
     registry::RegistrationId,
+    static_scope::{DynamicScope, ScopeType, StaticRegistrationSource, TypedScopeData},
     topology::Topology,
 };
-use crate::{utils::thread_safety::RcThreadSafety, Config, DependencyResolver, Finalizer, InstantiateErrorKind, Instantiator, ScopeData};
+use crate::{
+    utils::thread_safety::RcThreadSafety, Config, DependencyResolver, Finalizer, InstantiateErrorKind, Instantiator, ScopeData, StaticScope,
+};
 use alloc::vec::Vec;
 use core::marker::PhantomData;
 
-// Macro-generated labels survive only until linking, never in the runtime executor.
 pub trait RegistrationSource {
     const DESCRIPTION: &'static str;
+    const SCOPE: Option<&'static ScopeData> = None;
 }
 
 pub struct LocatedRegistration<Reg, Source> {
@@ -17,9 +20,17 @@ pub struct LocatedRegistration<Reg, Source> {
     marker: PhantomData<fn() -> Source>,
 }
 
-impl<Reg, Source> LocatedRegistration<Reg, Source> {
-    pub fn new(reg: Reg) -> Self {
-        Self { reg, marker: PhantomData }
+#[allow(clippy::unused_self)]
+impl TypedScopeData<DynamicScope> {
+    pub fn locate<Reg, Source>(self, reg: Reg) -> LocatedRegistration<Reg, Source> {
+        LocatedRegistration { reg, marker: PhantomData }
+    }
+}
+
+#[allow(clippy::unused_self)]
+impl<S: StaticScope> TypedScopeData<ScopeType<S>> {
+    pub fn locate<Reg, Source>(self, reg: Reg) -> LocatedRegistration<Reg, StaticRegistrationSource<Source, S>> {
+        LocatedRegistration { reg, marker: PhantomData }
     }
 }
 
@@ -30,7 +41,7 @@ impl<Reg: RegistryIndex, Source> RegistryIndex for LocatedRegistration<Reg, Sour
 impl<Root, Links, Reg: Link<Root, Links>, Source: RegistrationSource> Link<Root, Links> for LocatedRegistration<Reg, Source> {
     type Linked = Reg::Linked;
 
-    const TOPOLOGY: Topology = Reg::TOPOLOGY.with_source(Source::DESCRIPTION);
+    const TOPOLOGY: Topology = Reg::TOPOLOGY.with_source(Source::DESCRIPTION).with_scope(Source::SCOPE);
 
     fn link(self) -> Self::Linked {
         self.reg.link()

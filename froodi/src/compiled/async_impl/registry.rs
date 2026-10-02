@@ -332,7 +332,7 @@ pub(crate) fn prepare(mut registries: RegistryWithSync, cycles_checked: bool, pl
                 .or_else(|| registries.sync.entries.get(&dependency.type_info).map(|entry| entry.scope_data));
             if let Some(dependency_scope) = target_scope {
                 assert!(
-                    dependency_scope.priority <= data.scope_data.priority,
+                    data.scope_data.can_access(&dependency_scope),
                     "unreachable dependency {:?} from {:?}",
                     dependency.type_info,
                     dependent
