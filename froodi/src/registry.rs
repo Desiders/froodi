@@ -3,6 +3,9 @@ use alloc::{
     vec::Vec,
 };
 
+#[cfg(all(test, feature = "compiled"))]
+pub(crate) use tests::CYCLE_CHECKS;
+
 use crate::{
     any::TypeInfo,
     dependency::{Dependency, EMPTY_DEPENDENCIES},
@@ -92,7 +95,9 @@ impl Registry {
         self.detect_unreachable_scopes()
     }
 
-    fn detect_cyclic_dependencies(&self) -> Result<(), ValidationErrorKind> {
+    pub(crate) fn detect_cyclic_dependencies(&self) -> Result<(), ValidationErrorKind> {
+        #[cfg(all(test, feature = "compiled"))]
+        CYCLE_CHECKS.with(|checks| checks.set(checks.get() + 1));
         let mut visited = BTreeSet::new();
         let mut stack = Vec::new();
 
@@ -106,7 +111,7 @@ impl Registry {
         Ok(())
     }
 
-    fn detect_unreachable_scopes(&self) -> Result<(), ValidationErrorKind> {
+    pub(crate) fn detect_unreachable_scopes(&self) -> Result<(), ValidationErrorKind> {
         for (
             type_info,
             InstantiatorData {
@@ -615,6 +620,11 @@ impl<'a, Data> Selection<'a, Data> {
 #[cfg(test)]
 mod tests {
     extern crate std;
+
+    #[cfg(feature = "compiled")]
+    std::thread_local! {
+        pub(crate) static CYCLE_CHECKS: core::cell::Cell<usize> = const { core::cell::Cell::new(0) };
+    }
 
     use alloc::{
         format,
