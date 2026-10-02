@@ -214,7 +214,7 @@ where
     <Root<Tree> as Link<Index<Tree>, Links>>::Linked: CollectAsync,
 {
     const VALIDATE: () = <Root<Tree> as Link<Index<Tree>, Links>>::VALIDATE;
-    const CYCLES_CHECKED: bool = <Root<Tree> as Link<Index<Tree>, Links>>::TOPOLOGY.can_validate_cycles();
+    const CYCLES_CHECKED: bool = <Root<Tree> as Link<Index<Tree>, Links>>::TOPOLOGY.can_validate_all_cycles();
 
     fn validate_runtime(registry: &RegistryWithSync) {
         if !has_compiled_sync_executors(&registry.sync) {

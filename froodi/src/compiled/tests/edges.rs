@@ -311,13 +311,43 @@ async fn async_instantiator_is_cloned_before_failed_dependency_resolution() {
 }
 
 #[test]
+fn opaque_composition_still_checks_cycles_at_runtime() {
+    CYCLE_CHECKS.with(|checks| checks.set(0));
+    let container = SyncContainer::new(registry! {
+        provide(App, |_: RuntimeDependency<Opaque>, value: Inject<u32>, repeated: Inject<u32>| {
+            assert!(RcThreadSafety::ptr_eq(&value.0, &repeated.0));
+            Ok(value.0.to_string())
+        }),
+        provide(App, instance(7u32)),
+    });
+    assert_eq!(&*container.get::<String>().unwrap(), "7");
+    assert_eq!(CYCLE_CHECKS.with(Cell::get), 1);
+}
+
+#[cfg(feature = "async")]
+#[tokio::test]
+async fn opaque_async_composition_still_checks_cycles_in_both_namespaces() {
+    CYCLE_CHECKS.with(|checks| checks.set(0));
+    let container = AsyncContainer::new(async_registry! {
+        provide(App, async |_: RuntimeDependency<Opaque>, value: Inject<u32>, repeated: Inject<u32>| {
+            assert!(RcThreadSafety::ptr_eq(&value.0, &repeated.0));
+            Ok(value.0.to_string())
+        }),
+        extend(registry! { provide(App, instance(7u32)) }),
+    });
+    assert_eq!(&*container.get::<String>().await.unwrap(), "7");
+    assert_eq!(CYCLE_CHECKS.with(Cell::get), 2);
+}
+
+#[test]
 #[should_panic(expected = "Cyclic dependency")]
-fn opaque_resolvers_retain_runtime_cycle_validation_for_declared_edges() {
+fn runtime_composition_defers_known_cycles_with_opaque_parameters() {
     struct A;
     struct B;
     let _ = SyncContainer::new(registry! {
         provide(App, |_: RuntimeDependency<Opaque>, _: Inject<B>| Ok(A)),
         provide(App, |_: Inject<A>| Ok(B)),
+        extend(dynamic_registry! { provide(App, instance(7u32)) }),
     });
 }
 
@@ -558,6 +588,45 @@ fn replacement_removes_cycle_from_final_composition() {
     let overrides = dynamic_registry! { provide(App, || Ok::<_, InstantiateErrorKind>(A)) };
     let container = SyncContainer::new(registry! { extend(fragment, overrides) });
     container.get::<B>().unwrap();
+}
+
+#[test]
+fn opaque_cycle_can_be_removed_by_replacement_before_or_after_erasure() {
+    struct A;
+    struct B;
+    for erased in [false, true] {
+        let fragment = registry! {
+            provide(App, |_: RuntimeDependency<Opaque>, _: Inject<B>| Ok::<_, InstantiateErrorKind>(A)),
+            provide(App, |_: InjectTransient<A>| Ok::<_, InstantiateErrorKind>(B)),
+        };
+        let overrides = dynamic_registry! { provide(App, || Ok::<_, InstantiateErrorKind>(A)) };
+        let container = if erased {
+            SyncContainer::new(dynamic_registry! { extend(fragment.into_registry(), overrides) })
+        } else {
+            SyncContainer::new(registry! { extend(fragment, overrides) })
+        };
+        container.get::<B>().unwrap();
+    }
+}
+
+#[cfg(feature = "async")]
+#[tokio::test]
+async fn opaque_async_cycle_can_be_removed_before_or_after_erasure() {
+    struct A;
+    struct B;
+    for erased in [false, true] {
+        let fragment = async_registry! {
+            provide(App, async |_: RuntimeDependency<Opaque>, _: Inject<B>| Ok::<_, InstantiateErrorKind>(A)),
+            provide(App, async |_: InjectTransient<A>| Ok::<_, InstantiateErrorKind>(B)),
+        };
+        let overrides = dynamic_async_registry! { provide(App, async || Ok::<_, InstantiateErrorKind>(A)) };
+        let container = if erased {
+            AsyncContainer::new(dynamic_async_registry! { extend(fragment.into_async_registry(), overrides) })
+        } else {
+            AsyncContainer::new(async_registry! { extend(fragment, overrides) })
+        };
+        container.get::<B>().await.unwrap();
+    }
 }
 
 #[test]

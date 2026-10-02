@@ -5,6 +5,7 @@ const LIMIT: usize = 1024;
 pub struct Topology {
     count: usize,
     closed: bool,
+    fixed: bool,
     shape: Shape,
 }
 
@@ -31,11 +32,13 @@ impl Topology {
     pub const EMPTY: Self = Self {
         count: 0,
         closed: true,
+        fixed: true,
         shape: Shape::Empty,
     };
     pub const OPEN: Self = Self {
         count: 0,
         closed: false,
+        fixed: false,
         shape: Shape::Empty,
     };
 
@@ -51,6 +54,7 @@ impl Topology {
         Self {
             count: 1,
             closed,
+            fixed: true,
             shape: Shape::Leaf(TopologyLeaf {
                 targets,
                 ..TopologyLeaf::EMPTY
@@ -69,6 +73,7 @@ impl Topology {
         Self {
             count: left.count + right.count,
             closed: left.closed && right.closed,
+            fixed: left.fixed && right.fixed,
             shape: Shape::Branch(left, right),
         }
     }
@@ -84,13 +89,13 @@ impl Topology {
         }
     }
 
-    pub const fn can_validate_cycles(&self) -> bool {
+    pub const fn can_validate_all_cycles(&self) -> bool {
         self.closed && self.count <= LIMIT
     }
 
     pub const fn validate(&self) {
-        // Open compositions and larger graphs still use the runtime validation.
-        if !self.can_validate_cycles() {
+        // Runtime composition can replace known edges; opaque parameters alone cannot.
+        if !self.fixed || self.count > LIMIT {
             return;
         }
         let mut nodes = [TopologyLeaf::EMPTY; LIMIT];
@@ -110,14 +115,15 @@ impl Topology {
                         color[node] = 2;
                         depth -= 1;
                     } else {
-                        let target = match nodes[node].targets[next[node]] {
-                            Some(target) => target,
-                            None => panic!("open dependency in closed topology"),
-                        };
+                        let target = nodes[node].targets[next[node]];
                         next[node] += 1;
+                        let target = match target {
+                            Some(target) => target,
+                            None => continue,
+                        };
                         assert!(target < self.count, "static dependency outside topology");
                         if color[target] == 1 {
-                            let diagnostic = describe_cycle(&nodes, &stack, &next, depth, target);
+                            let diagnostic = describe_cycle(&nodes, &stack, &next, depth, target, self.closed);
                             panic!("{}", diagnostic.message());
                         }
                         if color[target] == 0 {
@@ -139,14 +145,20 @@ const fn describe_cycle(
     next: &[usize; LIMIT],
     depth: usize,
     target: usize,
+    closed: bool,
 ) -> CycleDiagnostic {
     let mut start = 0;
     while stack[start] != target {
         start += 1;
     }
     let mut diagnostic = CycleDiagnostic::new();
+    if closed {
+        diagnostic.append("dependency cycle in closed static registry");
+    } else {
+        diagnostic.append("dependency cycle in known static dependencies");
+    }
     if start + 1 == depth {
-        diagnostic.append("dependency cycle in closed static registry (self-dependency):\n  ");
+        diagnostic.append(" (self-dependency):\n  ");
         if diagnostic.len + nodes[target].source.len() + 128 > diagnostic.bytes.len() {
             diagnostic.append("... (cycle diagnostic truncated)");
         } else {
@@ -157,7 +169,7 @@ const fn describe_cycle(
         diagnostic.append(" requests this registration's own provided value\n");
         return diagnostic;
     }
-    diagnostic.append("dependency cycle in closed static registry:\n");
+    diagnostic.append(":\n");
     let mut position = start;
     while position <= depth {
         let node = if position == depth { target } else { stack[position] };
@@ -262,6 +274,46 @@ mod tests {
     #[test]
     fn larger_graphs_defer_even_cycles_to_runtime() {
         let () = FALLBACK;
+        const PARTIAL: () = Topology::branch(&AT_LIMIT, &Topology::leaf(&[None])).validate();
+        let () = PARTIAL;
+    }
+
+    #[test]
+    fn opaque_parameters_do_not_disable_known_cycle_checks() {
+        const GRAPH: Topology = Topology::leaf(&[None, Some(0)]).with_source("provide(inst)");
+
+        assert!(!GRAPH.can_validate_all_cycles());
+        let error = catch_unwind(|| GRAPH.validate()).unwrap_err();
+        assert_eq!(
+            error.downcast_ref::<String>().unwrap(),
+            "dependency cycle in known static dependencies (self-dependency):\n  provide(inst)\n  parameter #2 requests this registration's own provided value\n"
+        );
+    }
+
+    #[test]
+    fn opaque_dags_still_require_runtime_validation() {
+        const GRAPH: Topology = Topology::branch(&Topology::leaf(&[None, Some(1)]), &Topology::leaf(&[]));
+        const CHECKED: () = GRAPH.validate();
+
+        let () = CHECKED;
+        assert!(!GRAPH.can_validate_all_cycles());
+    }
+
+    #[test]
+    #[should_panic(expected = "dependency cycle in known static dependencies")]
+    fn unrelated_opaque_parameters_do_not_hide_cycles() {
+        const GRAPH: Topology = Topology::branch(&Topology::leaf(&[None]), &Topology::leaf(&[Some(1)]));
+
+        GRAPH.validate();
+    }
+
+    #[test]
+    fn changeable_compositions_defer_known_cycles() {
+        const GRAPH: Topology = Topology::branch(&Topology::leaf(&[None, Some(0)]), &Topology::OPEN);
+        const CHECKED: () = GRAPH.validate();
+
+        let () = CHECKED;
+        assert!(!GRAPH.can_validate_all_cycles());
     }
 
     #[test]
