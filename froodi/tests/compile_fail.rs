@@ -48,18 +48,20 @@ fn compiled_cycle_errors() {
     // A pass case makes trybuild build this suite, evaluating generic const validation.
     cases.pass("tests/ui/compiled/uninstantiated.rs");
     cases.pass("tests/ui/compiled/resolver_fallback.rs");
+    cases.pass("tests/ui/compiled/opaque_dag.rs");
     for case in [
         "self_cycle",
         "indirect",
         "named_cycle",
         "unrequested",
         "generic",
+        "opaque_cycle",
         "limit_sync_cycle",
     ] {
         cases.compile_fail(format!("tests/ui/compiled/{case}.rs"));
     }
     #[cfg(feature = "async")]
-    for case in ["async_cycle", "limit_async_cycle"] {
+    for case in ["async_cycle", "opaque_async_cycle", "limit_async_cycle"] {
         cases.compile_fail(format!("tests/ui/compiled/{case}.rs"));
     }
 }
