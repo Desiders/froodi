@@ -372,6 +372,24 @@ Ordinary Froodi macros remain dynamic. The existing `Container`, injection modes
 and lifecycle are shared. Custom parameters use `froodi::RuntimeDependency<T>`;
 opaque boundaries use `froodi::runtime::<T>()` and `froodi::context::<T>()`.
 
+For compile-time checks on public lookups, use `TypedContainer` with concrete typed
+registrations and import `TypedContainerExt`:
+
+```rust
+use froodi::{compiled_registry, instance, TypedContainer, TypedContainerExt as _, DefaultScope::App};
+
+let container = TypedContainer::new(compiled_registry! { provide(App, instance(7u32)) });
+assert_eq!(*container.get::<u32>().unwrap(), 7);
+// container.get::<String>() fails to compile: no String provider.
+```
+
+The async equivalents live in `froodi::async_impl`. Cloning and entering child
+scopes retain provider proofs. `into_container()` discards them for ordinary
+lookups and integrations. Scope accessibility and construction errors remain
+runtime concerns. Native fragments and runtime/Context provider declarations use
+the ordinary `Container`. Typed lookups delegate to its existing lookup path;
+compiled instantiator dependencies continue using indexed edges.
+
 ## Examples
 
 - [Sync registration][examples/sync_registration]. Basic sync container setup

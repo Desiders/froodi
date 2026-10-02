@@ -44,7 +44,7 @@ pub use registry::{InstantiatorData, Registry};
 pub use scope::{DefaultScope, Scope, ScopeData, Scopes};
 
 #[cfg(feature = "compiled")]
-pub use compiled::{context, runtime, RuntimeDependency};
+pub use compiled::{context, runtime, RuntimeDependency, TypedContainer, TypedContainerExt};
 #[cfg(feature = "compiled")]
 pub use scope::StaticScope;
 

@@ -3,6 +3,8 @@ use compiled_enabler::{
     registry as reexported_registry,
     scopes::{App as StaticApp, Request as StaticRequest},
 };
+#[cfg(all(feature = "unified", feature = "async"))]
+use di::async_impl::{TypedContainer as AsyncTypedContainer, TypedContainerExt as _};
 #[cfg(all(feature = "compiled", feature = "async"))]
 use di::compiled_async_registry as async_registry;
 #[cfg(all(feature = "unified", feature = "async"))]
@@ -21,6 +23,8 @@ use di::{
     instance, registry as dynamic_registry, Container, DefaultScope::App, DependencyResolver, InstantiateErrorKind, Registry,
     ResolveErrorKind, Scope,
 };
+#[cfg(feature = "unified")]
+use di::{TypedContainer, TypedContainerExt as _};
 #[cfg(feature = "compiled")]
 use std::panic::catch_unwind;
 #[cfg(feature = "async")]
@@ -199,6 +203,15 @@ fn main() {
     check_async();
     #[cfg(feature = "unified")]
     {
+        let typed = TypedContainer::new(reexported_registry! {
+            provide(StaticApp, instance(23u32)),
+            provide(StaticRequest, |value: Inject<u32>| Ok::<_, InstantiateErrorKind>(value.0.to_string())),
+        });
+        assert_eq!(*typed.clone().get::<u32>().unwrap(), 23);
+        let typed = typed.enter().with_scope(StaticRequest).build().unwrap();
+        assert_eq!(typed.get_transient::<String>().unwrap(), "23");
+        assert_eq!(&*typed.into_container().get::<String>().unwrap(), "23");
+
         let container = Container::new(reexported_registry! { provide(App, instance(9u32)) });
         assert_eq!(*container.get::<u32>().unwrap(), 9);
 
@@ -234,6 +247,13 @@ fn main() {
 
         #[cfg(feature = "async")]
         RuntimeBuilder::new_current_thread().build().unwrap().block_on(async {
+            let typed = AsyncTypedContainer::new(renamed_async_registry! {
+                provide(StaticApp, async || Ok::<_, InstantiateErrorKind>(29u32)),
+            });
+            assert_eq!(*typed.clone().get::<u32>().await.unwrap(), 29);
+            assert_eq!(typed.get_transient::<u32>().await.unwrap(), 29);
+            typed.close().await;
+
             let container = AsyncContainer::new(renamed_async_registry! {
                 provide(StaticApp, async || Ok::<_, InstantiateErrorKind>(17u32)),
                 provide(StaticRequest, async |value: Inject<u32>| Ok::<_, InstantiateErrorKind>(value.0.to_string())),
