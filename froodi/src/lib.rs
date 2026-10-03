@@ -1,4 +1,5 @@
 #![no_std]
+#![forbid(unsafe_code)]
 
 extern crate alloc;
 
@@ -7,8 +8,6 @@ pub(crate) mod macros;
 
 pub(crate) mod any;
 pub(crate) mod cache;
-#[cfg(feature = "compiled")]
-pub(crate) mod compiled;
 pub(crate) mod config;
 pub(crate) mod container;
 pub(crate) mod context;
@@ -23,6 +22,7 @@ pub(crate) mod lock;
 pub(crate) mod registry;
 pub(crate) mod scope;
 pub(crate) mod service;
+pub(crate) mod typed_container;
 
 pub mod macros_utils;
 pub mod utils;
@@ -38,15 +38,13 @@ pub use dependency::Dependency;
 pub use dependency_resolver::DependencyResolver;
 pub use errors::{InstantiateErrorKind, InstantiatorResult, ResolveErrorKind, ScopeErrorKind, ScopeWithErrorKind};
 pub use finalizer::Finalizer;
-pub use inject::{Inject, InjectTransient};
+pub use inject::{Inject, InjectCustom, InjectTransient};
 pub use instantiator::{instance, Instantiator};
+pub use registry::declare;
 pub use registry::{InstantiatorData, Registry};
-pub use scope::{DefaultScope, Scope, ScopeData, Scopes};
-
-#[cfg(feature = "compiled")]
-pub use compiled::{context, runtime, RuntimeDependency, TypedContainer, TypedContainerExt};
-#[cfg(feature = "compiled")]
 pub use scope::StaticScope;
+pub use scope::{DefaultScope, Scope, ScopeData, Scopes};
+pub use typed_container::{TypedContainer, TypedContainerExt};
 
 #[cfg(feature = "axum")]
 pub use integrations::axum;

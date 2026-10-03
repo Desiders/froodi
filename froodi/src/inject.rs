@@ -1,17 +1,16 @@
+use core::slice::Iter;
+
+#[cfg(feature = "async")]
+use crate::async_impl::typed_registry::Selected;
 #[cfg(feature = "async")]
 use crate::async_impl::Container as AsyncContainer;
-#[cfg(all(feature = "compiled", feature = "async"))]
-use crate::compiled::async_impl::Selected;
 use crate::{
     any::TypeInfo,
     dependency_resolver::DependencyResolver,
+    registry::{RegistrationId, Selection},
     utils::thread_safety::{RcThreadSafety, SendSafety, SyncSafety},
     Container, ResolveErrorKind,
 };
-#[cfg(feature = "compiled")]
-use crate::{compiled::RegistrationId, registry::Selection};
-#[cfg(feature = "compiled")]
-use core::slice::Iter;
 
 pub struct Inject<Dep, const PREFER_SYNC_OVER_ASYNC: bool = true>(pub RcThreadSafety<Dep>);
 
@@ -24,9 +23,8 @@ impl<Dep: SendSafety + SyncSafety + 'static> DependencyResolver for Inject<Dep> 
     }
 
     #[inline]
-    #[cfg(feature = "compiled")]
-    fn resolve_compiled(container: &Container, edges: &mut Iter<'_, RegistrationId>) -> Result<Self, Self::Error> {
-        let id = edges.next().expect("one compiled edge per injection");
+    fn resolve_linked(container: &Container, edges: &mut Iter<'_, RegistrationId>) -> Result<Self, Self::Error> {
+        let id = edges.next().expect("one linked edge per injection");
         container
             .get_selected(Selection::Indexed(container.inner.registry.indexed[id.index()].1.as_ref()))
             .map(Self)
@@ -39,9 +37,9 @@ impl<Dep: SendSafety + SyncSafety + 'static> DependencyResolver for Inject<Dep> 
     }
 
     #[inline]
-    #[cfg(all(feature = "compiled", feature = "async"))]
-    async fn resolve_async_compiled(container: &AsyncContainer, edges: &mut Iter<'_, RegistrationId>) -> Result<Self, Self::Error> {
-        let id = *edges.next().expect("one compiled edge per injection");
+    #[cfg(feature = "async")]
+    async fn resolve_async_linked(container: &AsyncContainer, edges: &mut Iter<'_, RegistrationId>) -> Result<Self, Self::Error> {
+        let id = *edges.next().expect("one linked edge per injection");
         match &container.inner.registry.indexed[id.index()].1 {
             Selected::Sync(data) => container.sync.get_selected(Selection::Indexed(Some(data))).map(Self),
             Selected::Async(data) => container.get_selected(Selection::Indexed(Some(data))).await.map(Self),
@@ -66,9 +64,8 @@ impl<Dep: 'static> DependencyResolver for InjectTransient<Dep> {
     }
 
     #[inline]
-    #[cfg(feature = "compiled")]
-    fn resolve_compiled(container: &Container, edges: &mut Iter<'_, RegistrationId>) -> Result<Self, Self::Error> {
-        let id = edges.next().expect("one compiled edge per injection");
+    fn resolve_linked(container: &Container, edges: &mut Iter<'_, RegistrationId>) -> Result<Self, Self::Error> {
+        let id = edges.next().expect("one linked edge per injection");
         container
             .get_transient_selected(Selection::Indexed(container.inner.registry.indexed[id.index()].1.as_ref()))
             .map(Self)
@@ -81,9 +78,9 @@ impl<Dep: 'static> DependencyResolver for InjectTransient<Dep> {
     }
 
     #[inline]
-    #[cfg(all(feature = "compiled", feature = "async"))]
-    async fn resolve_async_compiled(container: &AsyncContainer, edges: &mut Iter<'_, RegistrationId>) -> Result<Self, Self::Error> {
-        let id = *edges.next().expect("one compiled edge per injection");
+    #[cfg(feature = "async")]
+    async fn resolve_async_linked(container: &AsyncContainer, edges: &mut Iter<'_, RegistrationId>) -> Result<Self, Self::Error> {
+        let id = *edges.next().expect("one linked edge per injection");
         match &container.inner.registry.indexed[id.index()].1 {
             Selected::Sync(data) => container.sync.get_transient_selected(Selection::Indexed(Some(data))).map(Self),
             Selected::Async(data) => container.get_transient_selected(Selection::Indexed(Some(data))).await.map(Self),
@@ -94,5 +91,23 @@ impl<Dep: 'static> DependencyResolver for InjectTransient<Dep> {
     #[inline]
     fn type_info() -> TypeInfo {
         TypeInfo::of::<Dep>()
+    }
+}
+
+/// Resolves a custom [`DependencyResolver`] without a statically linked edge.
+///
+/// The resolver runs at construction time and is responsible for its own lookups.
+pub struct InjectCustom<T>(pub T);
+
+impl<T: DependencyResolver> DependencyResolver for InjectCustom<T> {
+    type Error = T::Error;
+
+    fn resolve(container: &Container) -> Result<Self, Self::Error> {
+        T::resolve(container).map(Self)
+    }
+
+    #[cfg(feature = "async")]
+    async fn resolve_async(container: &AsyncContainer) -> Result<Self, Self::Error> {
+        T::resolve_async(container).await.map(Self)
     }
 }

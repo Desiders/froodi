@@ -1,8 +1,7 @@
-#![cfg(feature = "compiled")]
-
-use froodi::compiled_registry as registry;
+use froodi::registry;
 use froodi::{instance, Container, DefaultScope::App, Inject, InjectTransient, InstantiateErrorKind};
 
+// The padding tests exercise native graph-size limits on a larger thread stack.
 #[cfg(not(miri))]
 include!("fixtures/padding.rs");
 
@@ -59,7 +58,7 @@ fn rejects_oversized_sync_cycles_at_runtime() {
 #[cfg(all(feature = "async", not(miri)))]
 #[test]
 fn rejects_oversized_async_cycles_at_runtime() {
-    use froodi::{async_impl::Container, compiled_async_registry as registry};
+    use froodi::{async_impl::Container, async_registry as registry};
 
     struct Cycle;
 

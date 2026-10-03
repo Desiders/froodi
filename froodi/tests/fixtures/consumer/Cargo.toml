@@ -10,14 +10,18 @@ publish = false
 [[bin]]
 name = "static-scope"
 path = "src/bin/static_scope.rs"
-required-features = ["unified"]
+required-features = ["external-scopes"]
+
+[[bin]]
+name = "invalid-async-instantiator"
+path = "src/bin/invalid_async_instantiator.rs"
+required-features = ["async"]
 
 [features]
-compiled = ["di/compiled"]
 async = ["di/async", "dep:tokio"]
-unified = ["dep:compiled-enabler"]
+external-scopes = ["dep:scope-support"]
 
 [dependencies]
 di = { package = "froodi", version = "=1.0.0-beta.18" }
 tokio = { version = "1", features = ["rt", "macros"], optional = true }
-compiled-enabler = { path = "enabler", optional = true }
+scope-support = { path = "scope_support", optional = true }

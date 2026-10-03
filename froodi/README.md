@@ -30,6 +30,7 @@ It focuses on a small set of DI problems:
 - **Finalizers**. Dependencies can register cleanup logic that runs when a scope is closed.
 - **Sync and async support**. The crate supports both sync and async factories and containers.
 - **Modular registries**. Registries can be split and extended instead of building one large registration block.
+- **Registration checks**. Froodi catches missing or duplicate providers during compilation and can check cycles and static scopes before the app runs.
 - **Auto-registration**. `froodi-auto` can collect providers declared with macros.
 - **Framework integrations**. `axum`, `dptree`, `telers`, and `ruststream` are supported out of the box.
 
@@ -216,7 +217,7 @@ fn main() {
 7. **(Optional) Add async support or framework integration.**
 
 - For async containers and factories, see [async registration][examples/async_registration]
-- For `froodi-auto`, see [sync auto registration][examples/sync_auto_registration] and [async auto registration][examples/async_auto_registration]
+- For `froodi-auto`, see [auto registration][examples/auto_registration] and [async auto registration][examples/async_auto_registration]
 - For framework integration, see [axum][examples/axum_integration], [dptree][examples/dptree_integration], [telers][examples/telers_integration], and [ruststream][examples/ruststream_integration]
 
 ## Concepts
@@ -355,7 +356,6 @@ Important feature flags:
 
 - `thread_safe` (enabled by default)
 - `async`
-- `compiled` (opt-in typed registries through the existing Container)
 - `axum`
 - `http2-axum`
 - `dptree`
@@ -364,41 +364,29 @@ Important feature flags:
 
 Disable default features if you want to turn off `thread_safe`.
 
-### Compiled registrations
+### Registration checks
 
-Enable `compiled` and use `froodi::compiled_registry!` or, with `async`,
-`froodi::compiled_async_registry!`.
-Ordinary Froodi macros remain dynamic. The existing `Container`, injection modes
-and lifecycle are shared. Custom parameters use `froodi::RuntimeDependency<T>`;
-opaque boundaries use `froodi::runtime::<T>()` and `froodi::context::<T>()`.
+`registry!` and `async_registry!` catch missing or duplicate providers while
+compiling. They also catch dependency cycles when you build an application with a
+closed registry. Use `Inject<T>` or `InjectTransient<T>` for ordinary dependencies.
 
-For compile-time checks on public lookups, use `TypedContainer` with concrete typed
-registrations and import `TypedContainerExt`:
+Values supplied later through `Context` or another registry can be declared with
+`declare::<T>()`. Use `InjectCustom<T>` for a custom resolver. Froodi checks these
+runtime boundaries when the container runs. Custom `StaticScope` types can enable
+earlier scope checks; ordinary scope values keep runtime checks.
 
-```rust
-use froodi::{compiled_registry, instance, TypedContainer, TypedContainerExt as _, DefaultScope::App};
-
-let container = TypedContainer::new(compiled_registry! { provide(App, instance(7u32)) });
-assert_eq!(*container.get::<u32>().unwrap(), 7);
-// container.get::<String>() fails to compile: no String provider.
-```
-
-The async equivalents live in `froodi::async_impl`. Cloning and entering child
-scopes retain provider proofs. `into_container()` discards them for ordinary
-lookups and integrations. Scope accessibility and construction errors remain
-runtime concerns. Native fragments and runtime/Context provider declarations use
-the ordinary `Container`. Typed lookups delegate to its existing lookup path;
-compiled instantiator dependencies continue using indexed edges.
+Use `TypedContainer` when you also want unknown `get::<T>()` requests to fail at
+compile time. For more detail, see the API documentation for [`registry!`][docs-url].
 
 ## Examples
 
-- [Sync registration][examples/sync_registration]. Basic sync container setup
-- [Sync compiled registration][examples/sync_compiled_registration]. Typed registration with the existing container
+- [Registration][examples/registration]. Basic synchronous container setup
 - [Async registration][examples/async_registration]. Basic async container setup
-- [Sync finalization][examples/sync_finalization]. Scoped cleanup with sync finalizers
+- [Finalization][examples/finalization]. Scoped cleanup with synchronous finalizers
 - [Async finalization][examples/async_finalization]. Scoped cleanup with async finalizers
-- [Sync auto registration][examples/sync_auto_registration]. Sync auto-registration with `froodi-auto`
+- [Auto registration][examples/auto_registration]. Synchronous auto-registration with `froodi-auto`
 - [Async auto registration][examples/async_auto_registration]. Async auto-registration with `froodi-auto`
+- [Context][examples/context]. Supply request values through `Context`
 - [Axum integration][examples/axum_integration]. Request injection in `axum`
 - [Dptree integration][examples/dptree_integration]. Endpoint injection in `dptree`
 - [Telers integration][examples/telers_integration]. Handler injection in `telers`
@@ -419,13 +407,13 @@ Contributions are welcome.
 [Apache License, Version 2.0][license_apache]
 
 [examples]: https://github.com/Desiders/froodi/tree/master/examples
-[examples/sync_registration]: https://github.com/Desiders/froodi/tree/master/examples/sync_registration
-[examples/sync_compiled_registration]: https://github.com/Desiders/froodi/tree/master/examples/sync_compiled_registration
+[examples/registration]: https://github.com/Desiders/froodi/tree/master/examples/registration
 [examples/async_registration]: https://github.com/Desiders/froodi/tree/master/examples/async_registration
-[examples/sync_auto_registration]: https://github.com/Desiders/froodi/tree/master/examples/sync_auto_registration
+[examples/auto_registration]: https://github.com/Desiders/froodi/tree/master/examples/auto_registration
 [examples/async_auto_registration]: https://github.com/Desiders/froodi/tree/master/examples/async_auto_registration
-[examples/sync_finalization]: https://github.com/Desiders/froodi/tree/master/examples/sync_finalization
+[examples/finalization]: https://github.com/Desiders/froodi/tree/master/examples/finalization
 [examples/async_finalization]: https://github.com/Desiders/froodi/tree/master/examples/async_finalization
+[examples/context]: https://github.com/Desiders/froodi/tree/master/examples/context
 [examples/axum_integration]: https://github.com/Desiders/froodi/tree/master/examples/axum_integration
 [examples/dptree_integration]: https://github.com/Desiders/froodi/tree/master/examples/dptree_integration
 [examples/telers_integration]: https://github.com/Desiders/froodi/tree/master/examples/telers_integration

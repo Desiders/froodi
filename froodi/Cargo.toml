@@ -22,7 +22,6 @@ default = ["std", "thread_safe"]
 std = ["anyhow/std", "thiserror/std", "tracing/std"]
 
 thread_safe = []
-compiled = ["dep:froodi-macros", "froodi-macros/compiled"]
 async = ["tokio", "tokio/sync"]
 
 axum = ["dep:axum", "axum/ws", "dep:tower-layer", "dep:tower-service", "thread_safe"]
@@ -38,7 +37,7 @@ ruststream = ["dep:ruststream", "thread_safe", "tokio/rt"]
 anyhow = { version = "1.0", default-features = false }
 axum = { version = ">= 0.6, <= 0.8", default-features = false, optional = true }
 dptree = { version = "0.5", optional = true }
-froodi-macros = { version = "1", path = "../froodi-macros", optional = true }
+froodi-macros = { version = "1", path = "../froodi-macros" }
 h2 = { version = "0.4", optional = true }
 parking_lot = { version = "0.12", default-features = false }
 ruststream = { version = "0.7.0-rc.7", default-features = false, optional = true }
@@ -120,19 +119,10 @@ doc = false
 required-features = ["async", "thread_safe"]
 
 [[bench]]
-name = "compare_container_resolve"
-path = "benches/compare/sync.rs"
+name = "registry_lifecycle"
+path = "benches/compare/registry.rs"
 harness = false
-test = false
-doctest = false
-doc = false
-required-features = []
-
-[[bench]]
-name = "compiled_registry"
-path = "benches/compare/compiled.rs"
-harness = false
-required-features = ["compiled", "thread_safe"]
+required-features = ["thread_safe"]
 
 [[test]]
 name = "auto_registration_async"

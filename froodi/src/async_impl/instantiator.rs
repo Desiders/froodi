@@ -6,13 +6,10 @@ use super::{
     service::{service_fn, BoxCloneService, Service},
     Container,
 };
-#[cfg(feature = "compiled")]
-mod compiled;
+mod linked;
 
-#[cfg(feature = "compiled")]
-use self::compiled::ErasedInstantiator;
-#[cfg(feature = "compiled")]
-use crate::compiled::RegistrationId;
+use self::linked::ErasedInstantiator;
+use crate::registry::RegistrationId;
 use crate::{
     dependency::Dependency,
     dependency_resolver::DependencyResolver,
@@ -30,9 +27,8 @@ where
 
     fn instantiate(&mut self, dependencies: Deps) -> impl Future<Output = Result<Self::Provides, Self::Error>> + SendSafety;
 
-    #[cfg(feature = "compiled")]
     #[doc(hidden)]
-    fn instantiate_compiled(
+    fn instantiate_linked(
         &self,
         container: &Container,
         edges: &[RegistrationId],
@@ -42,7 +38,7 @@ where
     {
         let mut instantiator = self.clone();
         async move {
-            let dependencies = Deps::resolve_async_compiled(container, &mut edges.iter())
+            let dependencies = Deps::resolve_async_linked(container, &mut edges.iter())
                 .await
                 .map_err(|err| InstantiatorErrorKind::Deps(err.into()))?;
             instantiator
@@ -130,14 +126,13 @@ all_the_tuples!(impl_instantiator);
 
 #[derive(Clone)]
 pub(crate) enum RegistrationInstantiator {
-    Dynamic(BoxedCloneInstantiator<ResolveErrorKind, InstantiateErrorKind>),
-    #[cfg(feature = "compiled")]
-    Compiled(ErasedInstantiator),
+    Runtime(BoxedCloneInstantiator<ResolveErrorKind, InstantiateErrorKind>),
+    Linked(ErasedInstantiator),
 }
 
 impl From<BoxedCloneInstantiator<ResolveErrorKind, InstantiateErrorKind>> for RegistrationInstantiator {
     fn from(inst: BoxedCloneInstantiator<ResolveErrorKind, InstantiateErrorKind>) -> Self {
-        Self::Dynamic(inst)
+        Self::Runtime(inst)
     }
 }
 
@@ -149,9 +144,8 @@ impl RegistrationInstantiator {
     ) -> impl Future<Output = Result<Box<dyn Any>, InstantiatorErrorKind<ResolveErrorKind, InstantiateErrorKind>>> + SendSafety + '_ {
         async move {
             match self {
-                Self::Dynamic(inst) => Service::call(&mut inst.clone(), container).await,
-                #[cfg(feature = "compiled")]
-                Self::Compiled(inst) => inst.call(container).await,
+                Self::Runtime(inst) => Service::call(&mut inst.clone(), container).await,
+                Self::Linked(inst) => inst.call(container).await,
             }
         }
     }
@@ -217,7 +211,7 @@ mod tests {
             scope(App) [
                 provide({
                     let instantiator_request_call_count = instantiator_request_call_count.clone();
-                    move |()| {
+                    move || {
                         let instantiator_request_call_count = instantiator_request_call_count.clone();
 
                         async move {
@@ -266,7 +260,7 @@ mod tests {
             scope(App) [
                 provide({
                     let instantiator_request_call_count = instantiator_request_call_count.clone();
-                    move |()| {
+                    move || {
                         let instantiator_request_call_count = instantiator_request_call_count.clone();
 
                         async move {

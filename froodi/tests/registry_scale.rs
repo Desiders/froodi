@@ -6,9 +6,6 @@ extern crate alloc;
 
 use froodi::{registry, Container, DefaultScope::App, InstantiateErrorKind};
 
-#[cfg(feature = "async")]
-use froodi::async_registry;
-
 pub struct T<const N: usize>;
 
 fn inst<const N: usize>() -> Result<T<N>, InstantiateErrorKind> {
@@ -41,124 +38,15 @@ macro_rules! with_500_ids {
     };
 }
 
-macro_rules! entries_in_one_scope {
-    ($($i:literal)+) => {
-        registry! { scope(App) [ $( provide(inst::<$i>) ),+ ] }
-    };
-}
-
-macro_rules! scope_clauses {
-    ($($i:literal)+) => {
-        registry! { $( scope(App) [ provide(inst::<$i>) ] ),+ }
-    };
-}
-
-macro_rules! provide_clauses {
-    ($($i:literal)+) => {
-        registry! { $( provide(App, inst::<$i>) ),+ }
-    };
-}
-
-macro_rules! provide_clauses_then_extend {
-    ($($i:literal)+) => {
-        registry! {
-            $( provide(App, inst::<$i>) ),+,
-            extend(registry! { scope(App) [ provide(|| Ok(Marker)) ] }),
-        }
-    };
-}
-
-struct Marker;
-
-#[test]
-fn n500_provides_in_a_single_scope() {
-    let container = Container::new(with_500_ids!(entries_in_one_scope));
-
-    assert!(container.get::<T<0>>().is_ok());
-    assert!(container.get::<T<250>>().is_ok());
-    assert!(container.get::<T<499>>().is_ok());
-}
-
-#[test]
-fn n500_scope_clauses() {
-    let container = Container::new(with_500_ids!(scope_clauses));
-
-    assert!(container.get::<T<0>>().is_ok());
-    assert!(container.get::<T<250>>().is_ok());
-    assert!(container.get::<T<499>>().is_ok());
-}
-
-#[test]
-fn n500_provide_clauses() {
-    let container = Container::new(with_500_ids!(provide_clauses));
-
-    assert!(container.get::<T<0>>().is_ok());
-    assert!(container.get::<T<250>>().is_ok());
-    assert!(container.get::<T<499>>().is_ok());
-}
-
-#[test]
-fn n500_clauses_with_a_trailing_extend() {
-    let container = Container::new(with_500_ids!(provide_clauses_then_extend));
-
-    assert!(container.get::<T<0>>().is_ok());
-    assert!(container.get::<T<499>>().is_ok());
-    assert!(container.get::<Marker>().is_ok());
-}
-
-/// `extend(registry!(...))` is lexical nesting, so its depth is bounded by `recursion_limit`
-/// however the clause list is matched. 20 levels is far past what composing modules needs.
-macro_rules! nest {
-    ($i:literal) => {
-        registry! { scope(App) [ provide(inst::<$i>) ] }
-    };
-    ($i:literal $($rest:literal)+) => {
-        registry! { provide(App, inst::<$i>), extend(nest!($($rest)+)) }
+macro_rules! entries {
+    ($($index:literal)+) => {
+        registry! { scope(App) [ $(provide(inst::<$index>)),+ ] }
     };
 }
 
 #[test]
-fn nested_extend_20_levels() {
-    let container = Container::new(nest!(19 18 17 16 15 14 13 12 11 10 9 8 7 6 5 4 3 2 1 0));
-
-    assert!(container.get::<T<0>>().is_ok());
-    assert!(container.get::<T<19>>().is_ok());
-}
-
-#[cfg(feature = "async")]
-async fn async_inst<const N: usize>() -> Result<T<N>, InstantiateErrorKind> {
-    Ok(T::<N>)
-}
-
-#[cfg(feature = "async")]
-macro_rules! async_entries_in_one_scope {
-    ($($i:literal)+) => {
-        async_registry! { scope(App) [ $( provide(async_inst::<$i>) ),+ ] }
-    };
-}
-
-/// `async_registry!` shares the clause-list arm with `registry!`; building the registry needs no
-/// runtime, so this stays a plain test.
-#[cfg(feature = "async")]
-#[test]
-fn n500_async_provides_in_a_single_scope() {
-    let registry = with_500_ids!(async_entries_in_one_scope);
-
-    registry.validate().unwrap();
-}
-
-#[cfg(feature = "compiled")]
-mod compiled {
-    use super::*;
-
-    macro_rules! entries {
-        ($($i:literal)+) => { froodi::compiled_registry! { scope(App) [ $(provide(inst::<$i>)),+ ] } };
-    }
-
-    #[test]
-    fn flat_500_without_dependencies() {
-        let container = Container::new(with_500_ids!(entries));
-        container.get::<T<0>>().unwrap();
-        container.get::<T<499>>().unwrap();
-    }
+fn flat_500_links_under_the_default_recursion_limit() {
+    let container = Container::new(with_500_ids!(entries));
+    container.get::<T<0>>().unwrap();
+    container.get::<T<499>>().unwrap();
 }

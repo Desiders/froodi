@@ -3,7 +3,7 @@
 [![Crates.io][crates-badge]][crates-url]
 
 Shared procedural macros for [Froodi][froodi-crates-url] and
-[froodi-auto][froodi-auto-crates-url]: compiled registry macros and the
+[froodi-auto][froodi-auto-crates-url]: registry macros and the
 `injectable` auto-registration attribute.
 
 ## Community

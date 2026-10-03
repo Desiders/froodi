@@ -5,10 +5,9 @@ use tracing::trace;
 use tracing::{debug, error};
 
 use super::cache::Cache;
-#[cfg(feature = "compiled")]
-use crate::compiled::{finish, prepare, IntoRegistry};
 #[cfg(feature = "thread_safe")]
 use crate::lock::PerTypeLocks;
+use crate::registry::{finish, IntoRegistry};
 use crate::{
     any::TypeInfo,
     cache::Resolved,
@@ -28,59 +27,22 @@ pub struct Container {
 }
 
 impl Container {
-    /// Creates container and builds it with next non-skipped scope.
-    /// For example, in case of [`crate::scope::DefaultScope`], [`crate::scope::DefaultScope::Runtime`] will be skipped to [`crate::scope::DefaultScope::App`],
-    /// because the first flagged as skippable, but it will be in container as parent of current.
-    ///
-    /// # Warning
-    /// This method skips first skippable scopes, if you want to use one of them, use [`Self::new_with_start_scope`].
+    /// Creates a container at the first non-skipped scope.
     ///
     /// # Panics
-    /// - Panics if registries builder doesn't create any registry.
-    ///   This can occur if scopes are empty.
-    /// - Panics if there are no child registries.
-    ///   This can occur if count of scopes is 1.
-    /// - Panics if all scopes except the first one are skipped by default.
+    /// Panics if no scope can be selected or registry runtime validation fails.
     #[must_use]
-    #[cfg(not(feature = "compiled"))]
-    pub fn new(registry: Registry) -> Self {
-        Self::build_root(registry, |scope_data| !scope_data.is_skipped_by_default)
-    }
-
-    /// Creates a container from a dynamic or typed registry at the first non-skipped scope.
-    /// For a skipped scope, use [`Self::new_with_start_scope`] with a dynamic registry
-    /// or [`Self::new_compiled_with_start_scope`] with a typed registry.
-    ///
-    /// # Panics
-    /// Panics if no scope can be selected or compiled-registry runtime validation fails.
-    #[must_use]
-    #[cfg(feature = "compiled")]
     pub fn new<Links>(registry: impl IntoRegistry<Links>) -> Self {
         Self::build_root(finish(registry), |scope_data| !scope_data.is_skipped_by_default)
     }
 
-    /// Creates container with start scope
-    /// # Panics
-    /// - Panics if registries builder doesn't create any registry.
-    ///   This can occur if scopes are empty.
-    /// - Panics if specified start scope not found in scopes.
-    #[must_use]
-    #[allow(clippy::needless_pass_by_value)]
-    pub fn new_with_start_scope<S: Scope>(registry: Registry, scope: S) -> Self {
-        let priority = scope.priority();
-        #[cfg(feature = "compiled")]
-        let registry = prepare(registry, false, None);
-        Self::build_root(registry, move |scope_data| scope_data.priority == priority)
-    }
-
-    /// Creates a container from a typed registry at the requested scope.
+    /// Creates a container at the requested scope.
     ///
     /// # Panics
-    /// Panics if the scope is absent or compiled-registry runtime validation fails.
+    /// Panics if the scope is absent or registry runtime validation fails.
     #[must_use]
     #[allow(clippy::needless_pass_by_value)]
-    #[cfg(feature = "compiled")]
-    pub fn new_compiled_with_start_scope<S: Scope, Links>(registry: impl IntoRegistry<Links>, scope: S) -> Self {
+    pub fn new_with_start_scope<S: Scope, Links>(registry: impl IntoRegistry<Links>, scope: S) -> Self {
         let priority = scope.priority();
         Self::build_root(finish(registry), move |scope_data| scope_data.priority == priority)
     }
@@ -127,7 +89,7 @@ impl Container {
     /// because the first flagged as skippable, but it will be in container as parent of current.
     ///
     /// # Warning
-    /// This method skips skippable scopes, if you want to use one of them, use [`ChildContainerBuilder::with_scope`].
+    /// To enter a skipped scope explicitly, use `self.enter().with_scope(scope).build()`.
     ///
     /// # Errors
     /// - Returns [`ScopeErrorKind::NoChildRegistries`] if there are no registries
@@ -935,7 +897,8 @@ mod tests {
                 scope(Step) [
                     provide(|| Ok(((), (), (), (), (), ()))),
                 ],
-            },
+            }
+            .into_registry(),
             Runtime,
         );
         let app_container = runtime_container.clone().enter().with_scope(App).build().unwrap();
@@ -1266,7 +1229,8 @@ mod tests {
             registry! {
                 scope(Runtime) [ provide(|| Ok(())) ],
                 scope(App) [ provide(|| Ok(((), ()))) ],
-            },
+            }
+            .into_registry(),
             Runtime,
         );
         // Resolve the injected `Container` at its own scope -> caches Arc<Container> into its OWN cache.

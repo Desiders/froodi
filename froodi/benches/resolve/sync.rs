@@ -1,9 +1,6 @@
 #![allow(dead_code)]
 
 use criterion::{criterion_group, criterion_main, Criterion};
-#[cfg(feature = "compiled")]
-use froodi::compiled_registry as registry;
-#[cfg(not(feature = "compiled"))]
 use froodi::registry;
 use froodi::{utils::thread_safety::RcThreadSafety, Container, DefaultScope::*, Inject, InjectTransient};
 

@@ -1,0 +1,13 @@
+error[E0603]: module `registry` is private
+ --> tests/ui/registry/forged_index.rs:3:14
+  |
+3 | impl froodi::registry::linking::RegistryIndex for Forged {
+  |              ^^^^^^^^           ------------- trait `RegistryIndex` is not publicly re-exported
+  |              |
+  |              private module
+  |
+note: the module `registry` is defined here
+ --> src/lib.rs
+  |
+  | pub(crate) mod registry;
+  | ^^^^^^^^^^^^^^^^^^^^^^^

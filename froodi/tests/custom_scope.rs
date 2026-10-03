@@ -106,8 +106,8 @@ fn start_scope_can_be_chosen_explicitly() {
 #[test]
 #[should_panic]
 fn a_wider_entry_may_not_depend_on_a_narrower_one() {
-    registry! {
+    let _ = Container::new(registry! {
         scope(MyScope::Work) [ provide(|froodi::InjectTransient(_): froodi::InjectTransient<Narrow>| Ok(Wide)) ],
         scope(MyScope::Task) [ provide(narrow) ],
-    };
+    });
 }

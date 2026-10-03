@@ -1,5 +1,5 @@
-use compiled_enabler::scopes::{App, Request};
-use di::{compiled_registry as renamed_registry, instance, Container, Inject, InstantiateErrorKind};
+use scope_support::scopes::{App, Request};
+use di::{registry as renamed_registry, instance, Container, Inject, InstantiateErrorKind};
 
 fn service(_: Inject<u32>) -> Result<String, InstantiateErrorKind> {
     Ok(String::new())

@@ -7,9 +7,8 @@ use quote::{quote, ToTokens};
 use syn::parse::Parse;
 
 mod attr_parsing;
-#[cfg(feature = "compiled")]
-mod compiled;
 mod injectable;
+mod registry;
 
 #[proc_macro_attribute]
 pub fn injectable(_attr: TokenStream, item: TokenStream) -> TokenStream {
@@ -35,14 +34,12 @@ where
     }
 }
 
-#[cfg(feature = "compiled")]
 #[proc_macro]
-pub fn compiled_registry(input: TokenStream) -> TokenStream {
-    compiled::registry(input)
+pub fn registry(input: TokenStream) -> TokenStream {
+    registry::registry(input)
 }
 
-#[cfg(feature = "compiled")]
 #[proc_macro]
-pub fn compiled_async_registry(input: TokenStream) -> TokenStream {
-    compiled::async_registry(input)
+pub fn async_registry(input: TokenStream) -> TokenStream {
+    registry::async_registry(input)
 }

@@ -1,5 +1,5 @@
 //! rustc --edition=2021 tools/compile_bench.rs -o /tmp/froodi-build-bench
-//! /tmp/froodi-build-bench <repo> <fresh-output> [samples=3] [dynamic|compiled|both] [measurement] [default|runtime|static] [shapes]
+//! /tmp/froodi-build-bench <repo> <fresh-output> [samples=3] [measurement] [default|runtime|static] [shapes]
 //! Only app artifacts are cleaned; dependencies stay warm. All generated files are disposable.
 use std::{
     env, fs,
@@ -31,14 +31,9 @@ fn cargo(dir: &Path, target: &Path) -> Command {
     command
 }
 
-fn source(shape: &str, edit: &str, engine: &str, scope: &str) -> String {
+fn source(shape: &str, edit: &str, scope: &str) -> String {
     let count = if shape == "chain100" { 100 } else { 500 };
-    let registry = if engine == "compiled" {
-        "froodi::compiled_registry"
-    } else {
-        "froodi::registry"
-    };
-    let mut text = format!("#![allow(unused_imports, dead_code)]\nuse {registry} as registry;\nuse froodi::{{Container, Inject, InstantiateErrorKind, DefaultScope::App}};\n");
+    let mut text = String::from("#![allow(unused_imports, dead_code)]\nuse froodi::{registry, Container, Inject, InstantiateErrorKind, DefaultScope::App};\n");
     if scope != "default" {
         text.push_str(
             r#"
@@ -125,7 +120,7 @@ fn main() {
     let args: Vec<_> = env::args().collect();
     assert!(
         args.len() >= 3,
-        "usage: compile-bench <repo> <fresh-output> [samples=3] [dynamic|compiled|both] [measurement] [default|runtime|static] [shapes]"
+        "usage: compile-bench <repo> <fresh-output> [samples=3] [measurement] [default|runtime|static] [shapes]"
     );
     let repo = fs::canonicalize(&args[1]).unwrap();
     let output = PathBuf::from(&args[2]);
@@ -134,16 +129,10 @@ fn main() {
     let output = fs::canonicalize(output).unwrap();
     let repetitions = args.get(3).map_or(3, |value| value.parse::<usize>().unwrap());
     assert!(repetitions > 0);
-    let selected = args.get(4).map_or("both", String::as_str);
-    assert!(matches!(selected, "dynamic" | "compiled" | "both"));
-    let only = args.get(5).map(String::as_str);
-    let scope = args.get(6).map_or("default", String::as_str);
+    let only = args.get(4).map(String::as_str);
+    let scope = args.get(5).map_or("default", String::as_str);
     assert!(matches!(scope, "default" | "runtime" | "static"));
-    assert!(
-        scope != "static" || selected == "compiled",
-        "static scopes require the compiled feature"
-    );
-    let shapes = args.get(7).map_or("chain100,flat500", String::as_str);
+    let shapes = args.get(6).map_or("chain100,flat500", String::as_str);
     assert!(shapes
         .split(',')
         .all(|shape| matches!(shape, "chain100" | "flat500" | "edges500" | "edges2000")));
@@ -153,18 +142,13 @@ fn main() {
     let target = output.join("target");
     let version = Command::new("rustc").arg("-Vv").output().unwrap();
     fs::write(output.join("toolchain.txt"), version.stdout).unwrap();
-    let mut results = String::from("engine,shape,measurement,seconds,bytes\n");
-    for engine in ["dynamic", "compiled"] {
-        if selected != "both" && selected != engine {
-            continue;
-        }
+    let mut results = String::from("shape,measurement,seconds,bytes\n");
         for shape in shapes.split(',') {
-            let dir = output.join(format!("{engine}-{shape}"));
+            let dir = output.join(shape);
             fs::create_dir_all(dir.join("src")).unwrap();
-            let features = if engine == "compiled" { "[\"compiled\"]" } else { "[]" };
-            fs::write(dir.join("Cargo.toml"), format!("[package]\nname = \"compile-bench-app\"\nversion = \"0.0.0\"\nedition = \"2021\"\n[workspace]\n[dependencies]\nfroodi = {{ path = {:?}, features = {features} }}\n", repo.join("froodi"))).unwrap();
+            fs::write(dir.join("Cargo.toml"), format!("[package]\nname = \"compile-bench-app\"\nversion = \"0.0.0\"\nedition = \"2021\"\n[workspace]\n[dependencies]\nfroodi = {{ path = {:?} }}\n", repo.join("froodi"))).unwrap();
             let src = dir.join("src/main.rs");
-            let original = source(shape, "none", engine, scope);
+            let original = source(shape, "none", scope);
             fs::write(&src, &original).unwrap();
             run(cargo(&dir, &target).args(["build", "--offline"]), &dir.join("warm.log"));
             for measurement in ["clean-app", "body", "topology", "release"] {
@@ -190,7 +174,7 @@ fn main() {
                         }
                         run(&mut clean, &dir.join("clean.log"));
                     } else {
-                        fs::write(&src, source(shape, measurement, engine, scope)).unwrap();
+                        fs::write(&src, source(shape, measurement, scope)).unwrap();
                     }
                     samples.push(run(&mut build, &dir.join(format!("{measurement}-{sample}.log"))));
                     let binary = target.join(if release { "release" } else { "debug" }).join("compile-bench-app");
@@ -200,10 +184,9 @@ fn main() {
                 let mut ordered = samples.clone();
                 ordered.sort_by(f64::total_cmp);
                 let seconds = ordered[ordered.len() / 2];
-                println!("{engine}/{shape}/{measurement}: {seconds:.3}s {bytes} bytes ({samples:?})");
-                results.push_str(&format!("{engine},{shape},{measurement},{seconds:.6},{bytes}\n"));
+                println!("{shape}/{measurement}: {seconds:.3}s {bytes} bytes ({samples:?})");
+                results.push_str(&format!("{shape},{measurement},{seconds:.6},{bytes}\n"));
                 fs::write(output.join("results.csv"), &results).unwrap();
             }
-        }
     }
 }

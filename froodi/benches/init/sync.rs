@@ -1,9 +1,6 @@
 #![allow(dead_code)]
 
 use criterion::{criterion_group, criterion_main, Criterion};
-#[cfg(feature = "compiled")]
-use froodi::compiled_registry as registry;
-#[cfg(not(feature = "compiled"))]
 use froodi::registry;
 use froodi::{utils::thread_safety::RcThreadSafety, Container, DefaultScope::*};
 
@@ -53,10 +50,7 @@ fn criterion_benchmark(c: &mut Criterion) {
                 provide(|| Ok(((), (), (), (), (), ()))),
             ],
         };
-        #[cfg(not(feature = "compiled"))]
         let runtime_container = Container::new_with_start_scope(registry, Runtime);
-        #[cfg(feature = "compiled")]
-        let runtime_container = Container::new_compiled_with_start_scope(registry, Runtime);
         b.iter(|| {
             let app_container = runtime_container.clone().enter().with_scope(App).build().unwrap();
             let session_container = app_container.enter().with_scope(Session).build().unwrap();

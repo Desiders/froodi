@@ -15,18 +15,16 @@ pub trait Scope: Ord + Into<ScopeData> {
     }
 }
 
-/// Adds compile-time scope checks to compiled registrations.
+/// Adds compile-time scope checks to typed registrations.
 ///
 /// Implementing this trait also supplies the [`Scope`] methods from `DATA`.
 /// [`DATA`](Self::DATA) must match the [`ScopeData`] produced by every value of
 /// this type. Distinct scope types share a [`Scopes`] family; [`DefaultScope`]
 /// remains dynamic. Registration syntax is unchanged.
-#[cfg(feature = "compiled")]
 pub trait StaticScope: Ord + Into<ScopeData> {
     const DATA: ScopeData;
 }
 
-#[cfg(feature = "compiled")]
 impl<S: StaticScope> Scope for S {
     fn name(&self) -> &'static str {
         Self::DATA.name

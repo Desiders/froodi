@@ -643,6 +643,7 @@ mod tests {
                 provide(|| Ok(Config { num: 1 })),
             ],
             scope(Request) [
+                provide(crate::declare::<Parts>()),
                 provide(|Inject(cfg): Inject<Config>, Inject(_parts): Inject<Parts>| Ok(cfg.num + 1)),
             ],
         });
