@@ -1,18 +1,18 @@
 use alloc::{boxed::Box, vec::Vec};
-use parking_lot::RwLock;
 #[cfg(feature = "thread_safe")]
 use tracing::trace;
 use tracing::{debug, error};
 
 use super::cache::Cache;
-#[cfg(feature = "thread_safe")]
-use crate::lock::PerTypeLocks;
 use crate::registry::{finish, IntoRegistry};
+#[cfg(feature = "thread_safe")]
+use crate::lock::PerTypeSyncLocks;
 use crate::{
     any::TypeInfo,
     cache::Resolved,
     context::Context,
     errors::{InstantiatorErrorKind, ResolveErrorKind, ScopeErrorKind, ScopeWithErrorKind},
+    lock::LocalLock,
     registry::{InstantiatorData, Registry, Selection},
     scope::{Scope, ScopeData, ScopeDataWithChildScopesData},
     service::Service as _,
@@ -23,7 +23,7 @@ use crate::{
 pub struct Container {
     pub(crate) inner: RcThreadSafety<ContainerInner>,
     #[cfg(feature = "thread_safe")]
-    pub(crate) per_type_locks: PerTypeLocks,
+    pub(crate) per_type_locks: PerTypeSyncLocks,
 }
 
 impl Container {
@@ -67,7 +67,7 @@ impl Container {
             parent: None,
             close_parent: false,
             #[cfg(feature = "thread_safe")]
-            per_type_locks: PerTypeLocks::default(),
+            per_type_locks: PerTypeSyncLocks::default(),
         };
         while !is_target(&container.scope_data) {
             scopes = scopes.child();
@@ -328,7 +328,7 @@ impl Container {
             #[cfg(feature = "thread_safe")]
             per_type_locks: self.per_type_locks.clone(),
             inner: RcThreadSafety::new(ContainerInner {
-                cache: RwLock::new(cache),
+                cache: LocalLock::new(cache),
                 context,
                 registry,
                 scope_data,
@@ -354,7 +354,7 @@ impl Container {
             #[cfg(feature = "thread_safe")]
             per_type_locks: self.per_type_locks.clone(),
             inner: RcThreadSafety::new(ContainerInner {
-                cache: RwLock::new(cache),
+                cache: LocalLock::new(cache),
                 context,
                 registry,
                 scope_data,
@@ -569,7 +569,7 @@ pub(crate) struct BoxedContainerInner {
     pub(crate) parent: Option<Box<BoxedContainerInner>>,
     pub(crate) close_parent: bool,
     #[cfg(feature = "thread_safe")]
-    pub(crate) per_type_locks: PerTypeLocks,
+    pub(crate) per_type_locks: PerTypeSyncLocks,
 }
 
 impl BoxedContainerInner {
@@ -614,7 +614,7 @@ impl From<BoxedContainerInner> for Container {
     ) -> Self {
         Self {
             inner: RcThreadSafety::new(ContainerInner {
-                cache: RwLock::new(cache),
+                cache: LocalLock::new(cache),
                 context,
                 registry,
                 scope_data,
@@ -629,7 +629,7 @@ impl From<BoxedContainerInner> for Container {
 }
 
 pub(crate) struct ContainerInner {
-    pub(crate) cache: RwLock<Cache>,
+    pub(crate) cache: LocalLock<Cache>,
     pub(crate) context: Context,
     pub(crate) registry: RcThreadSafety<Registry>,
     pub(crate) scope_data: ScopeData,

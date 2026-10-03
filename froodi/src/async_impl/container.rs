@@ -1,6 +1,5 @@
 use alloc::{boxed::Box, vec::Vec};
 use core::future::Future;
-use parking_lot::RwLock;
 use tracing::{debug, error, trace, warn};
 
 use super::{
@@ -9,7 +8,7 @@ use super::{
 };
 use crate::async_impl::typed_registry::{finish, IntoRegistry};
 #[cfg(feature = "thread_safe")]
-use crate::lock::PerTypeLocks;
+use crate::lock::PerTypeSyncLocks;
 use crate::{
     any::TypeInfo,
     async_impl::registry::RegistryWithSync,
@@ -17,7 +16,7 @@ use crate::{
     container::{BoxedContainerInner as BoxedSyncContainerInner, Container as SyncContainer, ContainerInner as SyncContainerInner},
     context::Context,
     errors::{InstantiatorErrorKind, ResolveErrorKind, ScopeErrorKind, ScopeWithErrorKind},
-    lock::PerTypeSharedLocks,
+    lock::{LocalLock, PerTypeAsyncLocks},
     registry::{Registry as SyncRegistry, Selection},
     scope::{Scope, ScopeData, ScopeDataWithChildScopesData},
     utils::thread_safety::{RcThreadSafety, SendSafety, SyncSafety},
@@ -27,7 +26,7 @@ use crate::{
 pub struct Container {
     pub(crate) inner: RcThreadSafety<ContainerInner>,
     pub(crate) sync: SyncContainer,
-    per_type_locks: PerTypeSharedLocks,
+    per_type_locks: PerTypeAsyncLocks,
 }
 
 impl Container {
@@ -72,7 +71,7 @@ impl Container {
             parent: None,
             close_parent: false,
             #[cfg(feature = "thread_safe")]
-            per_type_locks: PerTypeLocks::default(),
+            per_type_locks: PerTypeSyncLocks::default(),
         };
         let mut container = BoxedContainerInner {
             cache: Cache::new(),
@@ -396,7 +395,7 @@ impl Container {
 
         Self {
             inner: RcThreadSafety::new(ContainerInner {
-                cache: RwLock::new(cache),
+                cache: LocalLock::new(cache),
                 context,
                 registry,
                 scope_data,
@@ -408,7 +407,7 @@ impl Container {
                 #[cfg(feature = "thread_safe")]
                 per_type_locks: self.sync.per_type_locks.clone(),
                 inner: RcThreadSafety::new(SyncContainerInner {
-                    cache: RwLock::new(sync_cache),
+                    cache: LocalLock::new(sync_cache),
                     context: sync_context,
                     registry: sync_registry,
                     scope_data,
@@ -439,7 +438,7 @@ impl Container {
 
         Self {
             inner: RcThreadSafety::new(ContainerInner {
-                cache: RwLock::new(cache),
+                cache: LocalLock::new(cache),
                 context,
                 registry,
                 scope_data,
@@ -451,7 +450,7 @@ impl Container {
                 #[cfg(feature = "thread_safe")]
                 per_type_locks: self.sync.per_type_locks.clone(),
                 inner: RcThreadSafety::new(SyncContainerInner {
-                    cache: RwLock::new(sync_cache),
+                    cache: LocalLock::new(sync_cache),
                     context: sync_context,
                     registry: sync_registry,
                     scope_data,
@@ -716,7 +715,7 @@ impl From<BoxedContainerInner> for ContainerInner {
     ) -> Self {
         Self {
             parent: parent.map(|parent| RcThreadSafety::new((*parent).into())),
-            cache: RwLock::new(cache),
+            cache: LocalLock::new(cache),
             context,
             registry,
             scope_data,
@@ -731,13 +730,13 @@ impl From<(BoxedContainerInner, BoxedSyncContainerInner)> for Container {
         Self {
             inner: RcThreadSafety::new(inner.into()),
             sync: sync.into(),
-            per_type_locks: PerTypeSharedLocks::default(),
+            per_type_locks: PerTypeAsyncLocks::default(),
         }
     }
 }
 
 pub(crate) struct ContainerInner {
-    cache: RwLock<Cache>,
+    cache: LocalLock<Cache>,
     context: Context,
     pub(crate) registry: RcThreadSafety<Registry>,
     scope_data: ScopeData,

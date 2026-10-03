@@ -48,7 +48,7 @@ bench-resolve:
     cargo bench -p froodi --profile release --frozen --bench async_container_resolve --no-default-features --features async
 
 bench-resolve-concurrent:
-    cargo bench -p froodi --profile release --frozen --bench container_resolve_concurrent --no-default-features --features thread_safe
+    cargo bench -p froodi --profile release --frozen --bench container_resolve_concurrent --no-default-features --features thread_safe,std
     cargo bench -p froodi --profile release --frozen --bench async_container_resolve_concurrent --no-default-features --features async,thread_safe
 
 bench-registry-lifecycle:
