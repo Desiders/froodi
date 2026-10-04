@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
-use froodi::async_registry;
+use froodi::registry;
 use froodi::{async_impl::Container, DefaultScope::*, Inject, InjectTransient};
 use std::{
     future::Future,
@@ -65,7 +65,7 @@ fn criterion_benchmark(c: &mut Criterion) {
     group.bench_function(BenchmarkId::new("get_single", THREADS), |b| {
         struct A;
 
-        let container = Container::new(async_registry! {
+        let container = Container::new(registry! {
             scope(App) [ provide(async || Ok(A)) ]
         });
 
@@ -97,7 +97,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         struct CAAAA(Arc<CAAAAA>);
         struct CAAAAA;
 
-        let container = Container::new(async_registry! {
+        let container = Container::new(registry! {
             scope(Runtime) [ provide(async || Ok(CAAAAA)) ],
             scope(App) [ provide(async |Inject(caaaaa): Inject<CAAAAA>| Ok(CAAAA(caaaaa))) ],
             scope(Session) [ provide(async |Inject(caaaa): Inject<CAAAA>| Ok(CAAA(caaaa))) ],
@@ -142,7 +142,7 @@ fn criterion_benchmark(c: &mut Criterion) {
     group.bench_function(BenchmarkId::new("get_transient_single", THREADS), |b| {
         struct A;
 
-        let container = Container::new(async_registry! {
+        let container = Container::new(registry! {
             scope(App) [ provide(async || Ok(A)) ]
         });
 
@@ -177,7 +177,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         struct CAAAA(CAAAAA);
         struct CAAAAA;
 
-        let container = Container::new(async_registry! {
+        let container = Container::new(registry! {
             scope(Runtime) [ provide(async || Ok(CAAAAA)) ],
             scope(App) [ provide(async |InjectTransient(caaaaa): InjectTransient<CAAAAA>| Ok(CAAAA(caaaaa))) ],
             scope(Session) [ provide(async |InjectTransient(caaaa): InjectTransient<CAAAA>| Ok(CAAA(caaaa))) ],
@@ -225,7 +225,7 @@ fn criterion_benchmark(c: &mut Criterion) {
             struct B(Arc<C>);
             struct C;
 
-            let container = Container::new(async_registry! {
+            let container = Container::new(registry! {
                 scope(App) [ provide(async || Ok(C)) ],
                 scope(Request) [
                     provide(async |Inject(c): Inject<C>| Ok(B(c))),

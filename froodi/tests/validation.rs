@@ -58,7 +58,7 @@ fn rejects_oversized_sync_cycles_at_runtime() {
 #[cfg(all(feature = "async", not(miri)))]
 #[test]
 fn rejects_oversized_async_cycles_at_runtime() {
-    use froodi::{async_impl::Container, async_registry as registry};
+    use froodi::{async_impl::Container, registry};
 
     struct Cycle;
 

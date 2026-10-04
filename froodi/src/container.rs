@@ -4,9 +4,9 @@ use tracing::trace;
 use tracing::{debug, error};
 
 use super::cache::Cache;
-use crate::registry::{finish, IntoRegistry};
 #[cfg(feature = "thread_safe")]
 use crate::lock::PerTypeSyncLocks;
+use crate::registry::{finish, IntoRegistry};
 use crate::{
     any::TypeInfo,
     cache::Resolved,

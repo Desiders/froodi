@@ -108,6 +108,10 @@ pub struct CollectedRegistration {
     pub(crate) data: Option<InstantiatorData>,
 }
 
+#[diagnostic::on_unimplemented(
+    message = "a sync Container requires synchronous factories",
+    note = "use froodi::async_impl::Container for a registry containing async factories"
+)]
 pub trait Collect {
     fn collect(self, entries: &mut Vec<CollectedRegistration>, runtime: &mut Vec<RuntimeRegistry>);
 }

@@ -1,5 +1,5 @@
 use froodi as scope_api;
-use froodi::{async_impl::Container, async_registry as registry, Inject, InstantiateErrorKind};
+use froodi::{async_impl::Container, registry, Inject, InstantiateErrorKind};
 
 #[path = "support/scopes.rs"]
 mod scopes;

@@ -32,7 +32,13 @@ fn registration_errors() {
         cases.compile_fail(format!("tests/ui/registry/{prefix}{case}.rs"));
     }
     #[cfg(feature = "async")]
-    for case in ["sync_async", "sync_transient_async", "typed_async_missing"] {
+    for case in [
+        "sync_async",
+        "sync_transient_async",
+        "typed_async_missing",
+        "mixed_sync_container",
+        "sync_async_finalizer",
+    ] {
         cases.compile_fail(format!("tests/ui/registry/{case}.rs"));
     }
 }
@@ -63,7 +69,7 @@ fn topology_errors() {
     .filter_map(|(enabled, feature)| enabled.then_some(format!("{feature:?}")))
     .collect();
     let mut manifest = format!(
-        "[package]\nname = \"froodi-topology-tests\"\nversion = \"0.0.0\"\nedition = \"2021\"\n[workspace]\n[dependencies]\nfroodi = {{ path = {source:?}, default-features = false, features = [{}] }}\n",
+        "[package]\nname = \"froodi-topology-tests\"\nversion = \"0.0.0\"\nedition = \"2021\"\n[workspace]\n[features]\nasync = []\n[dependencies]\nfroodi = {{ path = {source:?}, default-features = false, features = [{}] }}\n",
         features.join(",")
     );
 
@@ -100,6 +106,7 @@ fn topology_errors() {
         .env("CARGO_PROFILE_DEV_DEBUG", "0")
         .env("CARGO_INCREMENTAL", "0")
         .args(["check", "--offline", "--bin", "self_cycle"])
+        .args(cfg!(feature = "async").then_some("--features=async"))
         .output()
         .unwrap();
     assert!(check.status.success(), "cargo check:\n{}", String::from_utf8_lossy(&check.stderr));
@@ -110,6 +117,7 @@ fn topology_errors() {
         .env("CARGO_PROFILE_DEV_DEBUG", "0")
         .env("CARGO_INCREMENTAL", "0")
         .args(["build", "--offline", "--keep-going", "--bins", "--jobs", "2"])
+        .args(cfg!(feature = "async").then_some("--features=async"))
         .output()
         .unwrap();
     let stderr = String::from_utf8_lossy(&output.stderr);

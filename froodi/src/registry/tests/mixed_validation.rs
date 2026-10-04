@@ -2,7 +2,7 @@ extern crate std;
 
 use crate::{
     async_impl::{Container, RegistryWithSync},
-    async_registry, declare, instance, registry,
+    declare, instance, registry,
     DefaultScope::{App, Request},
     Inject, InstantiateErrorKind,
 };
@@ -30,7 +30,7 @@ fn native_service() -> RegistryWithSync {
 #[test]
 #[should_panic(expected = "unreachable dependency")]
 fn rejects_narrower_sync_scope_without_unrelated_async_executor() {
-    let _ = Container::new(async_registry! {
+    let _ = Container::new(registry! {
         extend(native_service(), registry! {
             provide(Request, instance(Dependency(1))),
         }),
@@ -40,7 +40,7 @@ fn rejects_narrower_sync_scope_without_unrelated_async_executor() {
 #[test]
 #[should_panic(expected = "unreachable dependency")]
 fn rejects_narrower_sync_scope_with_unrelated_async_executor() {
-    let _ = Container::new(async_registry! {
+    let _ = Container::new(registry! {
         provide(App, unrelated),
         extend(native_service(), registry! {
             provide(Request, instance(Dependency(1))),
@@ -50,7 +50,7 @@ fn rejects_narrower_sync_scope_with_unrelated_async_executor() {
 
 #[tokio::test]
 async fn accepts_accessible_sync_scope_without_unrelated_async_executor() {
-    let container = Container::new(async_registry! {
+    let container = Container::new(registry! {
         extend(native_service(), registry! {
             provide(App, instance(Dependency(1))),
         }),
@@ -60,7 +60,7 @@ async fn accepts_accessible_sync_scope_without_unrelated_async_executor() {
 
 #[tokio::test]
 async fn accepts_accessible_sync_scope_with_unrelated_async_executor() {
-    let container = Container::new(async_registry! {
+    let container = Container::new(registry! {
         provide(App, unrelated),
         extend(native_service(), registry! {
             provide(App, instance(Dependency(1))),
@@ -71,7 +71,7 @@ async fn accepts_accessible_sync_scope_with_unrelated_async_executor() {
 
 #[tokio::test]
 async fn validation_uses_async_provider_before_narrower_sync_provider() {
-    let container = Container::new(async_registry! {
+    let container = Container::new(registry! {
         extend(
             native_async_registry! {
                 provide(App, service),
@@ -88,7 +88,7 @@ async fn validation_uses_async_provider_before_narrower_sync_provider() {
 #[test]
 #[should_panic(expected = "invalid async registry")]
 fn validation_rejects_narrower_async_provider_even_when_sync_provider_is_accessible() {
-    let _ = Container::new(async_registry! {
+    let _ = Container::new(registry! {
         extend(
             native_service(),
             native_async_registry! {

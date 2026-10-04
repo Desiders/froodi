@@ -1,4 +1,4 @@
-use froodi::{async_impl::Container, async_registry as registry, DefaultScope::App, Inject, InstantiateErrorKind};
+use froodi::{async_impl::Container, registry, DefaultScope::App, Inject, InstantiateErrorKind};
 
 include!("../../fixtures/padding.rs");
 

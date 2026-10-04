@@ -129,7 +129,7 @@ fn balanced(leaves: &[TokenStream2], runtime: &TokenStream2) -> TokenStream2 {
     }
 }
 
-fn leaf(runtime: &TokenStream2, constructor: &TokenStream2, scope: &Ident, entry: &Registration) -> TokenStream2 {
+fn leaf(runtime: &TokenStream2, scope: &Ident, entry: &Registration) -> TokenStream2 {
     let inst = &entry.inst;
     let label = match inst {
         Expr::Path(path) => quote!(#path).to_string(),
@@ -190,11 +190,11 @@ fn leaf(runtime: &TokenStream2, constructor: &TokenStream2, scope: &Ident, entry
         }
         let #inst_binding = #inst;
         #(#bindings)*
-        #scope.locate::<_, #source>(#constructor(#scope.data, #inst_binding, #config, #finalizer))
+        #scope.locate::<_, #source>(#runtime::reg(#scope.data, #inst_binding, #config, #finalizer))
     })
 }
 
-fn expand(input: &RegistryInput, runtime: &TokenStream2, constructor: &TokenStream2) -> TokenStream {
+fn expand(input: &RegistryInput, runtime: &TokenStream2) -> TokenStream {
     let mut leaves = Vec::new();
     let mut first_scopes = None;
     let mut extensions = Vec::new();
@@ -235,7 +235,7 @@ fn expand(input: &RegistryInput, runtime: &TokenStream2, constructor: &TokenStre
             let #converted_scope = (&&#scope_type).classify(#converted_scope);
         });
         for entry in entries {
-            let value = leaf(runtime, constructor, &converted_scope, entry);
+            let value = leaf(runtime, &converted_scope, entry);
             let binding = format_ident!("__froodi_registration_{}", leaves.len(), span = Span::mixed_site());
             bindings.push(quote!(let #binding = #value;));
             leaves.push(quote!(#binding));
@@ -277,10 +277,5 @@ impl Parse for NativeRegistryInput {
 
 pub fn registry(input: TokenStream) -> TokenStream {
     let NativeRegistryInput { runtime, registry } = parse_macro_input!(input as NativeRegistryInput);
-    expand(&registry, &runtime, &quote!(#runtime::reg))
-}
-
-pub fn async_registry(input: TokenStream) -> TokenStream {
-    let NativeRegistryInput { runtime, registry } = parse_macro_input!(input as NativeRegistryInput);
-    expand(&registry, &runtime, &quote!(#runtime::async_reg))
+    expand(&registry, &runtime)
 }

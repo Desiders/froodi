@@ -1,4 +1,4 @@
-use froodi::{registry as registry, DefaultScope::*, InstantiateErrorKind};
+use froodi::{registry, DefaultScope::*, InstantiateErrorKind};
 
 fn main() {
     let _registry = registry! {

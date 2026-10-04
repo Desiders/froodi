@@ -1,8 +1,5 @@
 #[cfg(feature = "async")]
-use crate::{
-    async_impl::{Container as AsyncContainer, TypedContainer as AsyncTypedContainer, TypedContainerExt as _},
-    async_registry,
-};
+use crate::async_impl::{Container as AsyncContainer, TypedContainer as AsyncTypedContainer, TypedContainerExt as _};
 use crate::{
     instance, registry,
     utils::thread_safety::RcThreadSafety,
@@ -116,7 +113,7 @@ fn empty_registries_and_explicit_start_scopes_keep_implicit_providers() {
 async fn async_lookup_preserves_sync_fallback_scopes_and_finalizers() {
     let fragment = registry! { provide(App, instance(7u32)) };
     let finalized = RcThreadSafety::new(AtomicUsize::new(0));
-    let container = AsyncTypedContainer::new(async_registry! {
+    let container = AsyncTypedContainer::new(registry! {
         extend(fragment),
         provide(Request, async |value: Inject<u32>| Ok::<_, InstantiateErrorKind>(value.0.to_string()), finalizer = {
             let finalized = finalized.clone();
@@ -160,7 +157,7 @@ async fn async_lookup_preserves_sync_fallback_scopes_and_finalizers() {
     let child = container.enter().with_scope(Request).build().unwrap();
     assert_eq!(&*child.into_container().get::<String>().await.unwrap(), "7");
 
-    let empty = AsyncTypedContainer::new_with_start_scope(async_registry!(), Runtime);
+    let empty = AsyncTypedContainer::new_with_start_scope(registry!(), Runtime);
     assert!(empty.get::<Container>().await.is_ok());
     assert!(empty.get::<AsyncContainer>().await.is_ok());
 }

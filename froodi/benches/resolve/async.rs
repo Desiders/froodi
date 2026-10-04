@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use criterion::{criterion_group, criterion_main, Criterion};
-use froodi::async_registry;
+use froodi::registry;
 use froodi::{async_impl::Container, utils::thread_safety::RcThreadSafety, DefaultScope::*, Inject, InjectTransient};
 use tokio::runtime::Builder;
 
@@ -9,7 +9,7 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("async_get_single", |b| {
         struct A;
 
-        let container = Container::new(async_registry! {
+        let container = Container::new(registry! {
             scope(App) [
                 provide(async || Ok(A)),
             ],
@@ -29,7 +29,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         struct CAAAA(RcThreadSafety<CAAAAA>);
         struct CAAAAA;
 
-        let container = Container::new(async_registry! {
+        let container = Container::new(registry! {
             scope(Runtime) [
                 provide(async || Ok(CAAAAA)),
             ],
@@ -60,7 +60,7 @@ fn criterion_benchmark(c: &mut Criterion) {
     .bench_function("async_get_transient_single", |b| {
         struct A;
 
-        let container = Container::new(async_registry! {
+        let container = Container::new(registry! {
             scope(App) [
                 provide(async || Ok(A)),
             ],
@@ -80,7 +80,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         struct CAAAA(CAAAAA);
         struct CAAAAA;
 
-        let container = Container::new(async_registry! {
+        let container = Container::new(registry! {
             scope(Runtime) [
                 provide(async || Ok(CAAAAA)),
             ],

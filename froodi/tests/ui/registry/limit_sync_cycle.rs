@@ -1,4 +1,4 @@
-use froodi::{registry as registry, Container, DefaultScope::App, Inject, InstantiateErrorKind};
+use froodi::{registry, Container, DefaultScope::App, Inject, InstantiateErrorKind};
 
 include!("../../fixtures/padding.rs");
 

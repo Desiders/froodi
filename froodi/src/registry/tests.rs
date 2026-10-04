@@ -7,7 +7,7 @@ macro_rules! native_registry {
 #[cfg(feature = "async")]
 macro_rules! native_async_registry {
     ($($tokens:tt)*) => {
-        crate::async_registry! { $($tokens)* }.into_async_registry()
+        crate::registry! { $($tokens)* }.into_async_registry()
     };
 }
 

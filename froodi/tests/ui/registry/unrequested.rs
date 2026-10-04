@@ -1,4 +1,4 @@
-use froodi::registry as registry;
+use froodi::registry;
 use froodi::{instance, Container, DefaultScope::App, InjectTransient, InstantiateErrorKind};
 
 struct A;

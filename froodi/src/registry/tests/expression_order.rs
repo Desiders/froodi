@@ -4,7 +4,7 @@ use alloc::{string::String, vec::Vec};
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 #[cfg(feature = "async")]
-use crate::{async_impl::Container as AsyncContainer, async_registry};
+use crate::async_impl::Container as AsyncContainer;
 use crate::{
     registry, utils::thread_safety::RcThreadSafety, Config, Container, DefaultScope, InstantiateErrorKind, Scope, ScopeData, Scopes,
 };
@@ -199,7 +199,7 @@ fn sync_expressions_are_evaluated_once_in_source_order() {
 #[cfg(feature = "async")]
 #[tokio::test]
 async fn async_expressions_are_evaluated_once_in_source_order() {
-    let (registry, clones) = ordered_registry!(async_registry, async_instantiator, async_finalizer);
+    let (registry, clones) = ordered_registry!(registry, async_instantiator, async_finalizer);
     let container = AsyncContainer::new(registry);
     assert_eq!(clones.load(Ordering::SeqCst), 0);
     let first = container.get::<Value<0>>().await.unwrap();

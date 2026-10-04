@@ -1,5 +1,5 @@
 //! rustc --edition=2021 tools/compile_bench.rs -o /tmp/froodi-build-bench
-//! /tmp/froodi-build-bench <repo> <fresh-output> [samples=3] [measurement] [default|runtime|static] [shapes]
+//! /tmp/froodi-build-bench <repo> <fresh-output> [samples=3] [measurement] [default|runtime|static] [shapes] [sync|mixed]
 //! Only app artifacts are cleaned; dependencies stay warm. All generated files are disposable.
 use std::{
     env, fs,
@@ -31,9 +31,14 @@ fn cargo(dir: &Path, target: &Path) -> Command {
     command
 }
 
-fn source(shape: &str, edit: &str, scope: &str) -> String {
+fn source(shape: &str, edit: &str, scope: &str, mixed: bool) -> String {
     let count = if shape == "chain100" { 100 } else { 500 };
-    let mut text = String::from("#![allow(unused_imports, dead_code)]\nuse froodi::{registry, Container, Inject, InstantiateErrorKind, DefaultScope::App};\n");
+    let mut text = String::from(
+        "#![allow(unused_imports, dead_code)]\nuse froodi::{registry, Container, Inject, InstantiateErrorKind, DefaultScope::App};\n",
+    );
+    if mixed {
+        text.push_str("use froodi::async_impl::Container as AsyncContainer;\n");
+    }
     if scope != "default" {
         text.push_str(
             r#"
@@ -76,11 +81,19 @@ impl Scope for BenchScope {
         }
     }
     for index in 0..count {
+        let execution = if mixed && index % 2 == 1 { "async " } else { "" };
         text.push_str(&format!("struct T{index}(usize);\n"));
         if index == 0 || shape == "flat500" {
             let value = if edit == "body" && index == 0 { 2 } else { 1 };
             text.push_str(&format!(
-                "fn p{index}() -> Result<T{index}, InstantiateErrorKind> {{ Ok(T{index}({value})) }}\n"
+                "{execution}fn p{index}() -> Result<T{index}, InstantiateErrorKind> {{ Ok(T{index}({value})) }}\n"
+            ));
+        } else if mixed && shape == "chain100" {
+            // Alternating declaration kinds form two chains. A literal alternating
+            // dependency chain would require forbidden sync -> async edges.
+            let previous = if index == 1 { 0 } else { index - 2 };
+            text.push_str(&format!(
+                "{execution}fn p{index}(dep: Inject<T{previous}>) -> Result<T{index}, InstantiateErrorKind> {{ Ok(T{index}(dep.0.0 + 1)) }}\n"
             ));
         } else if shape == "chain100" && scope == "default" {
             text.push_str(&format!(
@@ -101,18 +114,34 @@ impl Scope for BenchScope {
             ));
         }
     }
-    text.push_str("fn main() { let registry = registry! {\n");
+    text.push_str("fn main() { let sync_fragment = registry! {\n");
     let value = if scope == "default" { "App" } else { "BenchScope" };
     for index in 0..count {
-        text.push_str(&format!("provide({value}, p{index}),\n"));
+        if !mixed || index % 2 == 0 {
+            text.push_str(&format!("provide({value}, p{index}),\n"));
+        }
+    }
+    if mixed {
+        text.push_str("}; let registry = registry! {\n");
+        for index in (1..count).step_by(2) {
+            text.push_str(&format!("provide({value}, p{index}),\n"));
+        }
+        text.push_str("extend(sync_fragment),\n");
     }
     if edit == "topology" {
-        text.push_str(&format!("provide({value}, || Ok::<u64, InstantiateErrorKind>(1)),\n"));
+        let execution = if mixed { "async " } else { "" };
+        text.push_str(&format!("provide({value}, {execution}|| Ok::<u64, InstantiateErrorKind>(1)),\n"));
     }
-    text.push_str(&format!(
-        "}}; let container = Container::new(registry); std::hint::black_box(container.get::<T{}>().unwrap().0); }}\n",
-        count - 1
-    ));
+    if mixed {
+        text.push_str(&format!(
+            "}}; tokio::runtime::Builder::new_current_thread().build().unwrap().block_on(async {{ let container = AsyncContainer::new(registry); std::hint::black_box(container.get::<T{}>().await.unwrap().0); }}); }}\n", count - 1
+        ));
+    } else {
+        text.push_str(&format!(
+            "}}; let container = Container::new(sync_fragment); std::hint::black_box(container.get::<T{}>().unwrap().0); }}\n",
+            count - 1
+        ));
+    }
     text
 }
 
@@ -120,7 +149,7 @@ fn main() {
     let args: Vec<_> = env::args().collect();
     assert!(
         args.len() >= 3,
-        "usage: compile-bench <repo> <fresh-output> [samples=3] [measurement] [default|runtime|static] [shapes]"
+        "usage: compile-bench <repo> <fresh-output> [samples=3] [measurement] [default|runtime|static] [shapes] [sync|mixed]"
     );
     let repo = fs::canonicalize(&args[1]).unwrap();
     let output = PathBuf::from(&args[2]);
@@ -133,6 +162,10 @@ fn main() {
     let scope = args.get(5).map_or("default", String::as_str);
     assert!(matches!(scope, "default" | "runtime" | "static"));
     let shapes = args.get(6).map_or("chain100,flat500", String::as_str);
+    let execution = args.get(7).map_or("sync", String::as_str);
+    assert!(matches!(execution, "sync" | "mixed"));
+    let mixed = execution == "mixed";
+    assert!(!mixed || shapes.split(',').all(|shape| matches!(shape, "chain100" | "flat500")));
     assert!(shapes
         .split(',')
         .all(|shape| matches!(shape, "chain100" | "flat500" | "edges500" | "edges2000")));
@@ -143,50 +176,56 @@ fn main() {
     let version = Command::new("rustc").arg("-Vv").output().unwrap();
     fs::write(output.join("toolchain.txt"), version.stdout).unwrap();
     let mut results = String::from("shape,measurement,seconds,bytes\n");
-        for shape in shapes.split(',') {
-            let dir = output.join(shape);
-            fs::create_dir_all(dir.join("src")).unwrap();
-            fs::write(dir.join("Cargo.toml"), format!("[package]\nname = \"compile-bench-app\"\nversion = \"0.0.0\"\nedition = \"2021\"\n[workspace]\n[dependencies]\nfroodi = {{ path = {:?} }}\n", repo.join("froodi"))).unwrap();
-            let src = dir.join("src/main.rs");
-            let original = source(shape, "none", scope);
-            fs::write(&src, &original).unwrap();
-            run(cargo(&dir, &target).args(["build", "--offline"]), &dir.join("warm.log"));
-            for measurement in ["clean-app", "body", "topology", "release"] {
-                if only.is_some_and(|only| !only.split(',').any(|selected| selected == measurement)) {
-                    continue;
-                }
-                let mut samples = Vec::new();
-                let mut bytes = 0;
-                for sample in 0..repetitions {
-                    fs::write(&src, &original).unwrap();
-                    let release = measurement == "release";
-                    let mut build = cargo(&dir, &target);
-                    build.args(["build", "--offline"]);
-                    if release {
-                        build.arg("--release");
-                    }
-                    run(&mut build, &dir.join("prepare.log"));
-                    if measurement == "clean-app" || release {
-                        let mut clean = cargo(&dir, &target);
-                        clean.args(["clean", "-p", "compile-bench-app"]);
-                        if release {
-                            clean.arg("--release");
-                        }
-                        run(&mut clean, &dir.join("clean.log"));
-                    } else {
-                        fs::write(&src, source(shape, measurement, scope)).unwrap();
-                    }
-                    samples.push(run(&mut build, &dir.join(format!("{measurement}-{sample}.log"))));
-                    let binary = target.join(if release { "release" } else { "debug" }).join("compile-bench-app");
-                    bytes = fs::metadata(&binary).unwrap().len();
-                    run(&mut Command::new(binary), &dir.join("run.log"));
-                }
-                let mut ordered = samples.clone();
-                ordered.sort_by(f64::total_cmp);
-                let seconds = ordered[ordered.len() / 2];
-                println!("{shape}/{measurement}: {seconds:.3}s {bytes} bytes ({samples:?})");
-                results.push_str(&format!("{shape},{measurement},{seconds:.6},{bytes}\n"));
-                fs::write(output.join("results.csv"), &results).unwrap();
+    for shape in shapes.split(',') {
+        let dir = output.join(shape);
+        fs::create_dir_all(dir.join("src")).unwrap();
+        let features = if mixed { ", features = [\"async\"]" } else { "" };
+        let runtime = if mixed {
+            "tokio = { version = \"1\", features = [\"rt\"] }\n"
+        } else {
+            ""
+        };
+        fs::write(dir.join("Cargo.toml"), format!("[package]\nname = \"compile-bench-app\"\nversion = \"0.0.0\"\nedition = \"2021\"\n[workspace]\n[dependencies]\nfroodi = {{ path = {:?}{features} }}\n{runtime}", repo.join("froodi"))).unwrap();
+        let src = dir.join("src/main.rs");
+        let original = source(shape, "none", scope, mixed);
+        fs::write(&src, &original).unwrap();
+        run(cargo(&dir, &target).args(["build", "--offline"]), &dir.join("warm.log"));
+        for measurement in ["clean-app", "body", "topology", "release"] {
+            if only.is_some_and(|only| !only.split(',').any(|selected| selected == measurement)) {
+                continue;
             }
+            let mut samples = Vec::new();
+            let mut bytes = 0;
+            for sample in 0..repetitions {
+                fs::write(&src, &original).unwrap();
+                let release = measurement == "release";
+                let mut build = cargo(&dir, &target);
+                build.args(["build", "--offline"]);
+                if release {
+                    build.arg("--release");
+                }
+                run(&mut build, &dir.join("prepare.log"));
+                if measurement == "clean-app" || release {
+                    let mut clean = cargo(&dir, &target);
+                    clean.args(["clean", "-p", "compile-bench-app"]);
+                    if release {
+                        clean.arg("--release");
+                    }
+                    run(&mut clean, &dir.join("clean.log"));
+                } else {
+                    fs::write(&src, source(shape, measurement, scope, mixed)).unwrap();
+                }
+                samples.push(run(&mut build, &dir.join(format!("{measurement}-{sample}.log"))));
+                let binary = target.join(if release { "release" } else { "debug" }).join("compile-bench-app");
+                bytes = fs::metadata(&binary).unwrap().len();
+                run(&mut Command::new(binary), &dir.join("run.log"));
+            }
+            let mut ordered = samples.clone();
+            ordered.sort_by(f64::total_cmp);
+            let seconds = ordered[ordered.len() / 2];
+            println!("{shape}/{measurement}: {seconds:.3}s {bytes} bytes ({samples:?})");
+            results.push_str(&format!("{shape},{measurement},{seconds:.6},{bytes}\n"));
+            fs::write(output.join("results.csv"), &results).unwrap();
+        }
     }
 }

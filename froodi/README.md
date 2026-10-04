@@ -366,8 +366,8 @@ Disable default features if you want to turn off `thread_safe`.
 
 ### Registration checks
 
-`registry!` and `async_registry!` catch missing or duplicate providers while
-compiling. They also catch dependency cycles when you build an application with a
+`registry!` catches missing or duplicate providers while
+compiling. It also catches dependency cycles when you build an application with a
 closed registry. Use `Inject<T>` or `InjectTransient<T>` for ordinary dependencies.
 
 Values supplied later through `Context` or another registry can be declared with
@@ -378,10 +378,14 @@ earlier scope checks; ordinary scope values keep runtime checks.
 Use `TypedContainer` when you also want unknown `get::<T>()` requests to fail at
 compile time. For more detail, see the API documentation for [`registry!`][docs-url].
 
+With the `async` feature, the same `registry!` accepts sync and async factories
+together. Use `async_impl::Container` for mixed registries.
+Sync factories can depend only on sync providers; async factories can use either.
+
 ## Examples
 
 - [Registration][examples/registration]. Basic synchronous container setup
-- [Async registration][examples/async_registration]. Basic async container setup
+- [Async registration][examples/async_registration]. Sync and async factories in one registry
 - [Finalization][examples/finalization]. Scoped cleanup with synchronous finalizers
 - [Async finalization][examples/async_finalization]. Scoped cleanup with async finalizers
 - [Auto registration][examples/auto_registration]. Synchronous auto-registration with `froodi-auto`

@@ -1,5 +1,5 @@
 use froodi::{
-    registry as registry, instance, Container, DefaultScope::App, DependencyResolver, Inject, InstantiateErrorKind,
+    registry, instance, Container, DefaultScope::App, DependencyResolver, Inject, InstantiateErrorKind,
     ResolveErrorKind, InjectCustom,
 };
 

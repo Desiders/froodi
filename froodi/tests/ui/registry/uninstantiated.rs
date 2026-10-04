@@ -1,5 +1,5 @@
 #![allow(dead_code)]
-use froodi::registry as registry;
+use froodi::registry;
 use froodi::{Container, DefaultScope::App, Inject, InstantiateErrorKind, Instantiator};
 
 struct A;

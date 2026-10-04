@@ -1,7 +1,11 @@
 use di::{declare, instance, registry as renamed_registry, Container, DefaultScope::App, Inject, InjectTransient, InstantiateErrorKind, Registry};
 
 #[cfg(feature = "async")]
-use di::{async_impl::Container as AsyncContainer, async_registry as renamed_async_registry};
+use di::async_impl::Container as AsyncContainer;
+#[cfg(feature = "async")]
+use di::utils::thread_safety::RcThreadSafety;
+#[cfg(feature = "async")]
+use std::sync::atomic::{AtomicUsize, Ordering};
 #[cfg(feature = "async")]
 use tokio::runtime::Builder;
 #[cfg(feature = "external-scopes")]
@@ -13,6 +17,11 @@ fn service(number: Inject<u32>, fresh: InjectTransient<u32>) -> Result<String, I
 
 fn fragment() -> Registry {
     renamed_registry! { provide(App, instance(7u32)) }.into_registry()
+}
+
+#[cfg(feature = "async")]
+async fn async_number(Inject(number): Inject<u16>) -> Result<u32, InstantiateErrorKind> {
+    Ok(u32::from(*number))
 }
 
 fn main() {
@@ -35,10 +44,23 @@ fn main() {
 
     #[cfg(feature = "async")]
     Builder::new_current_thread().build().unwrap().block_on(async {
-        let container = AsyncContainer::new(renamed_async_registry! {
-            provide(App, async || Ok::<_, InstantiateErrorKind>(7u32)),
-            provide(App, async |value: Inject<u32>| Ok::<_, InstantiateErrorKind>(value.0.to_string())),
+        let finishes = RcThreadSafety::new(AtomicUsize::new(0));
+        let container = AsyncContainer::new(renamed_registry! {
+            provide(App, instance(7u16), finalizer = {
+                let finishes = finishes.clone();
+                move |_: RcThreadSafety<u16>| { finishes.fetch_add(1, Ordering::SeqCst); }
+            }),
+            provide(App, async_number),
+            provide(App, async |value: Inject<u32>| Ok::<_, InstantiateErrorKind>(value.0.to_string()), finalizer = {
+                let finishes = finishes.clone();
+                move |_: RcThreadSafety<String>| {
+                    let finishes = finishes.clone();
+                    async move { finishes.fetch_add(1, Ordering::SeqCst); }
+                }
+            }),
         });
         assert_eq!(&*container.get::<String>().await.unwrap(), "7");
+        container.close().await;
+        assert_eq!(finishes.load(Ordering::SeqCst), 2);
     });
 }

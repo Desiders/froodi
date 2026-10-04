@@ -2,7 +2,7 @@ use froodi::{
     DefaultScope::{App, Request},
     Inject, InstantiateErrorKind,
     async_impl::Container,
-    async_registry, instance, registry,
+    instance, registry,
 };
 use froodi_auto::{AutoRegistriesWithSync, injectable};
 use std::sync::Arc;
@@ -46,7 +46,7 @@ impl StartHandler {
 
 fn build_container(db: Database) -> Container {
     Container::new(
-        async_registry! {
+        registry! {
             extend(registry! {
                 provide(App, instance(db)),
             })

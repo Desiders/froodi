@@ -1,8 +1,8 @@
-use froodi::async_registry as async_registry;
+use froodi::registry;
 use froodi::{async_impl::Container, DefaultScope::App, InjectTransient, InstantiateErrorKind};
 
 struct A;
 
 fn main() {
-    let _ = Container::new(async_registry! { provide(App, async |_: InjectTransient<A>| Ok::<_, InstantiateErrorKind>(A)) });
+    let _ = Container::new(registry! { provide(App, async |_: InjectTransient<A>| Ok::<_, InstantiateErrorKind>(A)) });
 }

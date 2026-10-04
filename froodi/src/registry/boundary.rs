@@ -1,6 +1,6 @@
 use super::{
     frontend::{Collect, CollectedRegistration, IntoFragment},
-    linking::{Empty, Link, Provider, RegistryIndex},
+    linking::{Empty, Link, Provider, RegistryIndex, SyncExecution},
     registration::{NoFinalizer, Provide},
     topology::Topology,
 };
@@ -9,7 +9,7 @@ use alloc::vec::Vec;
 use core::marker::PhantomData;
 
 #[diagnostic::do_not_recommend]
-impl<T, Execution> Provide<Execution, BoundaryDeps, NoFinalizer> for Boundary<T> {
+impl<T> Provide<SyncExecution, BoundaryDeps, NoFinalizer> for Boundary<T> {
     type Leaf = BoundaryLeaf<T>;
 
     fn into_leaf(self, _: ScopeData, _: Config, _: Option<NoFinalizer>) -> Self::Leaf {

@@ -158,7 +158,7 @@ mod tests {
     use super::{boxed_instantiator, DependencyResolver, InstantiateErrorKind, Instantiator};
     use crate::{
         async_impl::{service::Service as _, Container},
-        async_registry,
+        registry,
         scope::DefaultScope::*,
         utils::thread_safety::RcThreadSafety,
         Inject, InjectTransient,
@@ -207,7 +207,7 @@ mod tests {
             }
         });
 
-        let container = Container::new(async_registry! {
+        let container = Container::new(registry! {
             scope(App) [
                 provide({
                     let instantiator_request_call_count = instantiator_request_call_count.clone();
@@ -256,7 +256,7 @@ mod tests {
             }
         });
 
-        let container = Container::new(async_registry! {
+        let container = Container::new(registry! {
             scope(App) [
                 provide({
                     let instantiator_request_call_count = instantiator_request_call_count.clone();

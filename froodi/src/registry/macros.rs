@@ -1,4 +1,4 @@
-/// Builds a typed registry for [`Container`](crate::Container).
+/// Builds a typed registry of synchronous and asynchronous factories.
 ///
 /// Registrations use `provide(scope, instantiator)`, optionally with `config` and
 /// `finalizer`. `scope(scope) [ ... ]` groups registrations, and `extend(fragment)`
@@ -27,21 +27,19 @@
 /// is built. Registrations using [`StaticScope`](crate::StaticScope) also receive
 /// compile-time scope checks when both ends of an edge are statically known.
 /// Runtime-valued scopes and open compositions retain runtime validation.
+///
+/// With the `async` feature, sync and async factories can appear
+/// together. Their Rust types determine how they execute. A sync factory may
+/// depend only on sync providers; an async factory may depend on either kind.
+/// Sync factories use sync finalizers; async factories use async finalizers.
+/// [`Container`](crate::Container) requires sync factories.
+/// `async_impl::Container` accepts both kinds.
+/// Use `.into_async_registry()` to erase a mixed fragment for runtime composition.
+/// Custom instantiator types should implement one execution trait;
+/// implementing both kinds leaves their registration kind ambiguous.
 #[macro_export]
 macro_rules! registry {
     ($($tokens:tt)*) => {
         $crate::macros_utils::typed::registry!($crate::macros_utils::typed; $($tokens)*)
-    };
-}
-
-/// Builds a typed asynchronous registry for [`async_impl::Container`](crate::async_impl::Container).
-///
-/// Uses the same `provide`, `scope` and `extend` syntax as [`registry!`]. The `async`
-/// feature is required. `.into_async_registry()` explicitly erases a typed fragment.
-#[cfg(feature = "async")]
-#[macro_export]
-macro_rules! async_registry {
-    ($($tokens:tt)*) => {
-        $crate::macros_utils::typed::async_registry!($crate::macros_utils::typed; $($tokens)*)
     };
 }

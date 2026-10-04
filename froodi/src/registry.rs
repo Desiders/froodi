@@ -47,6 +47,8 @@ pub struct InstantiatorData {
     pub(crate) scope_data: ScopeData,
 }
 
+/// An erased synchronous registry, created with `.into_registry()`.
+/// Use typed `registry!` expressions directly when erasure is unnecessary.
 #[derive(Clone, Default)]
 pub struct Registry {
     pub(crate) entries: BTreeMap<TypeInfo, InstantiatorData>,

@@ -116,14 +116,14 @@ mod bench {
 
     #[cfg(feature = "async")]
     fn async_instantiator(c: &mut Criterion) {
-        use froodi::{async_impl::Container, async_registry, DefaultScope::App, InstantiateErrorKind};
+        use froodi::{async_impl::Container, registry, DefaultScope::App, InstantiateErrorKind};
 
         async fn value() -> Result<u64, InstantiateErrorKind> {
             Ok(black_box(7))
         }
 
         let runtime = tokio::runtime::Builder::new_current_thread().build().unwrap();
-        let container = Container::new(async_registry! { provide(App, value) });
+        let container = Container::new(registry! { provide(App, value) });
         let mut group = c.benchmark_group("async_instantiator");
         group.bench_function("transient", |b| {
             b.to_async(&runtime)
@@ -133,7 +133,74 @@ mod bench {
     }
 
     #[cfg(feature = "async")]
-    criterion_group!(benches, resolve, lifecycle, async_instantiator);
+    fn mixed_execution(criterion: &mut Criterion) {
+        use froodi::{
+            async_impl::Container as AsyncContainer,
+            registry,
+            DefaultScope::{App, Request},
+            InjectTransient, InstantiateErrorKind,
+        };
+
+        struct Base(usize);
+        struct SyncService(usize);
+        struct AsyncService(usize);
+        struct Handler(usize);
+
+        fn base() -> Result<Base, InstantiateErrorKind> {
+            Ok(Base(black_box(7)))
+        }
+
+        fn sync_service(InjectTransient(base): InjectTransient<Base>) -> Result<SyncService, InstantiateErrorKind> {
+            Ok(SyncService(base.0 + 1))
+        }
+
+        async fn async_service(InjectTransient(service): InjectTransient<SyncService>) -> Result<AsyncService, InstantiateErrorKind> {
+            Ok(AsyncService(service.0 + 1))
+        }
+
+        async fn handler(InjectTransient(service): InjectTransient<AsyncService>) -> Result<Handler, InstantiateErrorKind> {
+            Ok(Handler(service.0 + 1))
+        }
+
+        fn mixed_container() -> AsyncContainer {
+            let sync = registry! { provide(App, base), provide(Request, sync_service) };
+            let mixed = registry! {
+                provide(Request, async_service),
+                provide(Request, handler),
+                extend(sync),
+            };
+            AsyncContainer::new(mixed)
+        }
+
+        let runtime = tokio::runtime::Builder::new_current_thread().build().unwrap();
+        let mut group = criterion.benchmark_group("mixed_execution");
+        let sync = AsyncContainer::new(registry! { provide(App, base), provide(App, sync_service) });
+        group.bench_function("sync_transient_in_async_container", |bench| {
+            bench
+                .to_async(&runtime)
+                .iter(|| async { black_box(sync.get_transient::<SyncService>().await.unwrap().0) });
+        });
+        let request = mixed_container().enter().with_scope(Request).build().unwrap();
+        group.bench_function("transient_chain", |bench| {
+            bench
+                .to_async(&runtime)
+                .iter(|| async { black_box(request.get_transient::<Handler>().await.unwrap().0) });
+        });
+        group.bench_function("request_lifecycle", |bench| {
+            bench.to_async(&runtime).iter(|| async {
+                let app = mixed_container();
+                let request = app.clone().enter().with_scope(Request).build().unwrap();
+                black_box(request.get::<Handler>().await.unwrap().0);
+                black_box(request.get::<Handler>().await.unwrap().0);
+                request.close().await;
+                app.close().await;
+            });
+        });
+        group.finish();
+    }
+
+    #[cfg(feature = "async")]
+    criterion_group!(benches, resolve, lifecycle, async_instantiator, mixed_execution);
     #[cfg(not(feature = "async"))]
     criterion_group!(benches, resolve, lifecycle);
 }

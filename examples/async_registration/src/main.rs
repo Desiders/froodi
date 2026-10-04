@@ -2,7 +2,7 @@ use froodi::{
     DefaultScope::{App, Request},
     Inject,
     async_impl::Container,
-    async_registry, boxed, instance, registry,
+    boxed, instance, registry,
 };
 use std::sync::Arc;
 
@@ -36,16 +36,14 @@ impl WelcomeHandler {
 }
 
 fn build_container(cfg: Config) -> Container {
-    Container::new(async_registry! {
+    Container::new(registry! {
+        provide(App, instance(cfg)),
         scope(Request) [
-            provide(|Inject(cfg): Inject<Config>| async move {
+            provide(|Inject(cfg): Inject<Config>| {
                 Ok(boxed!(GreetingService { greeting: cfg.greeting.clone() }; Greeter))
             }),
             provide(|Inject(greeter)| async { Ok(WelcomeHandler { greeter }) }),
         ],
-        extend(registry! {
-            provide(App, instance(cfg)),
-        }),
     })
 }
 

@@ -88,6 +88,8 @@ impl Registry {
     }
 }
 
+/// An erased mixed registry, created with `.into_async_registry()`.
+/// Accepts sync and async providers and finalizers for [`Container`].
 #[derive(Clone, Default)]
 pub struct RegistryWithSync {
     pub registry: Registry,

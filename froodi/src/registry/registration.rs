@@ -65,7 +65,7 @@ pub struct Registration<Out, Inst, Deps, Fin> {
     pub(crate) marker: PhantomData<fn() -> (Out, Deps)>,
 }
 
-pub fn reg<Inst: Provide<SyncExecution, Deps, Fin>, Deps, Fin>(
+pub fn reg<Inst: Provide<Execution, Deps, Fin>, Execution, Deps, Fin>(
     scope: ScopeData,
     inst: Inst,
     config: Option<Config>,

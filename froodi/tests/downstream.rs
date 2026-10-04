@@ -29,7 +29,7 @@ fn downstream_registry_and_renamed_dependency() {
     fs::write(enabler.join("Cargo.toml"), toml::to_string_pretty(&enabler_manifest).unwrap()).unwrap();
     let source: syn::File = syn::parse_quote! {
         use froodi as scope_api;
-        pub use froodi::registry as registry;
+        pub use froodi::registry;
         pub mod scopes;
     };
     fs::write(enabler.join("src/lib.rs"), prettyplease::unparse(&source)).unwrap();

@@ -469,7 +469,7 @@ mod tests {
     use super::{setup_async_default, AsyncContainer};
     use super::{setup_default, Container, Inject, InjectTransient};
     #[cfg(feature = "async")]
-    use crate::async_registry;
+    use crate::registry;
     use crate::{
         registry,
         DefaultScope::{App, Request, Session},
@@ -524,7 +524,7 @@ mod tests {
             ],
         });
         #[cfg(feature = "async")]
-        let async_container = AsyncContainer::new(async_registry! {
+        let async_container = AsyncContainer::new(registry! {
             scope(Request) [
                 provide(async |Inject(cfg): Inject<Config>| Ok(cfg.num + 1)),
             ],
@@ -598,7 +598,7 @@ mod tests {
             ],
         });
         #[cfg(feature = "async")]
-        let async_container = AsyncContainer::new(async_registry! {
+        let async_container = AsyncContainer::new(registry! {
             scope(Session) [
                 provide(async |Inject(cfg): Inject<Config>| Ok(cfg.num + 1)),
             ],

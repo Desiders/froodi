@@ -1,13 +1,13 @@
 #![allow(dead_code)]
 
 use criterion::{criterion_group, criterion_main, Criterion};
-use froodi::async_registry;
+use froodi::registry;
 use froodi::{async_impl::Container, utils::thread_safety::RcThreadSafety, DefaultScope::*};
 
 fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("async_new", |b| {
         b.iter(|| {
-            Container::new(async_registry! {
+            Container::new(registry! {
                 scope(Runtime) [
                     provide(async || Ok(()), finalizer = |_: RcThreadSafety<()>| async {}),
                 ],
@@ -30,7 +30,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         });
     })
     .bench_function("async_child_start_scope", |b| {
-        let registry = async_registry! {
+        let registry = registry! {
             scope(Runtime) [
                 provide(async || Ok(())),
             ],
@@ -60,7 +60,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         });
     })
     .bench_function("async_child_next", |b| {
-        let app_container = Container::new(async_registry! {
+        let app_container = Container::new(registry! {
             scope(Runtime) [
                 provide(async || Ok(())),
             ],

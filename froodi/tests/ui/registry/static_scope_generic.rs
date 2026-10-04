@@ -1,5 +1,5 @@
 use froodi as scope_api;
-use froodi::{registry as registry, instance, Container, Inject, InstantiateErrorKind, ScopeData, Scopes, StaticScope};
+use froodi::{registry, instance, Container, Inject, InstantiateErrorKind, ScopeData, Scopes, StaticScope};
 
 #[path = "support/scopes.rs"]
 mod scopes;

@@ -1,0 +1,44 @@
+error[E0277]: a sync Container requires synchronous factories
+  --> tests/ui/registry/mixed_sync_container.rs:8:28
+   |
+ 8 |       let _ = Container::new(registry! {
+   |  _____________--------------_^
+   | |             |
+   | |             required by a bound introduced by this call
+ 9 | |         provide(App, || Ok::<_, InstantiateErrorKind>(7u32)),
+10 | |         provide(App, unrelated),
+11 | |     });
+   | |_____^ unsatisfied trait bound
+   |
+   = help: the trait `froodi::registry::frontend::Collect` is not implemented for `froodi::async_impl::typed_registration::AsyncLinked<String, fn() -> impl Future<Output = Result<String, InstantiateErrorKind>> {unrelated}, (), froodi::macros_utils::typed::NoFinalizer>`
+   = note: use froodi::async_impl::Container for a registry containing async factories
+help: the following other types implement trait `froodi::registry::frontend::Collect`
+  --> src/registry/frontend.rs
+   |
+   | / impl<Out, Inst, Deps, Fin> Collect for Linked<Out, Inst, Deps, Fin>
+   | | where
+   | |     Out: SendSafety + SyncSafety + 'static,
+   | |     Inst: Instantiator<Deps, Provides = Out> + SendSafety + SyncSafety,
+   | |     Deps: DependencyResolver + 'static,
+   | |     Fin: Finalizer<Out> + SendSafety + SyncSafety,
+   | |__________________________________________________^ `froodi::registry::registration::Linked<Out, Inst, Deps, Fin>`
+...
+   |   impl Collect for ContainerLeaf {
+   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `froodi::registry::frontend::ContainerLeaf`
+   |
+  ::: src/registry/boundary.rs
+   |
+   |   impl Collect for RuntimeNode {
+   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `froodi::registry::boundary::RuntimeNode`
+...
+   |   impl<T: 'static> Collect for BoundaryLeaf<T> {
+   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `froodi::registry::boundary::BoundaryLeaf<T>`
+   = note: required for `froodi::macros_utils::typed::Node<froodi::registry::registration::Linked<u32, {closure@$DIR/tests/ui/registry/mixed_sync_container.rs:9:22: 9:24}, (), froodi::macros_utils::typed::NoFinalizer>, froodi::async_impl::typed_registration::AsyncLinked<String, fn() -> impl Future<Output = Result<String, InstantiateErrorKind>> {unrelated}, (), froodi::macros_utils::typed::NoFinalizer>>` to implement `froodi::registry::frontend::Collect`
+   = note: 1 redundant requirement hidden
+   = note: required for `froodi::macros_utils::typed::Node<froodi::macros_utils::typed::Node<froodi::registry::registration::Linked<u32, {closure@$DIR/tests/ui/registry/mixed_sync_container.rs:9:22: 9:24}, (), froodi::macros_utils::typed::NoFinalizer>, froodi::async_impl::typed_registration::AsyncLinked<String, fn() -> impl Future<Output = Result<String, InstantiateErrorKind>> {unrelated}, (), froodi::macros_utils::typed::NoFinalizer>>, froodi::registry::frontend::ContainerLeaf>` to implement `froodi::registry::frontend::Collect`
+   = note: required for `froodi::macros_utils::typed::Registry<froodi::macros_utils::typed::Node<froodi::macros_utils::typed::LocatedRegistration<froodi::registry::registration::Registration<u32, {closure@$DIR/tests/ui/registry/mixed_sync_container.rs:9:22: 9:24}, (), froodi::macros_utils::typed::NoFinalizer>, main::__FroodiRegistrationSource>, froodi::macros_utils::typed::LocatedRegistration<froodi::async_impl::typed_registration::AsyncRegistration<String, fn() -> impl Future<Output = Result<String, InstantiateErrorKind>> {unrelated}, (), froodi::macros_utils::typed::NoFinalizer>, main::__FroodiRegistrationSource>>>` to implement `froodi::registry::frontend::IntoRegistry<(((), ()), ())>`
+note: required by a bound in `froodi::Container::new`
+  --> src/container.rs
+   |
+   |     pub fn new<Links>(registry: impl IntoRegistry<Links>) -> Self {
+   |                                      ^^^^^^^^^^^^^^^^^^^ required by this bound in `Container::new`

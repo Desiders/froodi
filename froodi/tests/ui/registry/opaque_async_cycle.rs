@@ -1,5 +1,5 @@
 use froodi::{
-    async_impl::Container, async_registry as async_registry, DefaultScope::App, DependencyResolver, InjectTransient,
+    async_impl::Container, registry, DefaultScope::App, DependencyResolver, InjectTransient,
     InstantiateErrorKind, ResolveErrorKind, InjectCustom,
 };
 
@@ -19,7 +19,7 @@ impl DependencyResolver for Opaque {
 }
 
 fn main() {
-    let _ = Container::new(async_registry! {
+    let _ = Container::new(registry! {
         provide(App, async |_: InjectCustom<Opaque>, _: InjectTransient<A>| Ok::<_, InstantiateErrorKind>(A)),
     });
 }

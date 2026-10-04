@@ -1,4 +1,4 @@
-use froodi::{registry as registry, Container, DefaultScope::App, DependencyResolver, InstantiateErrorKind, ResolveErrorKind};
+use froodi::{registry, Container, DefaultScope::App, DependencyResolver, InstantiateErrorKind, ResolveErrorKind};
 
 struct Custom;
 

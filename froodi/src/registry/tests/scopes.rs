@@ -2,7 +2,7 @@ extern crate std;
 
 use crate as scope_api;
 #[cfg(feature = "async")]
-use crate::{async_impl::Container as AsyncContainer, async_registry};
+use crate::async_impl::Container as AsyncContainer;
 use crate::{
     declare, instance, registry, Container, Context, DefaultScope, Inject, InjectCustom, InjectTransient, InstantiateErrorKind, Scope,
     ScopeData, Scopes, StaticScope, TypeInfo,
@@ -243,8 +243,8 @@ fn borrowed_dynamic_scope_is_erased_before_registry_use() {
 #[cfg(feature = "async")]
 #[tokio::test]
 async fn async_frontend_and_erasure_preserve_scope_selection() {
-    let fragment = async_registry! { provide(App, async || Ok::<_, InstantiateErrorKind>(7u32)) };
-    let container = AsyncContainer::new(async_registry! {
+    let fragment = registry! { provide(App, async || Ok::<_, InstantiateErrorKind>(7u32)) };
+    let container = AsyncContainer::new(registry! {
         provide(Request, async |value: Inject<u32>| Ok::<_, InstantiateErrorKind>(value.0.to_string())),
         extend(fragment),
     })
@@ -254,13 +254,13 @@ async fn async_frontend_and_erasure_preserve_scope_selection() {
     .unwrap();
     assert_eq!(&*container.get::<String>().await.unwrap(), "7");
 
-    let erased = async_registry! {
+    let erased = registry! {
         provide(App, async |value: Inject<u32>| Ok::<_, InstantiateErrorKind>(value.0.to_string())),
         provide(Request, async || Ok::<_, InstantiateErrorKind>(7u32)),
     }
     .into_async_registry();
     let replacement = native_async_registry! { provide(DefaultScope::App, async || Ok::<_, InstantiateErrorKind>(9u32)) };
-    let container = AsyncContainer::new(async_registry! { extend(erased, replacement) });
+    let container = AsyncContainer::new(registry! { extend(erased, replacement) });
     assert_eq!(&*container.get::<String>().await.unwrap(), "9");
 
     assert!(native_async_registry! {

@@ -394,7 +394,7 @@ fn has_linked_instantiators(registry: &AsyncRegistry) -> bool {
 mod tests {
     extern crate std;
 
-    use crate::{async_impl::Container, async_registry, DefaultScope::*, Inject, InstantiateErrorKind};
+    use crate::{async_impl::Container, registry, DefaultScope::*, Inject, InstantiateErrorKind};
 
     struct Value<const N: usize>(usize);
 
@@ -406,7 +406,7 @@ mod tests {
     async fn resolves_a_deep_async_chain_under_the_default_recursion_limit() {
         macro_rules! chain {
             ($($n:literal => $prev:literal),*) => {
-                Container::new(async_registry! {
+                Container::new(registry! {
                     scope(App) [
                         provide(async || Ok::<_, InstantiateErrorKind>(Value::<0>(0))),
                         $(provide(next::<$n, $prev>),)*

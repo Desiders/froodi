@@ -536,7 +536,6 @@ fn resolves_a_named_factory_chain() {
 mod async_impl {
     extern crate std;
 
-    use crate::async_registry;
     use crate::registry;
     use alloc::{boxed::Box, vec, vec::Vec};
     use core::{future::Future, pin::Pin};
@@ -562,7 +561,7 @@ mod async_impl {
 
     #[tokio::test]
     async fn resolves_and_caches_an_async_factory_chain() {
-        let container = Container::new(async_registry! {
+        let container = Container::new(registry! {
             scope(App) [
                 provide(make_config),
                 provide(make_database),
@@ -577,7 +576,7 @@ mod async_impl {
 
     #[tokio::test]
     async fn an_async_factory_depends_on_a_sync_registration() {
-        let container = Container::new(async_registry! {
+        let container = Container::new(registry! {
             scope(App) [
                 provide(make_database),
                 provide(async |InjectTransient(config): InjectTransient<Config>| Ok::<_, InstantiateErrorKind>(Snapshot(config))),
@@ -616,7 +615,7 @@ mod async_impl {
                 }
             }
         };
-        let container = Container::new(async_registry! {
+        let container = Container::new(registry! {
             scope(App) [
                 provide(counted, finalizer = recorder::<Config>(&log, "config")),
                 provide(make_database, finalizer = recorder::<Database>(&log, "database")),
@@ -634,7 +633,7 @@ mod async_impl {
     #[tokio::test]
     async fn request_scopes_work_in_async_containers() {
         struct Handler;
-        let app = Container::new(async_registry! {
+        let app = Container::new(registry! {
             provide(App, make_config),
             provide(Request, async |Inject(_config): Inject<Config>| Ok::<_, InstantiateErrorKind>(Handler)),
         });

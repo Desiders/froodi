@@ -38,8 +38,3 @@ where
 pub fn registry(input: TokenStream) -> TokenStream {
     registry::registry(input)
 }
-
-#[proc_macro]
-pub fn async_registry(input: TokenStream) -> TokenStream {
-    registry::async_registry(input)
-}

@@ -9,10 +9,7 @@ use alloc::{
 };
 
 #[cfg(feature = "async")]
-use crate::{
-    async_impl::{Container as AsyncContainer, Instantiator as AsyncInstantiator},
-    async_registry,
-};
+use crate::async_impl::{Container as AsyncContainer, Instantiator as AsyncInstantiator};
 use crate::{
     declare,
     errors::InstantiatorErrorKind,
@@ -85,7 +82,7 @@ fn linked_adapter_does_not_require_dependencies_to_be_sync() {
 #[cfg(feature = "async")]
 #[tokio::test]
 async fn async_linked_adapter_does_not_require_dependencies_to_be_sync() {
-    let container = AsyncContainer::new(async_registry! {
+    let container = AsyncContainer::new(registry! {
         provide(App, async |InjectCustom(value): InjectCustom<MutableResolver>| Ok(value.0.get())),
     });
     assert_eq!(container.get_transient::<u32>().await.unwrap(), 7);
@@ -142,12 +139,16 @@ impl Instantiator<(InjectCustom<FailingResolver>,)> for RecordingInstantiator {
 }
 
 #[cfg(feature = "async")]
-impl AsyncInstantiator<(InjectCustom<FailingResolver>,)> for RecordingInstantiator {
+#[derive(Clone)]
+struct AsyncRecordingInstantiator(RecordingInstantiator);
+
+#[cfg(feature = "async")]
+impl AsyncInstantiator<(InjectCustom<FailingResolver>,)> for AsyncRecordingInstantiator {
     type Provides = Combined;
     type Error = InstantiateErrorKind;
 
     async fn instantiate(&mut self, _: (InjectCustom<FailingResolver>,)) -> Result<Self::Provides, Self::Error> {
-        self.events.lock().unwrap().push("instantiate");
+        self.0.events.lock().unwrap().push("instantiate");
         Ok(Combined([0; 3]))
     }
 
@@ -238,7 +239,7 @@ fn fixed_plan_preserves_unused_duplicate_registration_precedence() {
 #[cfg(feature = "async")]
 #[tokio::test]
 async fn fixed_async_plan_shares_ids_with_sync_dependencies() {
-    let container = AsyncContainer::new(async_registry! {
+    let container = AsyncContainer::new(registry! {
         provide(App, async |first: Inject<First>, _: InjectCustom<Opaque>, second: InjectTransient<Second>, repeated: Inject<First>| {
             Ok(Combined([first.0.0, second.0.0, repeated.0.0]))
         }),
@@ -287,7 +288,7 @@ async fn fixed_async_plan_shares_ids_with_sync_dependencies() {
 #[cfg(feature = "async")]
 #[tokio::test]
 async fn fixed_async_plan_preserves_native_namespace_precedence_without_edges() {
-    let container = AsyncContainer::new(async_registry! {
+    let container = AsyncContainer::new(registry! {
         provide(App, async || Ok::<_, InstantiateErrorKind>(9u32)),
         extend(registry! { provide(App, instance(7u32)) }),
     });
@@ -299,7 +300,7 @@ async fn fixed_async_plan_preserves_native_namespace_precedence_without_edges() 
 #[cfg(feature = "async")]
 #[tokio::test]
 async fn async_parameter_positions_skip_resolvers_and_preserve_repeats() {
-    let container = AsyncContainer::new(async_registry! {
+    let container = AsyncContainer::new(registry! {
         provide(App, async |first: Inject<First>, _: InjectCustom<Opaque>, second: InjectTransient<Second>, repeated: Inject<First>|
             Ok(Combined([first.0.0, second.0.0, repeated.0.0]))),
         extend(registry! { provide(App, instance(Second(22))), provide(App, instance(First(11))) }),
@@ -345,7 +346,7 @@ async fn async_custom_resolver_error_converts_and_stops_later_construction() {
     let first_calls = calls.clone();
     let later_calls = calls.clone();
     let inst_calls = calls.clone();
-    let container = AsyncContainer::new(async_registry! {
+    let container = AsyncContainer::new(registry! {
         provide(App, move || {
             let calls = first_calls.clone();
             async move {
@@ -400,8 +401,8 @@ fn failed_dependencies_do_not_clone_the_sync_instantiator() {
 #[tokio::test]
 async fn async_instantiator_is_cloned_before_failed_dependency_resolution() {
     let events = RcThreadSafety::new(Mutex::new(Vec::new()));
-    let container = AsyncContainer::new(async_registry! {
-        provide(App, RecordingInstantiator { events: events.clone() }),
+    let container = AsyncContainer::new(registry! {
+        provide(App, AsyncRecordingInstantiator(RecordingInstantiator { events: events.clone() })),
     });
 
     let error = container.get::<Combined>().await.err().unwrap();
@@ -432,7 +433,7 @@ fn opaque_composition_still_checks_cycles_at_runtime() {
 #[tokio::test]
 async fn opaque_async_composition_still_checks_cycles_in_both_namespaces() {
     CYCLE_CHECKS.with(|checks| checks.set(0));
-    let container = AsyncContainer::new(async_registry! {
+    let container = AsyncContainer::new(registry! {
         provide(App, async |_: InjectCustom<Opaque>, value: Inject<u32>, repeated: Inject<u32>| {
             assert!(RcThreadSafety::ptr_eq(&value.0, &repeated.0));
             Ok(value.0.to_string())
@@ -505,12 +506,12 @@ fn erasure_retains_runtime_cycle_checks_for_both_constructors() {
 async fn closed_async_composition_skips_cycle_checks_in_both_namespaces() {
     CYCLE_CHECKS.with(|checks| checks.set(0));
     let sync = registry! { provide(App, instance(7u32)) };
-    let container = AsyncContainer::new(async_registry! {
+    let container = AsyncContainer::new(registry! {
         extend(sync),
     });
     assert_eq!(*container.get::<u32>().await.unwrap(), 7);
     let explicit = AsyncContainer::new_with_start_scope(
-        async_registry! {
+        registry! {
             provide(App, async |number: Inject<u32>| Ok(number.0.to_string())),
             extend(registry! { provide(App, instance(9u32)) }),
         },
@@ -531,12 +532,12 @@ fn closed_async_composition_still_checks_scopes_in_both_namespaces() {
     for sync_dependency in [false, true] {
         let error = catch_unwind(|| {
             if sync_dependency {
-                AsyncContainer::new(async_registry! {
+                AsyncContainer::new(registry! {
                     provide(App, async |_: Inject<u32>| Ok::<_, InstantiateErrorKind>(true)),
                     extend(registry! { provide(Request, instance(7u32)) }),
                 })
             } else {
-                AsyncContainer::new(async_registry! {
+                AsyncContainer::new(registry! {
                     provide(App, async |_: Inject<u32>| Ok::<_, InstantiateErrorKind>(true)),
                     provide(Request, async || Ok::<_, InstantiateErrorKind>(7u32)),
                 })
@@ -554,7 +555,7 @@ fn closed_async_composition_still_checks_scopes_in_both_namespaces() {
 #[tokio::test]
 async fn async_erasure_retains_runtime_cycle_checks_for_both_constructors() {
     CYCLE_CHECKS.with(|checks| checks.set(0));
-    let native = async_registry! {
+    let native = registry! {
         provide(App, async |number: Inject<u32>| Ok(number.0.to_string())),
         extend(registry! { provide(App, instance(7u32)) }),
     }
@@ -582,7 +583,7 @@ async fn transient_async_dependencies_run_in_their_owning_scope() {
     struct RequestOnly;
     struct OwnerCheck(bool);
     struct Consumer(bool);
-    let app = AsyncContainer::new(async_registry! {
+    let app = AsyncContainer::new(registry! {
         provide(App, async |owner: Inject<SyncContainer>| Ok(OwnerCheck(owner.0.get::<RequestOnly>().is_err()))),
         provide(Request, async |check: InjectTransient<OwnerCheck>| Ok(Consumer(check.0.0))),
         extend(registry! { provide(Request, || Ok(RequestOnly)) }),
@@ -647,7 +648,7 @@ fn runtime_fragments_override_later_typed_providers_in_fragment_order() {
 async fn async_runtime_fragments_override_later_typed_providers_in_fragment_order() {
     let first = native_async_registry! { provide(App, async || Ok(Value("first".into()))) };
     let last = native_async_registry! { provide(App, async || Ok(Value("last".into()))) };
-    let container = AsyncContainer::new(async_registry! {
+    let container = AsyncContainer::new(registry! {
         extend(first, last),
         provide(App, async || Ok(Value("typed".into()))),
         provide(App, async |cached: Inject<Value>, transient: InjectTransient<Value>| {
@@ -719,7 +720,7 @@ async fn opaque_async_cycle_can_be_removed_before_or_after_erasure() {
     struct A;
     struct B;
     for erased in [false, true] {
-        let fragment = async_registry! {
+        let fragment = registry! {
             provide(App, async |_: InjectCustom<Opaque>, _: Inject<B>| Ok::<_, InstantiateErrorKind>(A)),
             provide(App, async |_: InjectTransient<A>| Ok::<_, InstantiateErrorKind>(B)),
         };
@@ -727,7 +728,7 @@ async fn opaque_async_cycle_can_be_removed_before_or_after_erasure() {
         let container = if erased {
             AsyncContainer::new(native_async_registry! { extend(fragment.into_async_registry(), overrides) })
         } else {
-            AsyncContainer::new(async_registry! { extend(fragment, overrides) })
+            AsyncContainer::new(registry! { extend(fragment, overrides) })
         };
         container.get::<B>().await.unwrap();
     }
@@ -754,7 +755,7 @@ fn replacement_introduces_cycle_in_effective_graph() {
 async fn mixed_async_runtime_replacements_and_parameter_order() {
     let log = RcThreadSafety::new(Mutex::new(0usize));
     let finalized = log.clone();
-    let typed = async_registry! {
+    let typed = registry! {
         provide(App, async || Ok::<_, InstantiateErrorKind>(Value("old".into()))),
         provide(Request, async |
             cached: Inject<Value>,
@@ -777,7 +778,7 @@ async fn mixed_async_runtime_replacements_and_parameter_order() {
                 async move { *finalized.lock().unwrap() += 1; }
             }),
     };
-    let app = AsyncContainer::new(async_registry! { extend(typed, replacements) });
+    let app = AsyncContainer::new(registry! { extend(typed, replacements) });
     let request = app.clone().enter_build().unwrap();
     assert_eq!(request.get_transient::<Output>().await.unwrap().0, "async");
     request.close().await;
@@ -809,14 +810,14 @@ async fn async_replacement_of_sync_provider_preserves_native_namespaces_and_cont
         provide(App, instance(Value("sync".into()))),
         provide(Request, |value: Inject<Value>| Ok::<_, InstantiateErrorKind>(SyncConsumer(value.0.0.clone()))),
     };
-    let typed = async_registry! {
+    let typed = registry! {
         provide(Request, async |value: Inject<Value>| Ok::<_, InstantiateErrorKind>(AsyncConsumer(value.0.0.clone()))),
         extend(sync),
     };
     let replacement = native_async_registry! {
         provide(Request, async || Ok::<_, InstantiateErrorKind>(Value("async".into()))),
     };
-    let app = AsyncContainer::new(async_registry! { extend(typed, replacement) });
+    let app = AsyncContainer::new(registry! { extend(typed, replacement) });
     let request = app.clone().enter_build().unwrap();
     assert_eq!(request.get::<AsyncConsumer>().await.unwrap().0, "async");
     assert_eq!(request.get::<SyncConsumer>().await.unwrap().0, "sync");
@@ -839,7 +840,7 @@ fn inline_closures_infer_the_original_error_type() {
 #[cfg(feature = "async")]
 #[tokio::test]
 async fn async_inline_closures_infer_the_original_error_type() {
-    let container = AsyncContainer::new(async_registry! {
+    let container = AsyncContainer::new(registry! {
         provide(App, async || Ok(7u32)),
         provide(App, async |number: Inject<u32>| Ok(number.0.to_string())),
     });
@@ -863,17 +864,17 @@ fn fully_replaced_typed_composition_still_validates_the_effective_graph() {
 fn fully_replaced_async_composition_still_validates_the_effective_graph() {
     struct A;
     struct B;
-    let original = async_registry! { provide(App, async || Ok(A)), provide(App, async || Ok(B)) };
+    let original = registry! { provide(App, async || Ok(A)), provide(App, async || Ok(B)) };
     let left = native_async_registry! { provide(App, async |_: Inject<B>| Ok(A)), provide(App, declare::<B>()) };
     let right = native_async_registry! { provide(App, async |_: Inject<A>| Ok(B)), provide(App, declare::<A>()) };
-    let _ = AsyncContainer::new(async_registry! { extend(original, left, right) });
+    let _ = AsyncContainer::new(registry! { extend(original, left, right) });
 }
 
 #[cfg(feature = "async")]
 #[tokio::test]
 async fn async_import_and_context_declarations_link_to_native_values() {
     let imported = native_async_registry! { provide(App, async || Ok(Value("imported".into()))) };
-    let app = AsyncContainer::new(async_registry! {
+    let app = AsyncContainer::new(registry! {
         provide(App, declare::<Value>()),
         provide(Request, declare::<u32>()),
         provide(Request, async |value: Inject<Value>, number: Inject<u32>| Ok(Output(format!("{}-{}", value.0.0, number.0)))),
@@ -888,7 +889,7 @@ async fn async_import_and_context_declarations_link_to_native_values() {
 
 mod custom_scope {
     #[cfg(feature = "async")]
-    use crate::{async_impl::Container as AsyncContainer, async_registry};
+    use crate::async_impl::Container as AsyncContainer;
     use crate::{
         instance, registry, utils::thread_safety::RcThreadSafety, Container, Context, Inject, ResolveErrorKind, Scope, ScopeData, Scopes,
     };
@@ -975,7 +976,7 @@ mod custom_scope {
     #[cfg(feature = "async")]
     #[tokio::test]
     async fn async_indexed_dependencies_use_their_owning_custom_scope() {
-        let container = AsyncContainer::new(async_registry! {
+        let container = AsyncContainer::new(registry! {
             scope(MyScope::Work) [
                 provide(async || Ok(7u32)),
                 provide(async |number: Inject<u32>| Ok(Wide(*number.0))),
@@ -1311,7 +1312,7 @@ async fn borrowing_inst_lives_until_pending_call_finishes_or_is_cancelled() {
         let state = RcThreadSafety::new(AdapterState(counts.clone()));
         let weak = RcThreadSafety::downgrade(&state);
         let finalized = counts.clone();
-        let app = AsyncContainer::new(async_registry! {
+        let app = AsyncContainer::new(registry! {
             provide(Request, BorrowingInst {
                 counts: counts.clone(),
                 state,

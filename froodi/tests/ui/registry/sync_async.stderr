@@ -1,7 +1,7 @@
 error[E0277]: cannot resolve `Inject<u32>` in a synchronous instantiator: its selected registration is async
   --> tests/ui/registry/sync_async.rs:7:48
    |
- 7 |       let _ = froodi::async_impl::Container::new(froodi::async_registry! {
+ 7 |       let _ = froodi::async_impl::Container::new(froodi::registry! {
    |  _____________----------------------------------_^
    | |             |
    | |             required by a bound introduced by this call

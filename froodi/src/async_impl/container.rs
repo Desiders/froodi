@@ -796,7 +796,7 @@ mod tests {
 
     use super::{Container, ContainerInner};
     use crate::{
-        async_registry, registry,
+        registry,
         scope::DefaultScope::*,
         utils::thread_safety::{RcThreadSafety, SendSafety, SyncSafety},
         Config, Inject, InjectTransient, InstantiateErrorKind, ResolveErrorKind, Scope,
@@ -830,7 +830,7 @@ mod tests {
         struct CAAAA(RcThreadSafety<CAAAAA>);
         struct CAAAAA;
 
-        let app_container = Container::new(async_registry! {
+        let app_container = Container::new(registry! {
             scope(Runtime) [
                 provide(async || Ok(CAAAAA)),
             ],
@@ -878,7 +878,7 @@ mod tests {
         struct CAAAA(RcThreadSafety<CAAAAA>);
         struct CAAAAA;
 
-        let app_container = Container::new(async_registry! {
+        let app_container = Container::new(registry! {
             scope(Runtime) [
                 provide(async || Ok(CAAAAA)),
             ],
@@ -921,7 +921,7 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_transient_get() {
-        let app_container = Container::new(async_registry! {
+        let app_container = Container::new(registry! {
             extend(registry! {
                 scope(App) [
                     provide(|| Ok(RequestTransient1)),
@@ -960,7 +960,7 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_async_transient_get() {
-        let app_container = Container::new(async_registry! {
+        let app_container = Container::new(registry! {
             scope(App) [
                 provide(async || Ok(RequestTransient1)),
             ],
@@ -997,7 +997,7 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_scope_hierarchy() {
-        let app_container = Container::new(async_registry! {
+        let app_container = Container::new(registry! {
             scope(Runtime) [
                 provide(async || Ok(())),
             ],
@@ -1063,7 +1063,7 @@ mod tests {
     #[traced_test]
     async fn test_scope_with_hierarchy() {
         let runtime_container = Container::new_with_start_scope(
-            async_registry! {
+            registry! {
                 scope(Runtime) [
                     provide(async || Ok(())),
                 ],
@@ -1147,7 +1147,7 @@ mod tests {
         let finalizer_3_request_call_count = RcThreadSafety::new(AtomicU8::new(0));
         let finalizer_4_request_call_count = RcThreadSafety::new(AtomicU8::new(0));
 
-        let app_container = Container::new(async_registry! {
+        let app_container = Container::new(registry! {
             scope(Session) [
                 provide(
                     async || Ok(((), (), ())),
@@ -1227,7 +1227,7 @@ mod tests {
         let finalizer_5_request_call_count = RcThreadSafety::new(AtomicU8::new(0));
         let finalizer_5_request_call_position = RcThreadSafety::new(AtomicU8::new(0));
 
-        let app_container = Container::new(async_registry! {
+        let app_container = Container::new(registry! {
             scope(App) [
                 provide(
                     async || Ok(((), (), ())),
@@ -1408,7 +1408,7 @@ mod tests {
             }
         }
 
-        let app_container = Container::new(async_registry! {
+        let app_container = Container::new(registry! {
             extend(registry! {
                 scope(App) [
                     provide(
@@ -1506,7 +1506,7 @@ mod tests {
             }
         }
 
-        let app_container = Container::new(async_registry! {
+        let app_container = Container::new(registry! {
             scope(App) [
                 provide(
                     async || Ok(Type1),
@@ -1591,7 +1591,7 @@ mod tests {
         impl_bounds::<(Container, ContainerInner)>();
 
         #[allow(unused_variables)]
-        let app_container = Container::new(async_registry! {
+        let app_container = Container::new(registry! {
             scope(App) [
                 provide(async || Ok(RequestTransient1)),
             ],
@@ -1611,7 +1611,7 @@ mod tests {
     async fn test_async_drop_without_close_warns() {
         struct Thing;
 
-        let container = Container::new(async_registry! {
+        let container = Container::new(registry! {
             scope(App) [
                 provide(
                     || async { Ok::<_, InstantiateErrorKind>(Thing) },
@@ -1634,7 +1634,7 @@ mod tests {
     async fn test_async_close_then_drop_does_not_warn() {
         struct Thing;
 
-        let container = Container::new(async_registry! {
+        let container = Container::new(registry! {
             scope(App) [
                 provide(
                     || async { Ok::<_, InstantiateErrorKind>(Thing) },
@@ -1659,7 +1659,7 @@ mod tests {
         let counter = RcThreadSafety::new(AtomicU8::new(0));
         let for_factory = counter.clone();
 
-        let app = Container::new(async_registry! {
+        let app = Container::new(registry! {
             scope(App) [
                 provide(
                     move || {

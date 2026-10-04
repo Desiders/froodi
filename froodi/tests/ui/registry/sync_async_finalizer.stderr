@@ -1,0 +1,22 @@
+error[E0271]: expected `{closure@sync_async_finalizer.rs:5:74}` to return `()`, but it returns `{async block@sync_async_finalizer.rs:5:78}`
+ --> tests/ui/registry/sync_async_finalizer.rs:5:78
+  |
+4 |     let _ = Container::new(registry! {
+  |             -------------- required by a bound introduced by this call
+5 |         provide(App, || Ok::<_, InstantiateErrorKind>(7u32), finalizer = |_| async {}),
+  |                                                                          --- ^^^^^^^^ expected `()`, found `async` block
+  |                                                                          |
+  |                                                                          this closure
+  |
+  = note:  expected unit type `()`
+          found `async` block `{async block@$DIR/tests/ui/registry/sync_async_finalizer.rs:5:78: 5:83}`
+  = note: required for `{closure@$DIR/tests/ui/registry/sync_async_finalizer.rs:5:74: 5:77}` to implement `froodi::Finalizer<u32>`
+  = note: required for `froodi::registry::registration::Linked<u32, {closure@$DIR/tests/ui/registry/sync_async_finalizer.rs:5:22: 5:24}, (), {closure@$DIR/tests/ui/registry/sync_async_finalizer.rs:5:74: 5:77}>` to implement `froodi::registry::frontend::Collect`
+  = note: 1 redundant requirement hidden
+  = note: required for `froodi::macros_utils::typed::Node<froodi::registry::registration::Linked<u32, {closure@$DIR/tests/ui/registry/sync_async_finalizer.rs:5:22: 5:24}, (), {closure@$DIR/tests/ui/registry/sync_async_finalizer.rs:5:74: 5:77}>, froodi::registry::frontend::ContainerLeaf>` to implement `froodi::registry::frontend::Collect`
+  = note: required for `froodi::macros_utils::typed::Registry<froodi::macros_utils::typed::LocatedRegistration<froodi::registry::registration::Registration<u32, {closure@$DIR/tests/ui/registry/sync_async_finalizer.rs:5:22: 5:24}, (), {closure@$DIR/tests/ui/registry/sync_async_finalizer.rs:5:74: 5:77}>, __FroodiRegistrationSource>>` to implement `froodi::registry::frontend::IntoRegistry<((), ())>`
+note: required by a bound in `froodi::Container::new`
+ --> src/container.rs
+  |
+  |     pub fn new<Links>(registry: impl IntoRegistry<Links>) -> Self {
+  |                                      ^^^^^^^^^^^^^^^^^^^ required by this bound in `Container::new`

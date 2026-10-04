@@ -6,12 +6,12 @@ use alloc::string::String;
 #[cfg(feature = "thread_safe")]
 use alloc::vec::Vec;
 
-#[cfg(feature = "async")]
-use crate::{async_impl::Container as AsyncContainer, async_registry, Config};
 #[cfg(feature = "thread_safe")]
-use crate::{registry, Container as SyncContainer};
+use crate::Container as SyncContainer;
+#[cfg(feature = "async")]
+use crate::{async_impl::Container as AsyncContainer, Config};
 #[cfg(any(feature = "thread_safe", feature = "async"))]
-use crate::{utils::thread_safety::RcThreadSafety, DefaultScope::App, InstantiateErrorKind};
+use crate::{registry, utils::thread_safety::RcThreadSafety, DefaultScope::App, InstantiateErrorKind};
 #[cfg(feature = "async")]
 use core::{
     future::Future,
@@ -91,7 +91,7 @@ async fn overlapping_async_requests_are_serialized_even_without_threads() {
             }
         }
     };
-    let container = AsyncContainer::new(async_registry! { provide(App, inst) });
+    let container = AsyncContainer::new(registry! { provide(App, inst) });
     let mut first = Box::pin(container.get::<String>());
     let mut second = Box::pin(container.get::<String>());
     let mut cx = TaskContext::from_waker(Waker::noop());
@@ -105,7 +105,7 @@ async fn overlapping_async_requests_are_serialized_even_without_threads() {
     assert_eq!(calls.load(Ordering::SeqCst), 1);
 
     let count = calls.clone();
-    let uncached = AsyncContainer::new(async_registry! {
+    let uncached = AsyncContainer::new(registry! {
         provide(App, move || {
             let count = count.clone();
             async move { Ok::<_, InstantiateErrorKind>(count.fetch_add(1, Ordering::SeqCst)) }
@@ -139,7 +139,7 @@ async fn cached_async_requests_from_multiple_tasks_share_one_allocation() {
             }
         }
     };
-    let container = AsyncContainer::new(async_registry! { provide(App, inst) });
+    let container = AsyncContainer::new(registry! { provide(App, inst) });
     let first = {
         let container = container.clone();
         spawn(async move { container.get::<String>().await.unwrap() })
