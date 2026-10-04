@@ -24,6 +24,7 @@ pub(crate) mod scope;
 pub(crate) mod service;
 pub(crate) mod typed_container;
 
+mod construct;
 pub mod macros_utils;
 pub mod utils;
 
@@ -32,18 +33,19 @@ pub mod async_impl;
 
 pub use any::TypeInfo;
 pub use config::Config;
+pub use construct::{construct, Construct};
 pub use container::Container;
 pub use context::Context;
 pub use dependency::Dependency;
 pub use dependency_resolver::DependencyResolver;
 pub use errors::{InstantiateErrorKind, InstantiatorResult, ResolveErrorKind, ScopeErrorKind, ScopeWithErrorKind};
 pub use finalizer::Finalizer;
+pub use froodi_macros::Construct;
 pub use inject::{Inject, InjectCustom, InjectTransient};
 pub use instantiator::{instance, Instantiator};
-pub use registry::declare;
-pub use registry::{InstantiatorData, Registry};
 #[cfg(feature = "async")]
 pub use registry::AsyncInstantiatorData;
+pub use registry::{declare, InstantiatorData, Registry};
 pub use scope::StaticScope;
 pub use scope::{DefaultScope, Scope, ScopeData, Scopes};
 pub use typed_container::{TypedContainer, TypedContainerExt};

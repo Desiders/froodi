@@ -1,6 +1,11 @@
 /// Builds a typed registry of synchronous and asynchronous factories.
 ///
-/// Registrations use `provide(scope, instantiator)`, optionally with `config` and
+/// Registrations use `provide(scope, instantiator)` or a `scope(...) [ ... ]` block.
+/// Inside a scope block, `construct::<T>()` registers types
+/// deriving [`Construct`](crate::Construct). It accepts the same `config`
+/// and `finalizer` options. A derive alone never registers a type.
+///
+/// Registrations optionally accept `config` and
 /// `finalizer`. `scope(scope) [ ... ]` groups registrations, and `extend(fragment)`
 /// composes fragments. Expressions are evaluated once in source order.
 ///

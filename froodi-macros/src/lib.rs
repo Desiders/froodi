@@ -7,12 +7,18 @@ use quote::{quote, ToTokens};
 use syn::parse::Parse;
 
 mod attr_parsing;
+mod construct;
 mod injectable;
 mod registry;
 
 #[proc_macro_attribute]
 pub fn injectable(_attr: TokenStream, item: TokenStream) -> TokenStream {
     expand_with(item, injectable::expand)
+}
+
+#[proc_macro_derive(Construct, attributes(di))]
+pub fn derive_construct(input: TokenStream) -> TokenStream {
+    expand_with(input, construct::expand)
 }
 
 fn expand_with<F, I, K>(input: TokenStream, f: F) -> TokenStream

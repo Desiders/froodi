@@ -128,6 +128,12 @@ path = "benches/compare/registry.rs"
 harness = false
 required-features = ["thread_safe"]
 
+[[bench]]
+name = "construct_compare"
+path = "benches/compare/construct.rs"
+harness = false
+required-features = ["thread_safe"]
+
 [[test]]
 name = "auto_registration_async"
 path = "tests/auto/async.rs"

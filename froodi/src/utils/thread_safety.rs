@@ -35,11 +35,17 @@ mod local {
 }
 
 #[cfg(feature = "thread_safe")]
+pub(crate) use thread_safe::RcAnyThreadSafety;
+#[cfg(feature = "thread_safe")]
 pub use thread_safe::RcThreadSafety;
 #[cfg(feature = "thread_safe")]
-pub(crate) use thread_safe::{RcAnyThreadSafety, SendSafety, SyncSafety};
+#[doc(hidden)]
+pub use thread_safe::{SendSafety, SyncSafety};
 
+#[cfg(not(feature = "thread_safe"))]
+pub(crate) use local::RcAnyThreadSafety;
 #[cfg(not(feature = "thread_safe"))]
 pub use local::RcThreadSafety;
 #[cfg(not(feature = "thread_safe"))]
-pub(crate) use local::{RcAnyThreadSafety, SendSafety, SyncSafety};
+#[doc(hidden)]
+pub use local::{SendSafety, SyncSafety};

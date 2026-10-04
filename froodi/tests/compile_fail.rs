@@ -18,12 +18,29 @@ fn registration_errors() {
         "typed_missing",
         "typed_boundaries",
         "typed_forged",
+        "construct_missing",
+        "construct_duplicate",
+        "construct_unsupported",
+        "construct_unsupported_generic",
+        "construct_attributes",
+        "construct_transient_missing",
+        "construct_transient_ambiguous",
+        "construct_scope_syntax",
     ] {
         // rustc qualifies type paths differently when async types are also present.
         let prefix = if !cfg!(feature = "async")
             && matches!(
                 case,
-                "missing" | "bare_resolver" | "typed_missing" | "typed_boundaries" | "typed_forged"
+                "missing"
+                    | "bare_resolver"
+                    | "typed_missing"
+                    | "typed_boundaries"
+                    | "typed_forged"
+                    | "construct_missing"
+                    | "construct_duplicate"
+                    | "construct_unsupported_generic"
+                    | "construct_transient_missing"
+                    | "construct_transient_ambiguous"
             ) {
             "no_async_"
         } else {
@@ -38,6 +55,8 @@ fn registration_errors() {
         "typed_async_missing",
         "typed_async_in_sync",
         "sync_async_finalizer",
+        "construct_async_dependency",
+        "construct_transient_async_dependency",
     ] {
         cases.compile_fail(format!("tests/ui/registry/{case}.rs"));
     }
@@ -85,6 +104,9 @@ fn topology_errors() {
         ("static_scope_generic", "incompatible static scopes: app -> request"),
         ("static_scope_transient", "incompatible static scopes: app -> request"),
         ("typed_cycle", "dependency cycle in closed static registry"),
+        ("construct_cycle", "dependency cycle in closed static registry"),
+        ("construct_transient_cycle", "dependency cycle in closed static registry"),
+        ("construct_static_scope", "incompatible static scopes: app -> request"),
     ];
     if cfg!(feature = "async") {
         failures.extend([

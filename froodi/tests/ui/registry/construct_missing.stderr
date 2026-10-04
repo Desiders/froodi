@@ -1,0 +1,26 @@
+error[E0277]: no registration provides `u32`
+ --> tests/ui/registry/construct_missing.rs:8:28
+  |
+8 |     let _ = Container::new(froodi::registry! { scope(App) [ construct::<Service>() ] });
+  |             -------------- ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `u32` is requested here, but no `provide(...)` in the registry produces it
+  |             |
+  |             required by a bound introduced by this call
+  |
+  = help: the trait `froodi::registry::linking::ProviderPath<u32, _>` is not implemented for `froodi::macros_utils::typed::Node<froodi::registry::linking::Provider<Service>, froodi::macros_utils::typed::Node<froodi::registry::linking::Provider<froodi::Container>, froodi::async_impl::typed_registration::AsyncProvider<froodi::async_impl::Container>>>`
+  = note: register an instantiator or `instance(...)` that returns `u32`, or `extend(...)` a registry that does
+help: `froodi::macros_utils::typed::Node<Left, Right>` implements trait `froodi::registry::linking::ProviderPath<T, Path>`
+ --> src/registry/linking.rs
+  |
+  | impl<T, Path, Left: ProviderPath<T, Path>, Right> ProviderPath<T, L<Path>> for Node<Left, Right> {
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `froodi::registry::linking::ProviderPath<T, froodi::registry::linking::L<Path>>`
+...
+  | impl<T, Path, Left: Size, Right: ProviderPath<T, Path>> ProviderPath<T, R<Path>> for Node<Left, Right> {
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `froodi::registry::linking::ProviderPath<T, froodi::registry::linking::R<Path>>`
+  = note: required for `Inject<u32>` to implement `froodi::registry::linking::LinkDependency<froodi::macros_utils::typed::Node<froodi::registry::linking::Provider<Service>, froodi::macros_utils::typed::Node<froodi::registry::linking::Provider<froodi::Container>, froodi::async_impl::typed_registration::AsyncProvider<froodi::async_impl::Container>>>, froodi::registry::linking::LinkedInject<_>>`
+  = note: required for `froodi::registry::registration::Registration<Service, impl froodi::Instantiator<<Service as Construct>::Deps, Provides = Service, Error = InstantiateErrorKind> + SendSafety + SyncSafety, (Inject<u32>,), froodi::macros_utils::typed::NoFinalizer>` to implement `froodi::registry::linking::Link<froodi::macros_utils::typed::Node<froodi::registry::linking::Provider<Service>, froodi::macros_utils::typed::Node<froodi::registry::linking::Provider<froodi::Container>, froodi::async_impl::typed_registration::AsyncProvider<froodi::async_impl::Container>>>, (froodi::registry::linking::LinkedInject<_>,)>`
+  = note: required for `froodi::macros_utils::typed::Registry<froodi::macros_utils::typed::LocatedRegistration<froodi::registry::registration::Registration<Service, impl froodi::Instantiator<<Service as Construct>::Deps, Provides = Service, Error = InstantiateErrorKind> + SendSafety + SyncSafety, (Inject<u32>,), froodi::macros_utils::typed::NoFinalizer>, __FroodiRegistrationSource>>` to implement `froodi::registry::frontend::IntoRegistry<((froodi::registry::linking::LinkedInject<_>,), ((), ()))>`
+note: required by a bound in `froodi::Container::new`
+ --> src/container.rs
+  |
+  |     pub fn new<Links>(registry: impl IntoRegistry<Links>) -> Self {
+  |                                      ^^^^^^^^^^^^^^^^^^^ required by this bound in `Container::new`

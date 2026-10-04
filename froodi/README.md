@@ -31,6 +31,7 @@ It focuses on a small set of DI problems:
 - **Sync and async support**. The crate supports both sync and async factories and containers.
 - **Modular registries**. Registries can be split and extended instead of building one large registration block.
 - **Registration checks**. Froodi catches missing or duplicate providers during compilation and can check cycles and static scopes before the app runs.
+- **Explicit construction**. `#[derive(froodi::Construct)]` describes field construction with `Inject` or `InjectTransient`; `construct::<T>()` includes it in a chosen registry and scope.
 - **Auto-registration**. `froodi-auto` can collect providers declared with macros.
 - **Framework integrations**. `axum`, `dptree`, `telers`, and `ruststream` are supported out of the box.
 
@@ -123,7 +124,7 @@ let request_container = app_container.clone().enter_build().unwrap();
 
 5. **Resolve dependencies.**
 
-Use `get::<T>()` for scoped shared dependencies and `get_transient::<T>()` for fresh values.
+Use `get::<T>()` to resolve a dependency using its scope and cache settings, and `get_transient::<T>()` to request a fresh instance.
 
 ```rust
 let handler = request_container.get_transient::<WelcomeHandler>().unwrap();
@@ -220,6 +221,27 @@ fn main() {
 - For `froodi-auto`, see [auto registration][examples/auto_registration] and [async auto registration][examples/async_auto_registration]
 - For framework integration, see [axum][examples/axum_integration], [dptree][examples/dptree_integration], [telers][examples/telers_integration], and [ruststream][examples/ruststream_integration]
 
+### Alternative for simple constructors
+
+The `WelcomeHandler` above can use Froodi's `Inject` resolution directly. You can derive `Construct` on that struct:
+
+```rust
+#[derive(froodi::Construct)]
+struct WelcomeHandler {
+    greeter: Arc<Box<dyn Greeter>>,
+}
+```
+
+Then replace its handwritten `provide` registration in `scope(Request)` with:
+
+```rust
+construct::<WelcomeHandler>(),
+```
+
+The derive describes construction; the registry chooses whether to include the type and in which scope. Fields use ordinary `Inject<T>` semantics by default, and `#[di(inject)]` selects the same mode explicitly. For a field that needs a fresh value, use `#[di(inject_transient)]` on its ordinary value type. Scope, `config`, and `finalizer` stay on the registry entry. Use `provide(...)` for fallible, async, or custom construction.
+
+See [Construct registration][examples/construct_registration] for a runnable example using both field modes.
+
 ## Concepts
 
 ### Dependency
@@ -265,7 +287,7 @@ let session_container = runtime_container.clone().enter().with_scope(Session).bu
 
 The container holds resolved scoped dependencies and is used to access them.
 
-- `get::<T>()` returns a scoped shared dependency
+- `get::<T>()` resolves a dependency using its scope and cache settings
 - `get_transient::<T>()` creates a fresh value
 - `enter_build()` creates the next child scope
 - `close()` runs finalizers for resolved dependencies in that scope
@@ -280,7 +302,8 @@ The registry defines how dependencies are constructed.
 The main registration forms are:
 
 - `provide(scope, factory)`
-- `scope(ScopeName) [ provide(factory), ... ]`
+- `construct::<T>()` for a type with `#[derive(froodi::Construct)]`
+- `scope(ScopeName) [ provide(factory), construct::<T>(), ... ]`
 - `extend(other_registry)`
 - `instance(value)` for values created outside the container
 
@@ -389,6 +412,7 @@ can hold sync, async or mixed registrations and be extended into another registr
 ## Examples
 
 - [Registration][examples/registration]. Basic synchronous container setup
+- [Construct registration][examples/construct_registration]. Derive field construction with `Inject` and `InjectTransient`
 - [Async registration][examples/async_registration]. Sync and async factories in one registry
 - [Finalization][examples/finalization]. Scoped cleanup with synchronous finalizers
 - [Async finalization][examples/async_finalization]. Scoped cleanup with async finalizers
@@ -416,6 +440,7 @@ Contributions are welcome.
 
 [examples]: https://github.com/Desiders/froodi/tree/master/examples
 [examples/registration]: https://github.com/Desiders/froodi/tree/master/examples/registration
+[examples/construct_registration]: https://github.com/Desiders/froodi/tree/master/examples/construct_registration
 [examples/async_registration]: https://github.com/Desiders/froodi/tree/master/examples/async_registration
 [examples/auto_registration]: https://github.com/Desiders/froodi/tree/master/examples/auto_registration
 [examples/async_auto_registration]: https://github.com/Desiders/froodi/tree/master/examples/async_auto_registration

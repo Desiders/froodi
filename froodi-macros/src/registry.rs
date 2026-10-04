@@ -10,13 +10,18 @@ use syn::{
     parse_macro_input,
     punctuated::Punctuated,
     spanned::Spanned,
-    Expr, Ident, Token,
+    Expr, Ident, Token, Type,
 };
 
 /// `inst [, config = expr] [, finalizer = expr]`, options in any order.
 struct Registration {
-    inst: Expr,
+    kind: RegistrationKind,
     options: Vec<RegistrationOption>,
+}
+
+enum RegistrationKind {
+    Provide(Expr),
+    Construct(Type),
 }
 
 enum RegistrationOption {
@@ -27,35 +32,67 @@ enum RegistrationOption {
 impl Parse for Registration {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let inst = input.parse()?;
-        let mut options = Vec::new();
-        while input.parse::<Option<Token![,]>>()?.is_some() && !input.is_empty() {
-            let name: Ident = input.parse()?;
-            input.parse::<Token![=]>()?;
-            if name != "config" && name != "finalizer" {
-                return Err(syn::Error::new(name.span(), "expected `config = ...` or `finalizer = ...`"));
-            }
-            if options.iter().any(|option| match option {
-                RegistrationOption::Config(_) => name == "config",
-                RegistrationOption::Finalizer(_) => name == "finalizer",
-            }) {
-                return Err(syn::Error::new(name.span(), format!("`{name}` is given twice")));
-            }
-            let value = input.parse()?;
-            options.push(if name == "config" {
-                RegistrationOption::Config(value)
-            } else {
-                RegistrationOption::Finalizer(value)
-            });
-        }
-        Ok(Self { inst, options })
+        Ok(Self {
+            kind: RegistrationKind::Provide(inst),
+            options: parse_options(input, true)?,
+        })
     }
 }
 
-/// `provide(entry)` inside a `scope(...) [ ... ]` block.
+fn parse_options(input: ParseStream, require_first_comma: bool) -> syn::Result<Vec<RegistrationOption>> {
+    let mut options = Vec::new();
+    let mut first = true;
+    while !input.is_empty() {
+        if !first || require_first_comma {
+            input.parse::<Token![,]>()?;
+        }
+        if input.is_empty() {
+            break;
+        }
+        let name: Ident = input.parse()?;
+        input.parse::<Token![=]>()?;
+        if name != "config" && name != "finalizer" {
+            return Err(syn::Error::new(name.span(), "expected `config = ...` or `finalizer = ...`"));
+        }
+        if options.iter().any(|option| match option {
+            RegistrationOption::Config(_) => name == "config",
+            RegistrationOption::Finalizer(_) => name == "finalizer",
+        }) {
+            return Err(syn::Error::new(name.span(), format!("`{name}` is given twice")));
+        }
+        let value = input.parse()?;
+        options.push(if name == "config" {
+            RegistrationOption::Config(value)
+        } else {
+            RegistrationOption::Finalizer(value)
+        });
+        first = false;
+    }
+    Ok(options)
+}
+
+fn construct_type(input: ParseStream) -> syn::Result<Type> {
+    input.parse::<Token![::]>()?;
+    input.parse::<Token![<]>()?;
+    let ty = input.parse()?;
+    input.parse::<Token![>]>()?;
+    Ok(ty)
+}
+
+/// `provide(entry)` or `construct::<T>()` inside a scope block.
 fn parse_scoped_provide(input: ParseStream) -> syn::Result<Registration> {
     let keyword: Ident = input.parse()?;
+    if keyword == "construct" {
+        let ty = construct_type(input)?;
+        let content;
+        parenthesized!(content in input);
+        return Ok(Registration {
+            kind: RegistrationKind::Construct(ty),
+            options: parse_options(&content, false)?,
+        });
+    }
     if keyword != "provide" {
-        return Err(syn::Error::new(keyword.span(), "expected `provide(...)`"));
+        return Err(syn::Error::new(keyword.span(), "expected `provide(...)` or `construct::<T>()`"));
     }
     let content;
     parenthesized!(content in input);
@@ -74,6 +111,12 @@ enum Clause {
 impl Parse for Clause {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let keyword: Ident = input.parse()?;
+        if keyword == "construct" {
+            return Err(syn::Error::new(
+                keyword.span(),
+                "put `construct::<T>(...)` inside `scope(...) [ ... ]`",
+            ));
+        }
         let args;
         parenthesized!(args in input);
         if keyword == "scope" {
@@ -130,7 +173,13 @@ fn balanced(leaves: &[TokenStream2], runtime: &TokenStream2) -> TokenStream2 {
 }
 
 fn leaf(runtime: &TokenStream2, scope: &Ident, entry: &Registration) -> TokenStream2 {
-    let inst = &entry.inst;
+    let inst = match &entry.kind {
+        RegistrationKind::Construct(ty) => {
+            let description = quote_spanned!(ty.span()=> ::core::concat!("construct::<", ::core::stringify!(#ty), ">() at ", ::core::file!(), ":", ::core::line!(), ":", ::core::column!()));
+            return registration_leaf(runtime, scope, entry, quote!(#runtime::construct::<#ty>()), description);
+        }
+        RegistrationKind::Provide(inst) => inst,
+    };
     let label = match inst {
         Expr::Path(path) => quote!(#path).to_string(),
         Expr::Call(call) => {
@@ -161,10 +210,18 @@ fn leaf(runtime: &TokenStream2, scope: &Ident, entry: &Registration) -> TokenStr
         _ => "instantiator expression".into(),
     };
     let label = label.replace(" :: ", "::");
+    let description = quote_spanned!(inst.span()=> ::core::concat!("provide(", #label, ") at ", ::core::file!(), ":", ::core::line!(), ":", ::core::column!()));
+    registration_leaf(runtime, scope, entry, quote!(#inst), description)
+}
+
+fn registration_leaf(
+    runtime: &TokenStream2,
+    scope: &Ident,
+    entry: &Registration,
+    inst_value: TokenStream2,
+    description: TokenStream2,
+) -> TokenStream2 {
     let source = format_ident!("__FroodiRegistrationSource", span = Span::mixed_site());
-    let description = quote_spanned!(inst.span()=> ::core::concat!(
-        "provide(", #label, ") at ", ::core::file!(), ":", ::core::line!(), ":", ::core::column!()
-    ));
     let inst_binding = format_ident!("__froodi_inst", span = Span::mixed_site());
     let config_binding = format_ident!("__froodi_config", span = Span::mixed_site());
     let finalizer_binding = format_ident!("__froodi_finalizer", span = Span::mixed_site());
@@ -188,7 +245,7 @@ fn leaf(runtime: &TokenStream2, scope: &Ident, entry: &Registration) -> TokenStr
         impl #runtime::RegistrationSource for #source {
             const DESCRIPTION: &'static str = #description;
         }
-        let #inst_binding = #inst;
+        let #inst_binding = #inst_value;
         #(#bindings)*
         #scope.locate::<_, #source>(#runtime::reg(#scope.data, #inst_binding, #config, #finalizer))
     })

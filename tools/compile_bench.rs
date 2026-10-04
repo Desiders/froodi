@@ -1,5 +1,5 @@
 //! rustc --edition=2021 tools/compile_bench.rs -o /tmp/froodi-build-bench
-//! /tmp/froodi-build-bench <repo> <fresh-output> [samples=3] [measurement] [default|runtime|static] [shapes] [sync|mixed]
+//! /tmp/froodi-build-bench <repo> <fresh-output> [samples=3] [measurement] [default|runtime|static] [shapes] [sync|mixed] [provide|construct|alternating]
 //! Only app artifacts are cleaned; dependencies stay warm. All generated files are disposable.
 use std::{
     env, fs,
@@ -31,7 +31,55 @@ fn cargo(dir: &Path, target: &Path) -> Command {
     command
 }
 
-fn source(shape: &str, edit: &str, scope: &str, mixed: bool) -> String {
+fn construction_source(count: usize, edit: &str, construction: &str) -> String {
+    let mut text = String::from(
+        "#![allow(dead_code)]\nuse froodi::{registry, Container, Inject, InjectTransient, InstantiateErrorKind, DefaultScope::App};\nuse std::sync::Arc;\nstruct Repository(u32);\nstruct RequestId(u32);\n",
+    );
+    for index in 0..count {
+        let derived = construction == "construct" || (construction == "alternating" && index % 2 == 0);
+        if derived {
+            text.push_str("#[derive(froodi::Construct)]\n");
+        }
+        let attribute = if derived { "#[di(inject_transient)] " } else { "" };
+        let extra = if edit == "body" && index == 0 {
+            if derived {
+                "#[di(inject_transient)] extra: RequestId,"
+            } else {
+                "extra: RequestId,"
+            }
+        } else {
+            ""
+        };
+        text.push_str(&format!(
+            "struct Service{index} {{ repository: Arc<Repository>, {attribute}request_id: RequestId, {extra} }}\n"
+        ));
+    }
+    text.push_str("fn main() { let registry = registry! { scope(App) [\nprovide(|| Ok::<_, InstantiateErrorKind>(Repository(7))),\nprovide(|| Ok::<_, InstantiateErrorKind>(RequestId(11))),\n");
+    for index in 0..count {
+        let derived = construction == "construct" || (construction == "alternating" && index % 2 == 0);
+        if derived {
+            text.push_str(&format!("construct::<Service{index}>(),\n"));
+        } else {
+            let extra_parameter = if edit == "body" && index == 0 {
+                ", InjectTransient(extra): InjectTransient<RequestId>"
+            } else {
+                ""
+            };
+            let extra_field = if edit == "body" && index == 0 { ", extra" } else { "" };
+            text.push_str(&format!("provide(|Inject(repository): Inject<Repository>, InjectTransient(request_id): InjectTransient<RequestId>{extra_parameter}| Ok::<_, InstantiateErrorKind>(Service{index} {{ repository, request_id{extra_field} }})),\n"));
+        }
+    }
+    if edit == "topology" {
+        text.push_str("provide(|| Ok::<_, InstantiateErrorKind>(true)),\n");
+    }
+    text.push_str(&format!("] }}; let container = Container::new(registry); let service = container.get::<Service{}>().unwrap(); std::hint::black_box((service.repository.0, service.request_id.0)); }}\n", count - 1));
+    text
+}
+
+fn source(shape: &str, edit: &str, scope: &str, mixed: bool, construction: &str) -> String {
+    if matches!(shape, "fields100" | "fields500") {
+        return construction_source(if shape == "fields100" { 100 } else { 500 }, edit, construction);
+    }
     let count = if shape == "chain100" { 100 } else { 500 };
     let mut text = String::from(
         "#![allow(unused_imports, dead_code)]\nuse froodi::{registry, Container, Inject, InstantiateErrorKind, DefaultScope::App};\n",
@@ -149,7 +197,7 @@ fn main() {
     let args: Vec<_> = env::args().collect();
     assert!(
         args.len() >= 3,
-        "usage: compile-bench <repo> <fresh-output> [samples=3] [measurement] [default|runtime|static] [shapes] [sync|mixed]"
+        "usage: compile-bench <repo> <fresh-output> [samples=3] [measurement] [default|runtime|static] [shapes] [sync|mixed] [provide|construct|alternating]"
     );
     let repo = fs::canonicalize(&args[1]).unwrap();
     let output = PathBuf::from(&args[2]);
@@ -165,13 +213,17 @@ fn main() {
     let execution = args.get(7).map_or("sync", String::as_str);
     assert!(matches!(execution, "sync" | "mixed"));
     let mixed = execution == "mixed";
+    let construction = args.get(8).map_or("provide", String::as_str);
+    assert!(matches!(construction, "provide" | "construct" | "alternating"));
+    assert!(construction == "provide" || shapes.split(',').all(|shape| matches!(shape, "fields100" | "fields500")));
+    assert!(!shapes.split(',').any(|shape| matches!(shape, "fields100" | "fields500")) || (scope == "default" && !mixed));
     assert!(!mixed || shapes.split(',').all(|shape| matches!(shape, "chain100" | "flat500")));
     assert!(shapes
         .split(',')
-        .all(|shape| matches!(shape, "chain100" | "flat500" | "edges500" | "edges2000")));
+        .all(|shape| matches!(shape, "chain100" | "flat500" | "edges500" | "edges2000" | "fields100" | "fields500")));
     assert!(only.is_none_or(|only| only
         .split(',')
-        .all(|measurement| matches!(measurement, "clean-app" | "body" | "topology" | "release"))));
+        .all(|measurement| matches!(measurement, "clean" | "clean-app" | "body" | "topology" | "release"))));
     let target = output.join("target");
     let version = Command::new("rustc").arg("-Vv").output().unwrap();
     fs::write(output.join("toolchain.txt"), version.stdout).unwrap();
@@ -187,10 +239,13 @@ fn main() {
         };
         fs::write(dir.join("Cargo.toml"), format!("[package]\nname = \"compile-bench-app\"\nversion = \"0.0.0\"\nedition = \"2021\"\n[workspace]\n[dependencies]\nfroodi = {{ path = {:?}{features} }}\n{runtime}", repo.join("froodi"))).unwrap();
         let src = dir.join("src/main.rs");
-        let original = source(shape, "none", scope, mixed);
+        let original = source(shape, "none", scope, mixed, construction);
         fs::write(&src, &original).unwrap();
         run(cargo(&dir, &target).args(["build", "--offline"]), &dir.join("warm.log"));
-        for measurement in ["clean-app", "body", "topology", "release"] {
+        for measurement in ["clean", "clean-app", "body", "topology", "release"] {
+            if measurement == "clean" && only.is_none() {
+                continue;
+            }
             if only.is_some_and(|only| !only.split(',').any(|selected| selected == measurement)) {
                 continue;
             }
@@ -205,15 +260,18 @@ fn main() {
                     build.arg("--release");
                 }
                 run(&mut build, &dir.join("prepare.log"));
-                if measurement == "clean-app" || release {
+                if measurement == "clean" || measurement == "clean-app" || release {
                     let mut clean = cargo(&dir, &target);
-                    clean.args(["clean", "-p", "compile-bench-app"]);
+                    clean.arg("clean");
+                    if measurement != "clean" {
+                        clean.args(["-p", "compile-bench-app"]);
+                    }
                     if release {
                         clean.arg("--release");
                     }
                     run(&mut clean, &dir.join("clean.log"));
                 } else {
-                    fs::write(&src, source(shape, measurement, scope, mixed)).unwrap();
+                    fs::write(&src, source(shape, measurement, scope, mixed, construction)).unwrap();
                 }
                 samples.push(run(&mut build, &dir.join(format!("{measurement}-{sample}.log"))));
                 let binary = target.join(if release { "release" } else { "debug" }).join("compile-bench-app");

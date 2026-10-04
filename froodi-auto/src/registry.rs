@@ -27,6 +27,8 @@ impl AutoRegistriesWithSync for Registry {
         use crate::entry_getters::__ASYNC_ENTRY_GETTERS;
 
         let registry = self.provide_auto_registries();
-        __ASYNC_ENTRY_GETTERS.iter().fold(registry, |registry, getter| registry.merge(getter()))
+        __ASYNC_ENTRY_GETTERS
+            .iter()
+            .fold(registry, |registry, getter| registry.merge(getter()))
     }
 }

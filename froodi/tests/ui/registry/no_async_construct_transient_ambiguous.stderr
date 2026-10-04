@@ -1,0 +1,35 @@
+error[E0283]: type annotations needed
+  --> tests/ui/registry/no_async_construct_transient_ambiguous.rs:10:28
+   |
+10 |       let _ = Container::new(froodi::registry! {
+   |  _____________--------------_^
+   | |             |
+   | |             required by a bound introduced by this call
+   | |             required by a bound introduced by this call
+11 | |         scope(App) [ construct::<Service>() ],
+12 | |         provide(App, instance(7u32)),
+13 | |         provide(App, instance(8u32)),
+14 | |     });
+   | |_____^ cannot infer type for type parameter `Path`
+   |
+   = note: multiple `impl`s satisfying `froodi::macros_utils::typed::Node<froodi::registry::linking::Provider<u32>, froodi::registry::linking::Provider<u32>>: froodi::registry::linking::ProviderPath<u32, _>` found in the `froodi` crate:
+           - impl<T, Path, Left, Right> froodi::registry::linking::ProviderPath<T, froodi::registry::linking::L<Path>> for froodi::macros_utils::typed::Node<Left, Right>
+             where Left: froodi::registry::linking::ProviderPath<T, Path>;
+           - impl<T, Path, Left, Right> froodi::registry::linking::ProviderPath<T, froodi::registry::linking::R<Path>> for froodi::macros_utils::typed::Node<Left, Right>
+             where Left: froodi::registry::linking::Size, Right: froodi::registry::linking::ProviderPath<T, Path>;
+   = note: cannot satisfy `<froodi::macros_utils::typed::Node<froodi::registry::linking::Provider<u32>, froodi::registry::linking::Provider<u32>> as froodi::registry::linking::ProviderPath<u32, _>>::Provider == _`
+   = note: required for `froodi::macros_utils::typed::Node<froodi::registry::linking::Provider<Service>, froodi::macros_utils::typed::Node<froodi::registry::linking::Provider<u32>, froodi::registry::linking::Provider<u32>>>` to implement `froodi::registry::linking::ProviderPath<u32, froodi::registry::linking::R<_>>`
+   = note: required for `froodi::registry::registration::Registration<Service, impl froodi::Instantiator<<Service as Construct>::Deps, Provides = Service, Error = InstantiateErrorKind> + SendSafety + SyncSafety, (InjectTransient<u32>,), froodi::macros_utils::typed::NoFinalizer>` to implement `froodi::registry::linking::Link<froodi::macros_utils::typed::Node<froodi::macros_utils::typed::Node<froodi::registry::linking::Provider<Service>, froodi::macros_utils::typed::Node<froodi::registry::linking::Provider<u32>, froodi::registry::linking::Provider<u32>>>, froodi::registry::linking::Provider<Container>>, (froodi::registry::linking::LinkedInjectTransient<froodi::registry::linking::L<froodi::registry::linking::R<_>>>,)>`
+   = note: required for `froodi::macros_utils::typed::Registry<froodi::macros_utils::typed::Node<froodi::macros_utils::typed::LocatedRegistration<froodi::registry::registration::Registration<Service, impl froodi::Instantiator<<Service as Construct>::Deps, Provides = Service, Error = InstantiateErrorKind> + SendSafety + SyncSafety, (InjectTransient<u32>,), froodi::macros_utils::typed::NoFinalizer>, main::__FroodiRegistrationSource>, froodi::macros_utils::typed::Node<froodi::macros_utils::typed::LocatedRegistration<froodi::registry::registration::Registration<u32, impl froodi::Instantiator<(), Provides = u32, Error = InstantiateErrorKind>, (), froodi::macros_utils::typed::NoFinalizer>, main::__FroodiRegistrationSource>, froodi::macros_utils::typed::LocatedRegistration<froodi::registry::registration::Registration<u32, impl froodi::Instantiator<(), Provides = u32, Error = InstantiateErrorKind>, (), froodi::macros_utils::typed::NoFinalizer>, main::__FroodiRegistrationSource>>>>` to implement `froodi::registry::frontend::IntoRegistry<(((froodi::registry::linking::LinkedInjectTransient<froodi::registry::linking::L<froodi::registry::linking::R<_>>>,), ((), ())), ())>`
+note: required by a bound in `Container::new`
+  --> src/container.rs
+   |
+   |     pub fn new<Links>(registry: impl IntoRegistry<Links>) -> Self {
+   |                                      ^^^^^^^^^^^^^^^^^^^ required by this bound in `Container::new`
+   = note: required for `froodi::registry::registration::Registration<Service, impl froodi::Instantiator<<Service as Construct>::Deps, Provides = Service, Error = InstantiateErrorKind> + SendSafety + SyncSafety, (InjectTransient<u32>,), froodi::macros_utils::typed::NoFinalizer>` to implement `froodi::registry::linking::Link<froodi::macros_utils::typed::Node<froodi::macros_utils::typed::Node<froodi::registry::linking::Provider<Service>, froodi::macros_utils::typed::Node<froodi::registry::linking::Provider<u32>, froodi::registry::linking::Provider<u32>>>, froodi::registry::linking::Provider<Container>>, (froodi::registry::linking::LinkedInjectTransient<froodi::registry::linking::L<froodi::registry::linking::R<_>>>,)>`
+   = note: required for `froodi::macros_utils::typed::Registry<froodi::macros_utils::typed::Node<froodi::macros_utils::typed::LocatedRegistration<froodi::registry::registration::Registration<Service, impl froodi::Instantiator<<Service as Construct>::Deps, Provides = Service, Error = InstantiateErrorKind> + SendSafety + SyncSafety, (InjectTransient<u32>,), froodi::macros_utils::typed::NoFinalizer>, main::__FroodiRegistrationSource>, froodi::macros_utils::typed::Node<froodi::macros_utils::typed::LocatedRegistration<froodi::registry::registration::Registration<u32, impl froodi::Instantiator<(), Provides = u32, Error = InstantiateErrorKind>, (), froodi::macros_utils::typed::NoFinalizer>, main::__FroodiRegistrationSource>, froodi::macros_utils::typed::LocatedRegistration<froodi::registry::registration::Registration<u32, impl froodi::Instantiator<(), Provides = u32, Error = InstantiateErrorKind>, (), froodi::macros_utils::typed::NoFinalizer>, main::__FroodiRegistrationSource>>>>` to implement `froodi::registry::frontend::IntoRegistry<(((froodi::registry::linking::LinkedInjectTransient<froodi::registry::linking::L<froodi::registry::linking::R<_>>>,), ((), ())), ())>`
+note: required by a bound in `Container::new`
+  --> src/container.rs
+   |
+   |     pub fn new<Links>(registry: impl IntoRegistry<Links>) -> Self {
+   |                                      ^^^^^^^^^^^^^^^^^^^ required by this bound in `Container::new`

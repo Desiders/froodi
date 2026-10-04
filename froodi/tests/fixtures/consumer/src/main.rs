@@ -1,6 +1,9 @@
 use di::{
     declare, instance, registry as renamed_registry, Container, DefaultScope::App, Inject, InjectTransient, InstantiateErrorKind, Registry,
 };
+use froodi_public_consumer::{DerivedService, GenericService};
+type ServiceAlias = DerivedService;
+type GenericAlias = GenericService<u32>;
 
 #[cfg(feature = "async")]
 use di::async_impl::Container as AsyncContainer;
@@ -54,6 +57,14 @@ fn main() {
         extend(fragment()),
     });
     assert_eq!(&*container.get::<String>().unwrap(), "7:7");
+
+    let constructed = Container::new(renamed_registry! {
+        provide(App, instance(13u32)),
+        scope(App) [ construct::<ServiceAlias>(), construct::<GenericAlias>(), ],
+    });
+    assert_eq!(constructed.get::<DerivedService>().unwrap().number(), 13);
+    assert_eq!(constructed.get::<DerivedService>().unwrap().fresh(), 13);
+    assert_eq!(constructed.get::<GenericAlias>().unwrap().values(), (&13, &13));
 
     #[cfg(feature = "external-scopes")]
     {
