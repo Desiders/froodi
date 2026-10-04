@@ -32,9 +32,10 @@
 /// together. Their Rust types determine how they execute. A sync factory may
 /// depend only on sync providers; an async factory may depend on either kind.
 /// Sync factories use sync finalizers; async factories use async finalizers.
-/// [`Container`](crate::Container) requires sync factories.
+/// [`Container`](crate::Container) resolves sync factories only; unrelated async
+/// factories can coexist. Requesting an async-only provider returns an error.
 /// `async_impl::Container` accepts both kinds.
-/// Use `.into_async_registry()` to erase a mixed fragment for runtime composition.
+/// Use `.into_registry()` to erase a mixed fragment for runtime composition.
 /// Custom instantiator types should implement one execution trait;
 /// implementing both kinds leaves their registration kind ambiguous.
 #[macro_export]

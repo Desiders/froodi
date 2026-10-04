@@ -379,8 +379,12 @@ Use `TypedContainer` when you also want unknown `get::<T>()` requests to fail at
 compile time. For more detail, see the API documentation for [`registry!`][docs-url].
 
 With the `async` feature, the same `registry!` accepts sync and async factories
-together. Use `async_impl::Container` for mixed registries.
+together. `async_impl::Container` resolves either kind; `Container` resolves only
+sync providers, even when unrelated async providers are registered.
 Sync factories can depend only on sync providers; async factories can use either.
+
+Use `.into_registry()` to return a fragment as `Registry`. The same `Registry`
+can hold sync, async or mixed registrations and be extended into another registry.
 
 ## Examples
 

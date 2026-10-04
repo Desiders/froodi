@@ -90,6 +90,21 @@ impl<T, Path, Left: Size, Right: ProviderPath<T, Path>> ProviderPath<T, R<Path>>
     const INDEX: usize = Left::SIZE + Right::INDEX;
 }
 
+/// Provider proofs for requests made through a synchronous typed container.
+#[diagnostic::on_unimplemented(
+    message = "no synchronous registration provides `{T}`",
+    label = "`{T}` is requested here, but no sync provider is available",
+    note = "register a sync factory or instance(...), or use async_impl::TypedContainer for async providers"
+)]
+pub trait SyncProviderPath<T, Path>: ProviderPath<T, Path> {}
+
+impl<T, Path, Providers> SyncProviderPath<T, Path> for Providers
+where
+    Providers: ProviderPath<T, Path>,
+    Providers::Provider: SupportsExecution<SyncExecution, T>,
+{
+}
+
 pub struct LinkedInject<Path>(PhantomData<Path>);
 
 pub struct LinkedInjectTransient<Path>(PhantomData<Path>);

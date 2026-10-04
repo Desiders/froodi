@@ -42,6 +42,8 @@ pub use inject::{Inject, InjectCustom, InjectTransient};
 pub use instantiator::{instance, Instantiator};
 pub use registry::declare;
 pub use registry::{InstantiatorData, Registry};
+#[cfg(feature = "async")]
+pub use registry::AsyncInstantiatorData;
 pub use scope::StaticScope;
 pub use scope::{DefaultScope, Scope, ScopeData, Scopes};
 pub use typed_container::{TypedContainer, TypedContainerExt};

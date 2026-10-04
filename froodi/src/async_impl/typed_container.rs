@@ -1,4 +1,4 @@
-use crate::async_impl::typed_registry::{Index, IntoRegistry, Root};
+use crate::registry::frontend::{Index, IntoRegistry, Root};
 use crate::{
     async_impl::{
         container::{ChildContainerBuilder, ChildContainerWithContext, ChildContainerWithScope, ChildContainerWithScopeAndContext},

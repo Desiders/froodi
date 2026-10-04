@@ -13,7 +13,7 @@ use crate::{
     context::Context,
     errors::{InstantiatorErrorKind, ResolveErrorKind, ScopeErrorKind, ScopeWithErrorKind},
     lock::LocalLock,
-    registry::{InstantiatorData, Registry, Selection},
+    registry::{InstantiatorData, RegistrationMetadata, Registry, Selection},
     scope::{Scope, ScopeData, ScopeDataWithChildScopesData},
     service::Service as _,
     utils::thread_safety::{RcThreadSafety, SendSafety, SyncSafety},
@@ -128,13 +128,11 @@ impl Container {
             data @ InstantiatorData {
                 instantiator,
                 finalizer,
-                config,
-                scope_data,
-                ..
+                metadata: RegistrationMetadata { config, scope_data, .. },
             },
         ) = selected.or_lookup(|| self.inner.registry.get(&type_info))
         else {
-            let err = ResolveErrorKind::NoInstantiator { type_info };
+            let err = self.inner.registry.unavailable(type_info);
             error!(dependency = dep_name, scope = scope_name, error = %err, "Failed to resolve dependency");
             return Err(err);
         };
@@ -246,11 +244,13 @@ impl Container {
 
         let Some(
             data @ InstantiatorData {
-                instantiator, scope_data, ..
+                instantiator,
+                metadata: RegistrationMetadata { scope_data, .. },
+                ..
             },
         ) = selected.or_lookup(|| self.inner.registry.get(&type_info))
         else {
-            let err = ResolveErrorKind::NoInstantiator { type_info };
+            let err = self.inner.registry.unavailable(type_info);
             error!(dependency = dep_name, scope = scope_name, error = %err, "Failed to resolve transient dependency");
             return Err(err);
         };

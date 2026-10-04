@@ -1,15 +1,17 @@
+use super::{finalizer::boxed_finalizer_factory, instantiator::RegistrationInstantiator as AsyncRegistrationInstantiator};
 use crate::registry::{
-    frontend::TypedRegistry,
+    frontend::{Collect, CollectedRegistration, TypedRegistry},
     linking::{AsyncExecution, Here, Link, LinkDependencies, ProviderPath, RegistryIndex, Size, SupportsExecution},
     registration::{Linked, NoFinalizer, Provide, Registration},
     topology::Topology,
-    RegistrationId,
+    AsyncInstantiatorData, RegistrationId, RegistrationMetadata, Selected,
 };
 use crate::{
     async_impl::{Finalizer, Instantiator},
-    utils::thread_safety::{RcThreadSafety, SendSafety},
-    Config, DependencyResolver, InstantiateErrorKind, ScopeData,
+    utils::thread_safety::{RcThreadSafety, SendSafety, SyncSafety},
+    Config, DependencyResolver, InstantiateErrorKind, Registry as RuntimeRegistry, ScopeData, TypeInfo,
 };
+use alloc::{collections::BTreeSet, vec::Vec};
 use core::{
     future::{ready, Future},
     marker::PhantomData,
@@ -77,5 +79,32 @@ where
 impl<Out> Finalizer<Out> for NoFinalizer {
     fn finalize(&mut self, _: RcThreadSafety<Out>) -> impl Future<Output = ()> + SendSafety {
         ready(())
+    }
+}
+
+impl<Out, Inst, Deps, Fin> Collect for AsyncLinked<Out, Inst, Deps, Fin>
+where
+    Out: SendSafety + SyncSafety + 'static,
+    Inst: Instantiator<Deps, Provides = Out> + SendSafety + SyncSafety,
+    Deps: DependencyResolver + SendSafety + 'static,
+    Fin: Finalizer<Out> + SendSafety + SyncSafety,
+{
+    fn collect(self, entries: &mut Vec<CollectedRegistration>, _: &mut Vec<RuntimeRegistry>) {
+        let Registration {
+            inst, fin, scope, config, ..
+        } = self.0.reg;
+        let instantiator = AsyncRegistrationInstantiator::linked::<Inst, Deps>(inst, self.0.targets);
+        entries.push(CollectedRegistration {
+            key: TypeInfo::of::<Out>(),
+            data: Selected::Async(AsyncInstantiatorData {
+                instantiator,
+                finalizer: fin.map(boxed_finalizer_factory),
+                metadata: RegistrationMetadata {
+                    dependencies: BTreeSet::new(),
+                    scope_data: scope,
+                    config,
+                },
+            }),
+        });
     }
 }

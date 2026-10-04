@@ -51,7 +51,7 @@ fn build_container(db: Database) -> Container {
                 provide(App, instance(db)),
             })
         }
-        .into_async_registry()
+        .into_registry()
         .provide_auto_registries_with_sync(),
     )
 }

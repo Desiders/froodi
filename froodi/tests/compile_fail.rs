@@ -36,7 +36,7 @@ fn registration_errors() {
         "sync_async",
         "sync_transient_async",
         "typed_async_missing",
-        "mixed_sync_container",
+        "typed_async_in_sync",
         "sync_async_finalizer",
     ] {
         cases.compile_fail(format!("tests/ui/registry/{case}.rs"));

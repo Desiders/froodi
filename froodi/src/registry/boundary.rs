@@ -80,7 +80,7 @@ impl<T: 'static> Collect for BoundaryLeaf<T> {
     fn collect(self, entries: &mut Vec<CollectedRegistration>, _: &mut Vec<RuntimeRegistry>) {
         entries.push(CollectedRegistration {
             key: TypeInfo::of::<T>(),
-            data: None,
+            data: super::Selected::Missing,
         });
     }
 }

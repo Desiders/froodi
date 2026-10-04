@@ -90,7 +90,7 @@ async fn mixed_factories_preserve_original_finalizers_after_erasure() {
             provide(|Inject(value): Inject<Value<10>>| Ok(Value::<14>(value.0))),
         ],
     }
-    .into_async_registry();
+    .into_registry();
     let app = Container::new(registry! { extend(fragment) });
     for _ in 0..2 {
         app.get::<Value<10>>().await.unwrap();

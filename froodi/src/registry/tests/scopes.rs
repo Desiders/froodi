@@ -69,7 +69,14 @@ fn same_wider_and_equal_priority_dependencies_match_runtime() {
     let container = Container::new(registry! { provide(EqualApp, instance(9u32)), provide(App, service) });
     assert_eq!(&*container.get::<String>().unwrap(), "9");
     let mut native = native_registry! { provide(DefaultScope::App, instance(9u32)), provide(DefaultScope::App, service) };
-    native.entries.get_mut(&TypeInfo::of::<u32>()).unwrap().scope_data = EqualApp::DATA;
+    native
+        .entries
+        .get_mut(&TypeInfo::of::<u32>())
+        .unwrap()
+        .sync_mut()
+        .unwrap()
+        .metadata
+        .scope_data = EqualApp::DATA;
     assert!(native.validate().is_ok());
 }
 
@@ -258,7 +265,7 @@ async fn async_frontend_and_erasure_preserve_scope_selection() {
         provide(App, async |value: Inject<u32>| Ok::<_, InstantiateErrorKind>(value.0.to_string())),
         provide(Request, async || Ok::<_, InstantiateErrorKind>(7u32)),
     }
-    .into_async_registry();
+    .into_registry();
     let replacement = native_async_registry! { provide(DefaultScope::App, async || Ok::<_, InstantiateErrorKind>(9u32)) };
     let container = AsyncContainer::new(registry! { extend(erased, replacement) });
     assert_eq!(&*container.get::<String>().await.unwrap(), "9");
@@ -267,7 +274,6 @@ async fn async_frontend_and_erasure_preserve_scope_selection() {
         provide(DefaultScope::App, async |value: Inject<u32>| Ok::<_, InstantiateErrorKind>(value.0.to_string())),
         provide(DefaultScope::Request, async || Ok::<_, InstantiateErrorKind>(7u32)),
     }
-    .registry
     .validate()
     .is_err());
 }

@@ -1,9 +1,9 @@
 use core::slice::Iter;
 
 #[cfg(feature = "async")]
-use crate::async_impl::typed_registry::Selected;
-#[cfg(feature = "async")]
 use crate::async_impl::Container as AsyncContainer;
+#[cfg(feature = "async")]
+use crate::registry::Selected;
 use crate::{
     any::TypeInfo,
     dependency_resolver::DependencyResolver,
@@ -26,7 +26,7 @@ impl<Dep: SendSafety + SyncSafety + 'static> DependencyResolver for Inject<Dep> 
     fn resolve_linked(container: &Container, edges: &mut Iter<'_, RegistrationId>) -> Result<Self, Self::Error> {
         let id = edges.next().expect("one linked edge per injection");
         container
-            .get_selected(Selection::Indexed(container.inner.registry.indexed[id.index()].1.as_ref()))
+            .get_selected(Selection::Indexed(container.inner.registry.indexed[id.index()].1.sync()))
             .map(Self)
     }
 
@@ -40,7 +40,7 @@ impl<Dep: SendSafety + SyncSafety + 'static> DependencyResolver for Inject<Dep> 
     #[cfg(feature = "async")]
     async fn resolve_async_linked(container: &AsyncContainer, edges: &mut Iter<'_, RegistrationId>) -> Result<Self, Self::Error> {
         let id = *edges.next().expect("one linked edge per injection");
-        match &container.inner.registry.indexed[id.index()].1 {
+        match &container.inner.registry.indexed[id.index()].1.selected {
             Selected::Sync(data) => container.sync.get_selected(Selection::Indexed(Some(data))).map(Self),
             Selected::Async(data) => container.get_selected(Selection::Indexed(Some(data))).await.map(Self),
             Selected::Missing => container.get_selected(Selection::Indexed(None)).await.map(Self),
@@ -67,7 +67,7 @@ impl<Dep: 'static> DependencyResolver for InjectTransient<Dep> {
     fn resolve_linked(container: &Container, edges: &mut Iter<'_, RegistrationId>) -> Result<Self, Self::Error> {
         let id = edges.next().expect("one linked edge per injection");
         container
-            .get_transient_selected(Selection::Indexed(container.inner.registry.indexed[id.index()].1.as_ref()))
+            .get_transient_selected(Selection::Indexed(container.inner.registry.indexed[id.index()].1.sync()))
             .map(Self)
     }
 
@@ -81,7 +81,7 @@ impl<Dep: 'static> DependencyResolver for InjectTransient<Dep> {
     #[cfg(feature = "async")]
     async fn resolve_async_linked(container: &AsyncContainer, edges: &mut Iter<'_, RegistrationId>) -> Result<Self, Self::Error> {
         let id = *edges.next().expect("one linked edge per injection");
-        match &container.inner.registry.indexed[id.index()].1 {
+        match &container.inner.registry.indexed[id.index()].1.selected {
             Selected::Sync(data) => container.sync.get_transient_selected(Selection::Indexed(Some(data))).map(Self),
             Selected::Async(data) => container.get_transient_selected(Selection::Indexed(Some(data))).await.map(Self),
             Selected::Missing => container.get_transient_selected(Selection::Indexed(None)).await.map(Self),

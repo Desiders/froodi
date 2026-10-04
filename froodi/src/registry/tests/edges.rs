@@ -195,7 +195,9 @@ fn one_instantiator_preserves_parameter_positions_in_different_topologies() {
             TypeInfo::of::<First>(),
             TypeInfo::of::<Combined>(),
             TypeInfo::of::<Second>(),
-            TypeInfo::of::<SyncContainer>()
+            TypeInfo::of::<SyncContainer>(),
+            #[cfg(feature = "async")]
+            TypeInfo::of::<AsyncContainer>(),
         ]
     );
     let RegistrationInstantiator::Linked(executor) = &first.inner.registry.get(&TypeInfo::of::<Combined>()).unwrap().instantiator else {
@@ -431,7 +433,7 @@ fn opaque_composition_still_checks_cycles_at_runtime() {
 
 #[cfg(feature = "async")]
 #[tokio::test]
-async fn opaque_async_composition_still_checks_cycles_in_both_namespaces() {
+async fn opaque_mixed_composition_checks_the_effective_graph_once() {
     CYCLE_CHECKS.with(|checks| checks.set(0));
     let container = AsyncContainer::new(registry! {
         provide(App, async |_: InjectCustom<Opaque>, value: Inject<u32>, repeated: Inject<u32>| {
@@ -441,7 +443,7 @@ async fn opaque_async_composition_still_checks_cycles_in_both_namespaces() {
         extend(registry! { provide(App, instance(7u32)) }),
     });
     assert_eq!(&*container.get::<String>().await.unwrap(), "7");
-    assert_eq!(CYCLE_CHECKS.with(Cell::get), 2);
+    assert_eq!(CYCLE_CHECKS.with(Cell::get), 1);
 }
 
 #[test]
@@ -503,7 +505,7 @@ fn erasure_retains_runtime_cycle_checks_for_both_constructors() {
 
 #[cfg(feature = "async")]
 #[tokio::test]
-async fn closed_async_composition_skips_cycle_checks_in_both_namespaces() {
+async fn closed_mixed_composition_skips_runtime_cycle_checks() {
     CYCLE_CHECKS.with(|checks| checks.set(0));
     let sync = registry! { provide(App, instance(7u32)) };
     let container = AsyncContainer::new(registry! {
@@ -521,13 +523,12 @@ async fn closed_async_composition_skips_cycle_checks_in_both_namespaces() {
     assert_eq!(CYCLE_CHECKS.with(Cell::get), 0);
 
     explicit.inner.registry.validate().unwrap();
-    explicit.sync.inner.registry.validate().unwrap();
-    assert_eq!(CYCLE_CHECKS.with(Cell::get), 2);
+    assert_eq!(CYCLE_CHECKS.with(Cell::get), 1);
 }
 
 #[cfg(feature = "async")]
 #[test]
-fn closed_async_composition_still_checks_scopes_in_both_namespaces() {
+fn closed_mixed_composition_still_checks_both_execution_scopes() {
     CYCLE_CHECKS.with(|checks| checks.set(0));
     for sync_dependency in [false, true] {
         let error = catch_unwind(|| {
@@ -559,12 +560,12 @@ async fn async_erasure_retains_runtime_cycle_checks_for_both_constructors() {
         provide(App, async |number: Inject<u32>| Ok(number.0.to_string())),
         extend(registry! { provide(App, instance(7u32)) }),
     }
-    .into_async_registry();
+    .into_registry();
     assert_eq!(CYCLE_CHECKS.with(Cell::get), 0);
     AsyncContainer::new(native.clone()).get::<String>().await.unwrap();
-    assert_eq!(CYCLE_CHECKS.with(Cell::get), 2);
+    assert_eq!(CYCLE_CHECKS.with(Cell::get), 1);
     AsyncContainer::new_with_start_scope(native, App).get::<String>().await.unwrap();
-    assert_eq!(CYCLE_CHECKS.with(Cell::get), 4);
+    assert_eq!(CYCLE_CHECKS.with(Cell::get), 2);
 }
 
 #[test]
@@ -726,7 +727,7 @@ async fn opaque_async_cycle_can_be_removed_before_or_after_erasure() {
         };
         let overrides = native_async_registry! { provide(App, async || Ok::<_, InstantiateErrorKind>(A)) };
         let container = if erased {
-            AsyncContainer::new(native_async_registry! { extend(fragment.into_async_registry(), overrides) })
+            AsyncContainer::new(native_async_registry! { extend(fragment.into_registry(), overrides) })
         } else {
             AsyncContainer::new(registry! { extend(fragment, overrides) })
         };
@@ -1165,12 +1166,12 @@ fn invalid_edge_is_checked_instead_of_reinterpreting_a_value() {
         }),
     }
     .into_registry();
-    let data = native.entries.get_mut(&TypeInfo::of::<Consumer>()).unwrap();
+    let data = native.entries.get_mut(&TypeInfo::of::<Consumer>()).unwrap().sync_mut().unwrap();
     let RegistrationInstantiator::Linked(inst) = &mut data.instantiator else {
         panic!("expected a linked instantiator");
     };
     inst.keys = alloc::vec![TypeInfo::of::<String>()].into();
-    data.dependencies = BTreeSet::from([Dependency {
+    data.metadata.dependencies = BTreeSet::from([Dependency {
         type_info: TypeInfo::of::<String>(),
     }]);
     let container = SyncContainer::new(native);

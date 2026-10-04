@@ -6,10 +6,10 @@ use super::{
 use crate::{
     finalizer::boxed_finalizer_factory,
     instantiator::{boxed_container_instantiator, RegistrationInstantiator},
-    registry::InstantiatorData,
+    registry::{Entry, InstantiatorData, RegistrationMetadata, Selected},
     utils::thread_safety::{SendSafety, SyncSafety},
-    Config, Container, DefaultScope, Dependency, DependencyResolver, Finalizer, Instantiator, Registry as RuntimeRegistry, Scope,
-    ScopeData, Scopes, TypeInfo,
+    Config, Container, DefaultScope, DependencyResolver, Finalizer, Instantiator, Registry as RuntimeRegistry, Scope, ScopeData, Scopes,
+    TypeInfo,
 };
 use alloc::{
     collections::{BTreeMap, BTreeSet},
@@ -105,13 +105,9 @@ impl<Tree> IntoFragment for Registry<Tree> {
 
 pub struct CollectedRegistration {
     pub(crate) key: TypeInfo,
-    pub(crate) data: Option<InstantiatorData>,
+    pub(crate) data: Selected,
 }
 
-#[diagnostic::on_unimplemented(
-    message = "a sync Container requires synchronous factories",
-    note = "use froodi::async_impl::Container for a registry containing async factories"
-)]
 pub trait Collect {
     fn collect(self, entries: &mut Vec<CollectedRegistration>, runtime: &mut Vec<RuntimeRegistry>);
 }
@@ -140,12 +136,14 @@ where
         } = self.reg;
         entries.push(CollectedRegistration {
             key: TypeInfo::of::<Out>(),
-            data: Some(InstantiatorData {
+            data: Selected::Sync(InstantiatorData {
                 instantiator: RegistrationInstantiator::linked::<Inst, Deps>(inst, self.targets),
-                dependencies: BTreeSet::new(),
                 finalizer: fin.map(boxed_finalizer_factory),
-                scope_data: scope,
-                config,
+                metadata: RegistrationMetadata {
+                    dependencies: BTreeSet::new(),
+                    scope_data: scope,
+                    config,
+                },
             }),
         });
     }
@@ -173,26 +171,67 @@ impl Collect for ContainerLeaf {
     fn collect(self, entries: &mut Vec<CollectedRegistration>, _runtime: &mut Vec<RuntimeRegistry>) {
         entries.push(CollectedRegistration {
             key: TypeInfo::of::<Container>(),
-            data: Some(InstantiatorData {
+            data: Selected::Sync(InstantiatorData {
                 instantiator: boxed_container_instantiator().into(),
-                dependencies: BTreeSet::new(),
                 finalizer: None,
-                config: Config { cache_provides: false },
-                scope_data: self.scope,
+                metadata: RegistrationMetadata {
+                    dependencies: BTreeSet::new(),
+                    config: Config { cache_provides: false },
+                    scope_data: self.scope,
+                },
             }),
         });
     }
 }
 
+#[cfg(not(feature = "async"))]
 pub(crate) type Root<Tree> = Node<Tree, ContainerLeaf>;
+#[cfg(feature = "async")]
+pub(crate) type Root<Tree> = Node<Tree, Node<ContainerLeaf, AsyncContainerLeaf>>;
+#[cfg(feature = "async")]
+pub struct AsyncContainerLeaf {
+    scope: ScopeData,
+}
+
+#[cfg(feature = "async")]
+impl RegistryIndex for AsyncContainerLeaf {
+    type Index = crate::async_impl::typed_registration::AsyncProvider<crate::async_impl::Container>;
+}
+
+#[cfg(feature = "async")]
+impl<Root> Link<Root, ()> for AsyncContainerLeaf {
+    type Linked = Self;
+
+    const TOPOLOGY: Topology = Topology::leaf(&[]);
+
+    fn link(self) -> Self {
+        self
+    }
+}
+
+#[cfg(feature = "async")]
+impl Collect for AsyncContainerLeaf {
+    fn collect(self, entries: &mut Vec<CollectedRegistration>, _: &mut Vec<RuntimeRegistry>) {
+        entries.push(CollectedRegistration {
+            key: TypeInfo::of::<crate::async_impl::Container>(),
+            data: Selected::Async(crate::registry::AsyncInstantiatorData {
+                instantiator: crate::async_impl::instantiator::boxed_container_instantiator().into(),
+                finalizer: None,
+                metadata: RegistrationMetadata {
+                    dependencies: BTreeSet::new(),
+                    config: Config { cache_provides: false },
+                    scope_data: self.scope,
+                },
+            }),
+        });
+    }
+}
+
 pub(crate) type Index<Tree> = <Root<Tree> as RegistryIndex>::Index;
 
 pub trait IntoRegistry<Links> {
     const VALIDATE: () = ();
     const CYCLES_CHECKED: bool = false;
-
-    #[doc(hidden)]
-    fn validate_runtime(_: &RuntimeRegistry) {}
 
     fn into_registry(self) -> RuntimeRegistry;
 
@@ -219,15 +258,6 @@ where
     const VALIDATE: () = <Root<Tree> as Link<Index<Tree>, Links>>::VALIDATE;
     const CYCLES_CHECKED: bool = <Root<Tree> as Link<Index<Tree>, Links>>::TOPOLOGY.can_validate_all_cycles();
 
-    fn validate_runtime(registry: &RuntimeRegistry) {
-        if !has_linked_instantiators(registry) {
-            if !Self::CYCLES_CHECKED {
-                registry.detect_cyclic_dependencies().expect("invalid registry");
-            }
-            registry.detect_unreachable_scopes().expect("invalid registry");
-        }
-    }
-
     fn into_registry(self) -> RuntimeRegistry {
         IntoRegistry::<Links>::materialize(self).0
     }
@@ -235,7 +265,13 @@ where
     fn materialize(self) -> (RuntimeRegistry, Option<Vec<TypeInfo>>) {
         let mut scopes = self.scopes;
         scopes.sort_by_key(|scope| scope.priority);
+        #[cfg(not(feature = "async"))]
         let root = Node(self.tree, ContainerLeaf { scope: scopes[0] });
+        #[cfg(feature = "async")]
+        let root = Node(
+            self.tree,
+            Node(ContainerLeaf { scope: scopes[0] }, AsyncContainerLeaf { scope: scopes[0] }),
+        );
         let mut entries = Vec::new();
         let mut runtime = Vec::new();
         root.link().collect(&mut entries, &mut runtime);
@@ -250,83 +286,78 @@ where
 
 // Keep runtime assembly closures independent of Root and Links.
 fn assemble(
-    mut entries: Vec<CollectedRegistration>,
+    entries: Vec<CollectedRegistration>,
     runtime: Vec<RuntimeRegistry>,
     scopes: Vec<ScopeData>,
     fixed_ids: bool,
 ) -> (RuntimeRegistry, Option<Vec<TypeInfo>>) {
     let keys: Vec<_> = entries.iter().map(|entry| entry.key.clone()).collect();
-    for entry in &mut entries {
-        let Some(data) = &mut entry.data else { continue };
-        if let RegistrationInstantiator::Linked(executor) = &mut data.instantiator {
-            executor.keys = executor.edges.iter().map(|id| keys[id.index()].clone()).collect::<Vec<_>>().into();
-            data.dependencies = executor.keys.iter().cloned().map(|type_info| Dependency { type_info }).collect();
+    let mut registry = RuntimeRegistry {
+        scopes_data: scopes,
+        ..RuntimeRegistry::default()
+    };
+    for mut entry in entries {
+        entry.data.link_keys(&keys);
+        if !matches!(entry.data, Selected::Missing) {
+            registry.insert(entry.key, entry.data);
         }
     }
-    let mut registry = RuntimeRegistry {
-        entries: entries
-            .into_iter()
-            .filter_map(|entry| entry.data.map(|data| (entry.key, data)))
-            .collect(),
-        scopes_data: scopes,
-        indexed: Vec::new(),
-    };
     for fragment in runtime {
-        registry.entries.extend(fragment.entries);
+        registry.extend(fragment);
     }
     (registry, fixed_ids.then_some(keys))
 }
 
 pub(crate) fn prepare(mut registry: RuntimeRegistry, cycles_checked: bool, plan: Option<Vec<TypeInfo>>) -> RuntimeRegistry {
-    if !has_linked_instantiators(&registry) {
-        return registry;
-    }
     if !cycles_checked {
         registry.detect_cyclic_dependencies().expect("invalid registry");
     }
-    registry.detect_unreachable_scopes().expect("invalid registry");
-    // Only final typed composition retains declaration-order IDs. Erasure discards this plan.
-    if let Some(keys) = plan {
-        registry.indexed = keys
-            .into_iter()
-            .map(|key| {
-                let data = registry.entries.get(&key).cloned();
-                (key, data)
-            })
-            .collect();
+    registry
+        .detect_unreachable_scopes()
+        .expect("invalid registry: unreachable dependency or incompatible execution kind");
+    if !has_linked_instantiators(&registry) {
         return registry;
     }
-    let mut keys: BTreeSet<_> = registry.entries.keys().cloned().collect();
-    for entry in registry.entries.values() {
-        if let RegistrationInstantiator::Linked(executor) = &entry.instantiator {
-            keys.extend(executor.keys.iter().cloned());
+    // Only final typed composition retains declaration-order IDs. Erasure discards this plan.
+    let keys = if let Some(keys) = plan {
+        keys
+    } else {
+        let mut keys: BTreeSet<_> = registry.entries.keys().cloned().collect();
+        for entry in registry.entries.values() {
+            keys.extend(entry.linked_keys().iter().cloned());
+            keys.extend(entry.fallback_keys().iter().cloned());
         }
-    }
-    let ids: BTreeMap<_, _> = keys
+        let ids: BTreeMap<_, _> = keys
+            .into_iter()
+            .enumerate()
+            .map(|(id, key)| (key, RegistrationId(u32::try_from(id).expect("too many registrations"))))
+            .collect();
+        for entry in registry.entries.values_mut() {
+            entry.remap(&ids);
+        }
+        ids.into_keys().collect()
+    };
+    registry.indexed = keys
         .into_iter()
-        .enumerate()
-        .map(|(id, key)| (key, RegistrationId(u32::try_from(id).expect("too many registrations"))))
+        .map(|key| {
+            let data = registry
+                .entries
+                .get(&key)
+                .cloned()
+                .unwrap_or_else(|| Entry::from_selected(Selected::Missing));
+            (key, data)
+        })
         .collect();
-    for entry in registry.entries.values_mut() {
-        if let RegistrationInstantiator::Linked(executor) = &mut entry.instantiator {
-            executor.remap(&ids);
-        }
-    }
-    registry.indexed = ids.keys().map(|key| (key.clone(), registry.entries.get(key).cloned())).collect();
     registry
 }
 
 pub(crate) fn finish<Links, Reg: IntoRegistry<Links>>(registry: Reg) -> RuntimeRegistry {
     let () = Reg::VALIDATE;
     let (registry, plan) = registry.materialize();
-    Reg::validate_runtime(&registry);
     // Consume the proof only for this final composition; native registries retain no exemption.
     prepare(registry, Reg::CYCLES_CHECKED, plan)
 }
 
 pub(crate) fn has_linked_instantiators(registry: &RuntimeRegistry) -> bool {
-    registry
-        .entries
-        .values()
-        .any(|entry| matches!(entry.instantiator, RegistrationInstantiator::Linked(_)))
+    registry.entries.values().any(Entry::is_linked)
 }

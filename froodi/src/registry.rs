@@ -39,58 +39,256 @@ use crate::{
 };
 
 #[derive(Clone)]
-pub struct InstantiatorData {
-    pub(crate) instantiator: RegistrationInstantiator,
+pub(crate) struct RegistrationMetadata {
     pub(crate) dependencies: BTreeSet<Dependency>,
-    pub(crate) finalizer: Option<BoxedCloneFinalizer>,
     pub(crate) config: Config,
     pub(crate) scope_data: ScopeData,
 }
 
-/// An erased synchronous registry, created with `.into_registry()`.
-/// Use typed `registry!` expressions directly when erasure is unnecessary.
+#[derive(Clone)]
+pub struct InstantiatorData {
+    pub(crate) instantiator: RegistrationInstantiator,
+    pub(crate) finalizer: Option<BoxedCloneFinalizer>,
+    pub(crate) metadata: RegistrationMetadata,
+}
+
+#[cfg(feature = "async")]
+#[derive(Clone)]
+pub struct AsyncInstantiatorData {
+    pub(crate) instantiator: crate::async_impl::instantiator::RegistrationInstantiator,
+    pub(crate) finalizer: Option<crate::async_impl::finalizer::BoxedCloneFinalizer>,
+    pub(crate) metadata: RegistrationMetadata,
+}
+
+#[derive(Clone)]
+pub(crate) enum Selected {
+    Sync(InstantiatorData),
+    #[cfg(feature = "async")]
+    Async(AsyncInstantiatorData),
+    Missing,
+}
+
+impl Selected {
+    fn metadata(&self) -> Option<(&BTreeSet<Dependency>, ScopeData)> {
+        match self {
+            Self::Sync(data) => Some((&data.metadata.dependencies, data.metadata.scope_data)),
+            #[cfg(feature = "async")]
+            Self::Async(data) => Some((&data.metadata.dependencies, data.metadata.scope_data)),
+            Self::Missing => None,
+        }
+    }
+
+    pub(crate) fn link_keys(&mut self, keys: &[TypeInfo]) {
+        match self {
+            Selected::Sync(data) => link_sync_keys(data, keys),
+            #[cfg(feature = "async")]
+            Selected::Async(data) => {
+                if let crate::async_impl::instantiator::RegistrationInstantiator::Linked(executor) = &mut data.instantiator {
+                    executor.keys = executor.edges.iter().map(|id| keys[id.index()].clone()).collect::<Vec<_>>().into();
+                    data.metadata.dependencies = executor.keys.iter().cloned().map(|type_info| Dependency { type_info }).collect();
+                }
+            }
+            Selected::Missing => (),
+        }
+    }
+
+    fn is_async(&self) -> bool {
+        #[cfg(feature = "async")]
+        if matches!(self, Self::Async(_)) {
+            return true;
+        }
+        false
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct Entry {
+    pub(crate) selected: Selected,
+    // Erased composition can supply both execution kinds for one output type.
+    // Async lookup prefers its async provider; sync lookup retains its own provider.
+    #[cfg(feature = "async")]
+    sync: Option<alloc::boxed::Box<InstantiatorData>>,
+}
+
+impl Entry {
+    pub(crate) fn sync(&self) -> Option<&InstantiatorData> {
+        match &self.selected {
+            Selected::Sync(data) => Some(data),
+            #[cfg(feature = "async")]
+            Selected::Async(_) => self.sync.as_deref(),
+            Selected::Missing => None,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn sync_mut(&mut self) -> Option<&mut InstantiatorData> {
+        match &mut self.selected {
+            Selected::Sync(data) => Some(data),
+            #[cfg(feature = "async")]
+            Selected::Async(_) => self.sync.as_deref_mut(),
+            Selected::Missing => None,
+        }
+    }
+
+    fn replace(&mut self, selected: Selected) {
+        #[cfg(feature = "async")]
+        match selected {
+            Selected::Sync(data) if self.selected.is_async() => {
+                self.sync = Some(alloc::boxed::Box::new(data));
+                return;
+            }
+            Selected::Async(data) => {
+                if let Selected::Sync(sync) = core::mem::replace(&mut self.selected, Selected::Async(data)) {
+                    self.sync = Some(alloc::boxed::Box::new(sync));
+                }
+                return;
+            }
+            selected => self.selected = selected,
+        }
+        #[cfg(not(feature = "async"))]
+        {
+            self.selected = selected;
+        }
+    }
+
+    pub(crate) fn from_selected(selected: Selected) -> Self {
+        Self {
+            selected,
+            #[cfg(feature = "async")]
+            sync: None,
+        }
+    }
+
+    pub(crate) fn remap(&mut self, ids: &BTreeMap<TypeInfo, RegistrationId>) {
+        match &mut self.selected {
+            Selected::Sync(data) => remap_sync(data, ids),
+            #[cfg(feature = "async")]
+            Selected::Async(data) => {
+                if let crate::async_impl::instantiator::RegistrationInstantiator::Linked(executor) = &mut data.instantiator {
+                    executor.remap(ids);
+                }
+                if let Some(sync) = &mut self.sync {
+                    remap_sync(sync, ids);
+                }
+            }
+            Selected::Missing => (),
+        }
+    }
+
+    pub(crate) fn linked_keys(&self) -> &[TypeInfo] {
+        match &self.selected {
+            Selected::Sync(data) => {
+                if let RegistrationInstantiator::Linked(executor) = &data.instantiator {
+                    return &executor.keys;
+                }
+            }
+            #[cfg(feature = "async")]
+            Selected::Async(data) => {
+                if let crate::async_impl::instantiator::RegistrationInstantiator::Linked(executor) = &data.instantiator {
+                    return &executor.keys;
+                }
+            }
+            Selected::Missing => (),
+        }
+        &[]
+    }
+
+    pub(crate) fn fallback_keys(&self) -> &[TypeInfo] {
+        #[cfg(feature = "async")]
+        if let Some(data) = &self.sync {
+            if let RegistrationInstantiator::Linked(executor) = &data.instantiator {
+                return &executor.keys;
+            }
+        }
+        &[]
+    }
+
+    pub(crate) fn is_linked(&self) -> bool {
+        if let Some(data) = self.sync() {
+            if matches!(data.instantiator, RegistrationInstantiator::Linked(_)) {
+                return true;
+            }
+        }
+        #[cfg(feature = "async")]
+        if let Selected::Async(data) = &self.selected {
+            return matches!(
+                data.instantiator,
+                crate::async_impl::instantiator::RegistrationInstantiator::Linked(_)
+            );
+        }
+        false
+    }
+}
+
+fn link_sync_keys(data: &mut InstantiatorData, keys: &[TypeInfo]) {
+    if let RegistrationInstantiator::Linked(executor) = &mut data.instantiator {
+        executor.keys = executor.edges.iter().map(|id| keys[id.index()].clone()).collect::<Vec<_>>().into();
+        data.metadata.dependencies = executor.keys.iter().cloned().map(|type_info| Dependency { type_info }).collect();
+    }
+}
+
+fn remap_sync(data: &mut InstantiatorData, ids: &BTreeMap<TypeInfo, RegistrationId>) {
+    if let RegistrationInstantiator::Linked(executor) = &mut data.instantiator {
+        executor.remap(ids);
+    }
+}
+
+/// An erased registry containing sync, async or mixed registrations.
+/// Use `.into_registry()` when returning or composing a runtime fragment.
+///
+/// Both container APIs accept this type. Sync containers resolve only sync
+/// providers; async containers resolve either kind. Composition retains runtime
+/// validation and remaps linked dependency edges to the selected registrations.
+/// When erased fragments provide both kinds for one type, async requests prefer
+/// the async provider and sync requests use the sync provider.
 #[derive(Clone, Default)]
 pub struct Registry {
-    pub(crate) entries: BTreeMap<TypeInfo, InstantiatorData>,
+    pub(crate) entries: BTreeMap<TypeInfo, Entry>,
     pub(crate) scopes_data: Vec<ScopeData>,
-    pub(crate) indexed: Vec<(TypeInfo, Option<InstantiatorData>)>,
+    pub(crate) indexed: Vec<(TypeInfo, Entry)>,
 }
 
 impl Registry {
     #[allow(clippy::similar_names)]
-    pub(crate) fn new<T, S, const N: usize>(mut entries: BTreeMap<TypeInfo, InstantiatorData>) -> Self
+    pub(crate) fn new<T, S, const N: usize>(entries: BTreeMap<TypeInfo, InstantiatorData>) -> Self
     where
         S: Scope,
         T: Scopes<N, Scope = S>,
     {
         let (scope, child_scopes) = T::all();
-
-        let mut scopes_data = Vec::with_capacity(N + 1);
         let scope_data = scope.into();
-
-        entries.insert(
+        let mut registry = Self::default();
+        for (key, data) in entries {
+            registry.insert(key, Selected::Sync(data));
+        }
+        registry.insert(
             TypeInfo::new::<Container>("Container"),
-            InstantiatorData {
+            Selected::Sync(InstantiatorData {
                 instantiator: boxed_container_instantiator().into(),
-                dependencies: EMPTY_DEPENDENCIES,
                 finalizer: None,
-                // Caching the container in its own cache creates an cycle
-                // that prevents `Drop`/`close` from ever running
-                config: Config { cache_provides: false },
-                scope_data,
-            },
+                metadata: RegistrationMetadata {
+                    dependencies: EMPTY_DEPENDENCIES,
+                    config: Config { cache_provides: false },
+                    scope_data,
+                },
+            }),
         );
-
-        scopes_data.push(scope_data);
-        for scope in child_scopes {
-            scopes_data.push(scope.into());
-        }
-
-        Self {
-            entries,
-            scopes_data,
-            indexed: Vec::new(),
-        }
+        #[cfg(feature = "async")]
+        registry.insert(
+            TypeInfo::new::<crate::async_impl::Container>("async_impl::Container"),
+            Selected::Async(AsyncInstantiatorData {
+                instantiator: crate::async_impl::instantiator::boxed_container_instantiator().into(),
+                finalizer: None,
+                metadata: RegistrationMetadata {
+                    dependencies: EMPTY_DEPENDENCIES,
+                    config: Config { cache_provides: false },
+                    scope_data,
+                },
+            }),
+        );
+        registry.scopes_data.push(scope_data);
+        registry.scopes_data.extend(child_scopes.into_iter().map(Into::into));
+        registry
     }
 
     #[inline]
@@ -98,12 +296,46 @@ impl Registry {
     pub fn new_with_default_entries() -> Self {
         Self::new::<DefaultScope, DefaultScope, 5>(BTreeMap::new())
     }
-}
 
-impl Registry {
+    pub(crate) fn insert(&mut self, key: TypeInfo, selected: Selected) {
+        match self.entries.entry(key) {
+            alloc::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert(Entry::from_selected(selected));
+            }
+            alloc::collections::btree_map::Entry::Occupied(mut entry) => entry.get_mut().replace(selected),
+        }
+    }
+
+    pub(crate) fn extend(&mut self, other: Self) {
+        for (key, entry) in other.entries {
+            #[cfg(feature = "async")]
+            if let Some(sync) = entry.sync {
+                self.insert(key.clone(), Selected::Sync(*sync));
+            }
+            self.insert(key, entry.selected);
+        }
+    }
+
     #[inline]
     pub(crate) fn get(&self, type_info: &TypeInfo) -> Option<&InstantiatorData> {
-        self.entries.get(type_info)
+        self.entries.get(type_info).and_then(Entry::sync)
+    }
+
+    pub(crate) fn unavailable(&self, type_info: TypeInfo) -> crate::ResolveErrorKind {
+        #[cfg(feature = "async")]
+        if self.get_async(&type_info).is_some() {
+            return crate::ResolveErrorKind::AsyncRequired { type_info };
+        }
+        crate::ResolveErrorKind::NoInstantiator { type_info }
+    }
+
+    #[cfg(feature = "async")]
+    #[inline]
+    pub(crate) fn get_async(&self, type_info: &TypeInfo) -> Option<&AsyncInstantiatorData> {
+        match &self.entries.get(type_info)?.selected {
+            Selected::Async(data) => Some(data),
+            _ => None,
+        }
     }
 
     #[inline]
@@ -122,70 +354,98 @@ impl Registry {
         CYCLE_CHECKS.with(|checks| checks.set(checks.get() + 1));
         let mut visited = BTreeSet::new();
         let mut stack = Vec::new();
-
-        for (type_info, InstantiatorData { dependencies, .. }) in &self.entries {
-            if self.dfs_visit(type_info, dependencies, &mut visited, &mut stack) {
-                return Err(ValidationErrorKind::CyclicDependency {
-                    graph: (stack.remove(0), stack.into_boxed_slice()),
-                });
+        for (key, entry) in &self.entries {
+            for is_async in [false, true] {
+                if self.metadata(key, is_async).is_some() && self.dfs_visit(key, is_async, &mut visited, &mut stack) {
+                    let mut graph = stack.into_iter().map(|(key, _)| key).collect::<Vec<_>>();
+                    return Err(ValidationErrorKind::CyclicDependency {
+                        graph: (graph.remove(0), graph.into_boxed_slice()),
+                    });
+                }
+                if !entry.selected.is_async() {
+                    break;
+                }
             }
         }
         Ok(())
     }
 
     pub(crate) fn detect_unreachable_scopes(&self) -> Result<(), ValidationErrorKind> {
-        for (
-            type_info,
-            InstantiatorData {
-                dependencies, scope_data, ..
-            },
-        ) in &self.entries
-        {
-            for Dependency { type_info: dependency } in dependencies {
-                if let Some(InstantiatorData {
-                    scope_data: dependency_scope,
-                    ..
-                }) = self.entries.get(dependency)
-                {
-                    if !scope_data.can_access(dependency_scope) {
-                        return Err(ValidationErrorKind::UnreachableDependency {
-                            dependent: type_info.clone(),
-                            dependent_scope: *scope_data,
-                            dependency: dependency.clone(),
-                            dependency_scope: *dependency_scope,
-                        });
+        for (key, entry) in &self.entries {
+            for is_async in [false, true] {
+                if let Some((dependencies, scope)) = self.metadata(key, is_async) {
+                    for dependency in dependencies {
+                        let target = self.entries.get(&dependency.type_info);
+                        let target_metadata = if is_async {
+                            target.and_then(|entry| entry.selected.metadata())
+                        } else {
+                            target
+                                .and_then(Entry::sync)
+                                .map(|data| (&data.metadata.dependencies, data.metadata.scope_data))
+                        };
+                        if let Some((_, dependency_scope)) = target_metadata {
+                            if !scope.can_access(&dependency_scope) {
+                                return Err(ValidationErrorKind::UnreachableDependency {
+                                    dependent: key.clone(),
+                                    dependent_scope: scope,
+                                    dependency: dependency.type_info.clone(),
+                                    dependency_scope,
+                                });
+                            }
+                        } else if target.is_some() {
+                            return Err(ValidationErrorKind::AsyncDependency {
+                                dependent: key.clone(),
+                                dependency: dependency.type_info.clone(),
+                            });
+                        }
                     }
+                }
+                if !entry.selected.is_async() {
+                    break;
                 }
             }
         }
         Ok(())
     }
 
-    fn dfs_visit<'a>(
+    fn metadata(&self, key: &TypeInfo, is_async: bool) -> Option<(&BTreeSet<Dependency>, ScopeData)> {
+        let entry = self.entries.get(key)?;
+        if is_async {
+            entry.selected.metadata()
+        } else {
+            entry.sync().map(|data| (&data.metadata.dependencies, data.metadata.scope_data))
+        }
+    }
+
+    fn dfs_visit(
         &self,
-        type_info: &TypeInfo,
-        dependencies: &BTreeSet<Dependency>,
-        visited: &'a mut BTreeSet<TypeInfo>,
-        stack: &'a mut Vec<TypeInfo>,
+        key: &TypeInfo,
+        is_async: bool,
+        visited: &mut BTreeSet<(TypeInfo, bool)>,
+        stack: &mut Vec<(TypeInfo, bool)>,
     ) -> bool {
-        if visited.contains(type_info) {
+        let node = (key.clone(), is_async);
+        if visited.contains(&node) {
             return false;
         }
-        if stack.contains(type_info) {
+        if stack.contains(&node) {
             return true;
         }
-        stack.push(type_info.clone());
-
-        for Dependency { type_info } in dependencies {
-            if let Some(InstantiatorData { dependencies, .. }) = self.entries.get(type_info) {
-                if self.dfs_visit(type_info, dependencies, visited, stack) {
-                    return true;
+        stack.push(node.clone());
+        if let Some((dependencies, _)) = self.metadata(key, is_async) {
+            for dependency in dependencies {
+                if let Some(target) = self.entries.get(&dependency.type_info) {
+                    let target_async = is_async && target.selected.is_async();
+                    if self.metadata(&dependency.type_info, target_async).is_some()
+                        && self.dfs_visit(&dependency.type_info, target_async, visited, stack)
+                    {
+                        return true;
+                    }
                 }
             }
         }
-
         stack.pop();
-        visited.insert(type_info.clone());
+        visited.insert(node);
         false
     }
 }

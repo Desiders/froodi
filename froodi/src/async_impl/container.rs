@@ -2,22 +2,18 @@ use alloc::{boxed::Box, vec::Vec};
 use core::future::Future;
 use tracing::{debug, error, trace, warn};
 
-use super::{
-    registry::{InstantiatorData, Registry},
-    service::Service as _,
-};
-use crate::async_impl::typed_registry::{finish, IntoRegistry};
+use super::service::Service as _;
 #[cfg(feature = "thread_safe")]
 use crate::lock::PerTypeSyncLocks;
+use crate::registry::{finish, IntoRegistry};
 use crate::{
     any::TypeInfo,
-    async_impl::registry::RegistryWithSync,
     cache::{Cache, Resolved},
     container::{BoxedContainerInner as BoxedSyncContainerInner, Container as SyncContainer, ContainerInner as SyncContainerInner},
     context::Context,
     errors::{InstantiatorErrorKind, ResolveErrorKind, ScopeErrorKind, ScopeWithErrorKind},
     lock::{LocalLock, PerTypeAsyncLocks},
-    registry::{Registry as SyncRegistry, Selection},
+    registry::{AsyncInstantiatorData as InstantiatorData, RegistrationMetadata, Registry, Selection},
     scope::{Scope, ScopeData, ScopeDataWithChildScopesData},
     utils::thread_safety::{RcThreadSafety, SendSafety, SyncSafety},
 };
@@ -57,15 +53,13 @@ impl Container {
     ///
     /// # Panics
     /// Panics if the scopes are exhausted before `is_target` accepts one.
-    fn build_root(registries: RegistryWithSync, is_target: impl Fn(&ScopeData) -> bool) -> Self {
-        let RegistryWithSync { registry, sync } = registries;
+    fn build_root(registry: Registry, is_target: impl Fn(&ScopeData) -> bool) -> Self {
         let mut scopes = registry.get_scope_with_child_scopes();
         let registry = RcThreadSafety::new(registry);
-        let sync_registry = RcThreadSafety::new(sync);
         let mut sync_container = BoxedSyncContainerInner {
             cache: Cache::new(),
             context: Context::new(),
-            registry: sync_registry.clone(),
+            registry: registry.clone(),
             scope_data: scopes.scope_data.expect("scopes len (is 0) should be > 0"),
             child_scopes_data: scopes.child_scopes_data.clone(),
             parent: None,
@@ -85,7 +79,7 @@ impl Container {
         while !is_target(&container.scope_data) {
             scopes = scopes.child();
             let scope_data = scopes.scope_data.expect("scope chain ended before reaching a target scope");
-            sync_container = sync_container.init_child(sync_registry.clone(), scope_data, scopes.child_scopes_data.clone(), true);
+            sync_container = sync_container.init_child(registry.clone(), scope_data, scopes.child_scopes_data.clone(), true);
             container = container.init_child(registry.clone(), scope_data, scopes.child_scopes_data.clone(), true);
         }
         (container, sync_container).into()
@@ -146,11 +140,9 @@ impl Container {
                 data @ InstantiatorData {
                     instantiator,
                     finalizer,
-                    config,
-                    scope_data,
-                    ..
+                    metadata: RegistrationMetadata { config, scope_data, .. },
                 },
-            ) = selected.or_lookup(|| self.inner.registry.get(&type_info))
+            ) = selected.or_lookup(|| self.inner.registry.get_async(&type_info))
             else {
                 debug!("No instantiator found, trying sync container");
                 return if by_type {
@@ -274,9 +266,11 @@ impl Container {
             let by_type = matches!(selected, Selection::ByType);
             let Some(
                 data @ InstantiatorData {
-                    instantiator, scope_data, ..
+                    instantiator,
+                    metadata: RegistrationMetadata { scope_data, .. },
+                    ..
                 },
-            ) = selected.or_lookup(|| self.inner.registry.get(&type_info))
+            ) = selected.or_lookup(|| self.inner.registry.get_async(&type_info))
             else {
                 debug!("No instantiator found, trying sync container");
                 return if by_type {
@@ -381,7 +375,6 @@ impl Container {
         sync_container: SyncContainer,
         context: Context,
         registry: RcThreadSafety<Registry>,
-        sync_registry: RcThreadSafety<SyncRegistry>,
         scope_data: ScopeData,
         child_scopes_data: Vec<ScopeData>,
         close_parent: bool,
@@ -397,7 +390,7 @@ impl Container {
             inner: RcThreadSafety::new(ContainerInner {
                 cache: LocalLock::new(cache),
                 context,
-                registry,
+                registry: registry.clone(),
                 scope_data,
                 child_scopes_data: child_scopes_data.clone(),
                 parent: Some(self.inner),
@@ -409,7 +402,7 @@ impl Container {
                 inner: RcThreadSafety::new(SyncContainerInner {
                     cache: LocalLock::new(sync_cache),
                     context: sync_context,
-                    registry: sync_registry,
+                    registry,
                     scope_data,
                     child_scopes_data,
                     parent: Some(sync_container),
@@ -425,7 +418,6 @@ impl Container {
         self,
         sync_container: SyncContainer,
         registry: RcThreadSafety<Registry>,
-        sync_registry: RcThreadSafety<SyncRegistry>,
         scope_data: ScopeData,
         child_scopes_data: Vec<ScopeData>,
         close_parent: bool,
@@ -440,7 +432,7 @@ impl Container {
             inner: RcThreadSafety::new(ContainerInner {
                 cache: LocalLock::new(cache),
                 context,
-                registry,
+                registry: registry.clone(),
                 scope_data,
                 child_scopes_data: child_scopes_data.clone(),
                 parent: Some(self.inner),
@@ -452,7 +444,7 @@ impl Container {
                 inner: RcThreadSafety::new(SyncContainerInner {
                     cache: LocalLock::new(sync_cache),
                     context: sync_context,
-                    registry: sync_registry,
+                    registry,
                     scope_data,
                     child_scopes_data,
                     parent: Some(sync_container),
@@ -496,19 +488,10 @@ impl Container {
         close_parent: bool,
     ) -> Container {
         let registry = self.inner.registry.clone();
-        let sync_registry = self.sync.inner.registry.clone();
         let sync_container = self.sync.clone();
         match context {
-            Some(context) => self.init_child_with_context(
-                sync_container,
-                context,
-                registry,
-                sync_registry,
-                scope_data,
-                child_scopes_data,
-                close_parent,
-            ),
-            None => self.init_child(sync_container, registry, sync_registry, scope_data, child_scopes_data, close_parent),
+            Some(context) => self.init_child_with_context(sync_container, context, registry, scope_data, child_scopes_data, close_parent),
+            None => self.init_child(sync_container, registry, scope_data, child_scopes_data, close_parent),
         }
     }
 }
@@ -758,7 +741,7 @@ impl ContainerInner {
             while let Some(Resolved { type_info, dependency }) = resolved_set.0.pop_back() {
                 let InstantiatorData { finalizer, .. } = self
                     .registry
-                    .get(&type_info)
+                    .get_async(&type_info)
                     .expect("Instantiator should be present for resolved type");
 
                 if let Some(finalizer) = finalizer {
@@ -1083,7 +1066,7 @@ mod tests {
                     provide(async || Ok(((), (), (), (), (), ()))),
                 ],
             }
-            .into_async_registry(),
+            .into_registry(),
             Runtime,
         );
         let app_container = runtime_container.clone().enter().with_scope(App).build().unwrap();

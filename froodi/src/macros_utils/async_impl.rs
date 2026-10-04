@@ -6,10 +6,10 @@ use crate::{
     async_impl::{
         finalizer::boxed_finalizer_factory,
         instantiator::{boxed_instantiator, Instantiator},
-        registry::InstantiatorData,
         Finalizer,
     },
     dependency_resolver::DependencyResolver,
+    registry::{AsyncInstantiatorData as InstantiatorData, RegistrationMetadata},
     utils::thread_safety::{SendSafety, SyncSafety},
     Config, InstantiateErrorKind, ResolveErrorKind, Scope,
 };
@@ -27,11 +27,13 @@ where
     (
         TypeInfo::of::<Inst::Provides>(),
         InstantiatorData {
-            dependencies: Inst::dependencies(),
             instantiator: boxed_instantiator(inst).into(),
             finalizer: fin.map(boxed_finalizer_factory),
-            config: config.unwrap_or_default(),
-            scope_data: scope.into(),
+            metadata: RegistrationMetadata {
+                dependencies: Inst::dependencies(),
+                config: config.unwrap_or_default(),
+                scope_data: scope.into(),
+            },
         },
     )
 }

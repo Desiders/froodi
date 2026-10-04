@@ -221,7 +221,7 @@ fn generate_entry_getter(
         quote_spanned! { global_entry_getter_name.span() =>
             #[::froodi_auto::entry_getters::distributed_slice(::froodi_auto::entry_getters::__ASYNC_ENTRY_GETTERS)]
             #[linkme(crate = ::froodi_auto::entry_getters::linkme)]
-            static #global_entry_getter_name: fn() -> (::froodi::TypeInfo, ::froodi::async_impl::InstantiatorData) = || {
+            static #global_entry_getter_name: fn() -> (::froodi::TypeInfo, ::froodi::AsyncInstantiatorData) = || {
                 ::froodi::macros_utils::async_impl::make_entry(
                     #scope,
                     #autowired_struct_name::<#self_ty>(core::marker::PhantomData),

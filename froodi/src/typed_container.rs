@@ -2,7 +2,7 @@ use core::marker::PhantomData;
 
 use crate::registry::{
     frontend::{Index, IntoRegistry, Registry, Root, TypedRegistry},
-    linking::{ProviderPath, RegistryIndex},
+    linking::{RegistryIndex, SyncProviderPath},
 };
 use crate::{
     container::{ChildContainerBuilder, ChildContainerWithContext, ChildContainerWithScope, ChildContainerWithScopeAndContext},
@@ -100,13 +100,13 @@ pub trait TypedContainerExt<Path> {
     /// Returns the native resolution error for inaccessible scopes or failed construction.
     fn get<Dep: SendSafety + SyncSafety + 'static>(&self) -> Result<RcThreadSafety<Dep>, ResolveErrorKind>
     where
-        Self::Providers: ProviderPath<Dep, Path>;
+        Self::Providers: SyncProviderPath<Dep, Path>;
 
     /// # Errors
     /// Returns the native resolution error for inaccessible scopes or failed construction.
     fn get_transient<Dep: 'static>(&self) -> Result<Dep, ResolveErrorKind>
     where
-        Self::Providers: ProviderPath<Dep, Path>;
+        Self::Providers: SyncProviderPath<Dep, Path>;
 }
 
 impl<Providers, Path> TypedContainerExt<Path> for TypedContainer<Providers> {
@@ -114,14 +114,14 @@ impl<Providers, Path> TypedContainerExt<Path> for TypedContainer<Providers> {
 
     fn get<Dep: SendSafety + SyncSafety + 'static>(&self) -> Result<RcThreadSafety<Dep>, ResolveErrorKind>
     where
-        Providers: ProviderPath<Dep, Path>,
+        Providers: SyncProviderPath<Dep, Path>,
     {
         self.inner.get::<Dep>()
     }
 
     fn get_transient<Dep: 'static>(&self) -> Result<Dep, ResolveErrorKind>
     where
-        Providers: ProviderPath<Dep, Path>,
+        Providers: SyncProviderPath<Dep, Path>,
     {
         self.inner.get_transient::<Dep>()
     }

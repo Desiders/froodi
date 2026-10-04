@@ -468,8 +468,6 @@ mod tests {
     #[cfg(feature = "async")]
     use super::{setup_async_default, AsyncContainer};
     use super::{setup_default, Container, Inject, InjectTransient};
-    #[cfg(feature = "async")]
-    use crate::registry;
     use crate::{
         registry,
         DefaultScope::{App, Request, Session},

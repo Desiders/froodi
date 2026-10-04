@@ -320,8 +320,6 @@ mod tests {
     #[cfg(feature = "async")]
     use super::{AsyncContainer, AsyncContainerLayer};
     use super::{Container, ContainerLayer, Inject, InjectTransient};
-    #[cfg(feature = "async")]
-    use crate::registry;
     use crate::{
         instance, registry,
         utils::thread_safety::RcThreadSafety,
