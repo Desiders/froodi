@@ -37,7 +37,7 @@ impl<T: ?Sized> ConstructField<RcThreadSafety<T>> for RcThreadSafety<T> {
 /// Fields use [`Inject`] by default; `#[di(inject)]` selects it explicitly.
 /// Use `#[di(inject_transient)]` for [`InjectTransient`](crate::InjectTransient).
 ///
-/// Register the type with `construct::<T>()` in a `registry!` scope block.
+/// Register the type with `provide::<T>()` in a `registry!` scope block.
 /// Scope, `config`, and `finalizer` are set in the registry.
 pub trait Construct: Sized + 'static {
     type Deps: DependencyResolver;
@@ -47,6 +47,6 @@ pub trait Construct: Sized + 'static {
 
 /// Adapts a [`Construct`] implementation to an ordinary synchronous registration.
 #[must_use]
-pub fn construct<T: Construct>() -> impl Instantiator<T::Deps, Provides = T, Error = InstantiateErrorKind> + SendSafety + SyncSafety {
+pub fn provide<T: Construct>() -> impl Instantiator<T::Deps, Provides = T, Error = InstantiateErrorKind> + SendSafety + SyncSafety {
     T::instantiator()
 }

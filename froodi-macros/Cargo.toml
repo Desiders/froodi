@@ -25,3 +25,6 @@ proc-macro2 = "1.0"
 proc-macro-crate = "3"
 quote = "1.0"
 syn = { version = "2.0", features = ["full"] }
+
+[dev-dependencies]
+froodi = { version = "1.0.0-beta", path = "../froodi", default-features = false, features = ["std", "thread_safe"] }

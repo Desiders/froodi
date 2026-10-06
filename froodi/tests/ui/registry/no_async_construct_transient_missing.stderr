@@ -1,8 +1,8 @@
 error[E0277]: no registration provides `u32`
   --> tests/ui/registry/no_async_construct_transient_missing.rs:10:28
    |
-10 |     let _ = Container::new(froodi::registry! { scope(App) [ construct::<Service>() ] });
-   |             -------------- ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `u32` is requested here, but no `provide(...)` in the registry produces it
+10 |     let _ = Container::new(froodi::registry! { scope(App) [ provide::<Service>() ] });
+   |             -------------- ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `u32` is requested here, but no `provide(...)` in the registry produces it
    |             |
    |             required by a bound introduced by this call
    |

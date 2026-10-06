@@ -3,6 +3,8 @@
 
 extern crate alloc;
 
+mod provide;
+
 #[macro_use]
 pub(crate) mod macros;
 
@@ -24,7 +26,6 @@ pub(crate) mod scope;
 pub(crate) mod service;
 pub(crate) mod typed_container;
 
-mod construct;
 pub mod macros_utils;
 pub mod utils;
 
@@ -33,14 +34,13 @@ pub mod async_impl;
 
 pub use any::TypeInfo;
 pub use config::Config;
-pub use construct::{construct, Construct};
 pub use container::Container;
 pub use context::Context;
 pub use dependency::Dependency;
 pub use dependency_resolver::DependencyResolver;
 pub use errors::{InstantiateErrorKind, InstantiatorResult, ResolveErrorKind, ScopeErrorKind, ScopeWithErrorKind};
 pub use finalizer::Finalizer;
-pub use froodi_macros::Construct;
+pub use froodi_macros::{fragment, Construct};
 pub use inject::{Inject, InjectCustom, InjectTransient};
 pub use instantiator::{instance, Instantiator};
 #[cfg(feature = "async")]

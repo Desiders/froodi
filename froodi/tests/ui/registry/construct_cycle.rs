@@ -9,7 +9,7 @@ struct Second { next: RcThreadSafety<First> }
 
 fn main() {
     let _ = Container::new(froodi::registry! {
-        scope(App) [ construct::<First>() ],
-        scope(App) [ construct::<Second>() ],
+        scope(App) [ provide::<First>() ],
+        scope(App) [ provide::<Second>() ],
     });
 }

@@ -164,7 +164,7 @@ pub(crate) fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
     }
     let (impl_generics, type_generics, where_clause) = generics.split_for_impl();
     Ok(quote! {
-        impl #impl_generics #crate_path::Construct for #name #type_generics #where_clause {
+        impl #impl_generics #crate_path::macros_utils::typed::Construct for #name #type_generics #where_clause {
             type Deps = (#(#resolvers,)*);
 
             fn instantiator() -> impl #crate_path::Instantiator<Self::Deps, Provides = Self, Error = #crate_path::InstantiateErrorKind>

@@ -8,7 +8,7 @@ struct Service {
 
 fn main() {
     let _ = Container::new(froodi::registry! {
-        scope(App) [ construct::<Service>() ],
+        scope(App) [ provide::<Service>() ],
         provide(App, async || Ok::<_, InstantiateErrorKind>(7u32)),
     });
 }

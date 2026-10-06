@@ -54,4 +54,7 @@ bench-resolve-concurrent:
 bench-registry-lifecycle:
     cargo bench -p froodi --profile release --frozen --bench registry_lifecycle --features async
 
-bench: bench-init bench-resolve bench-resolve-concurrent bench-registry-lifecycle
+bench-fragments:
+    cargo bench -p froodi --profile release --frozen --bench fragment_compare --features async
+
+bench: bench-init bench-resolve bench-resolve-concurrent bench-registry-lifecycle bench-fragments

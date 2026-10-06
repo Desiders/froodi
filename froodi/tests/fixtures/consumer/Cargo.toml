@@ -17,6 +17,11 @@ name = "invalid-async-instantiator"
 path = "src/bin/invalid_async_instantiator.rs"
 required-features = ["async"]
 
+[[bin]]
+name = "fragments"
+path = "src/bin/fragments.rs"
+required-features = ["external-scopes"]
+
 [features]
 async = ["di/async", "dep:tokio"]
 external-scopes = ["dep:scope-support"]

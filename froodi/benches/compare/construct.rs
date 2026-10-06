@@ -66,8 +66,8 @@ fn service_container(derived: bool) -> Container {
             provide(App, froodi::instance(Root(7))),
             scope(Request) [
                 provide(|| Ok::<_, InstantiateErrorKind>(RequestId(11))),
-                construct::<Service>(finalizer = finish_service),
-                construct::<TransientOnly>(),
+                provide::<Service>(finalizer = finish_service),
+                provide::<TransientOnly>(),
             ],
         })
     } else {
@@ -87,10 +87,10 @@ fn deep_container(derived: bool) -> Container {
         Container::new(registry! {
             provide(App, froodi::instance(Root(7))),
             scope(Request) [
-                construct::<Level1>(config = Config { cache_provides: false }),
-                construct::<Level2>(config = Config { cache_provides: false }),
-                construct::<Level3>(config = Config { cache_provides: false }),
-                construct::<Level4>(config = Config { cache_provides: false }),
+                provide::<Level1>(config = Config { cache_provides: false }),
+                provide::<Level2>(config = Config { cache_provides: false }),
+                provide::<Level3>(config = Config { cache_provides: false }),
+                provide::<Level4>(config = Config { cache_provides: false }),
             ],
         })
     } else {

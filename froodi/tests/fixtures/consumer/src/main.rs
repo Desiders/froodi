@@ -1,5 +1,6 @@
 use di::{
-    declare, instance, registry as renamed_registry, Container, DefaultScope::App, Inject, InjectTransient, InstantiateErrorKind, Registry,
+    declare, instance, registry as renamed_registry, Container, DefaultScope::App, Inject, InjectTransient, InstantiateErrorKind,
+    Registry,
 };
 use froodi_public_consumer::{DerivedService, GenericService};
 type ServiceAlias = DerivedService;
@@ -60,7 +61,7 @@ fn main() {
 
     let constructed = Container::new(renamed_registry! {
         provide(App, instance(13u32)),
-        scope(App) [ construct::<ServiceAlias>(), construct::<GenericAlias>(), ],
+        scope(App) [ provide::<ServiceAlias>(), provide::<GenericAlias>(), ],
     });
     assert_eq!(constructed.get::<DerivedService>().unwrap().number(), 13);
     assert_eq!(constructed.get::<DerivedService>().unwrap().fresh(), 13);

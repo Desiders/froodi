@@ -31,7 +31,7 @@ It focuses on a small set of DI problems:
 - **Sync and async support**. The crate supports both sync and async factories and containers.
 - **Modular registries**. Registries can be split and extended instead of building one large registration block.
 - **Registration checks**. Froodi catches missing or duplicate providers during compilation and can check cycles and static scopes before the app runs.
-- **Explicit construction**. `#[derive(froodi::Construct)]` describes field construction with `Inject` or `InjectTransient`; `construct::<T>()` includes it in a chosen registry and scope.
+- **Explicit construction**. `#[derive(froodi::Construct)]` describes field construction with `Inject` or `InjectTransient`; `provide::<T>()` includes it in a chosen registry and scope.
 - **Auto-registration**. `froodi-auto` can collect providers declared with macros.
 - **Framework integrations**. `axum`, `dptree`, `telers`, and `ruststream` are supported out of the box.
 
@@ -235,7 +235,7 @@ struct WelcomeHandler {
 Then replace its handwritten `provide` registration in `scope(Request)` with:
 
 ```rust
-construct::<WelcomeHandler>(),
+provide::<WelcomeHandler>(),
 ```
 
 The derive describes construction; the registry chooses whether to include the type and in which scope. Fields use ordinary `Inject<T>` semantics by default, and `#[di(inject)]` selects the same mode explicitly. For a field that needs a fresh value, use `#[di(inject_transient)]` on its ordinary value type. Scope, `config`, and `finalizer` stay on the registry entry. Use `provide(...)` for fallible, async, or custom construction.
@@ -302,10 +302,31 @@ The registry defines how dependencies are constructed.
 The main registration forms are:
 
 - `provide(scope, factory)`
-- `construct::<T>()` for a type with `#[derive(froodi::Construct)]`
-- `scope(ScopeName) [ provide(factory), construct::<T>(), ... ]`
+- `provide::<T>()` for a type with `#[derive(froodi::Construct)]`
+- `scope(ScopeName) [ provide(factory), provide::<T>(), ... ]`
 - `extend(other_registry)`
+- `extend_fragment(infrastructure!(config), services!())` for reusable syntax
 - `instance(value)` for values created outside the container
+
+Use `#[froodi::fragment(name)]` at module scope to save a registry template.
+Parameters accept expressions with inferred types. Dependencies are checked
+together with the surrounding registry.
+
+```rust
+use froodi::{instance, registry, DefaultScope::App};
+
+#[froodi::fragment(configuration(message))]
+registry! {
+    provide(App, instance(message)),
+}
+
+let registry = registry! {
+    extend_fragment(configuration!("Hello".to_owned())),
+};
+```
+
+`extend_fragment` includes reusable syntax; `extend` accepts registry values.
+Use `.into_registry()` on a final composition when you need an erased `Registry`.
 
 ### Finalizer
 
@@ -406,13 +427,14 @@ together. `async_impl::Container` resolves either kind; `Container` resolves onl
 sync providers, even when unrelated async providers are registered.
 Sync factories can depend only on sync providers; async factories can use either.
 
-Use `.into_registry()` to return a fragment as `Registry`. The same `Registry`
+Use `.into_registry()` to return a composition as `Registry`. The same `Registry`
 can hold sync, async or mixed registrations and be extended into another registry.
 
 ## Examples
 
 - [Registration][examples/registration]. Basic synchronous container setup
 - [Construct registration][examples/construct_registration]. Derive field construction with `Inject` and `InjectTransient`
+- [Fragments][examples/fragments]. Split the greeting example into reusable registrations across modules
 - [Async registration][examples/async_registration]. Sync and async factories in one registry
 - [Finalization][examples/finalization]. Scoped cleanup with synchronous finalizers
 - [Async finalization][examples/async_finalization]. Scoped cleanup with async finalizers
@@ -441,6 +463,7 @@ Contributions are welcome.
 [examples]: https://github.com/Desiders/froodi/tree/master/examples
 [examples/registration]: https://github.com/Desiders/froodi/tree/master/examples/registration
 [examples/construct_registration]: https://github.com/Desiders/froodi/tree/master/examples/construct_registration
+[examples/fragments]: https://github.com/Desiders/froodi/tree/master/examples/fragments
 [examples/async_registration]: https://github.com/Desiders/froodi/tree/master/examples/async_registration
 [examples/auto_registration]: https://github.com/Desiders/froodi/tree/master/examples/auto_registration
 [examples/async_auto_registration]: https://github.com/Desiders/froodi/tree/master/examples/async_auto_registration

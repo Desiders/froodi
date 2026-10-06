@@ -46,7 +46,7 @@ fn build_container(cfg: Config) -> Container {
         scope(Request) [
             provide(|Inject(cfg): Inject<Config>| Ok(boxed!(GreetingService { greeting: cfg.greeting.clone() }; Greeter))),
             provide(|| Ok(RequestId(123))),
-            construct::<WelcomeHandler>(),
+            provide::<WelcomeHandler>(),
         ],
     })
 }

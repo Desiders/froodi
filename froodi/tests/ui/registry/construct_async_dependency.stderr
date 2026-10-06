@@ -5,7 +5,7 @@ error[E0277]: cannot resolve `Inject<u32>` in a synchronous instantiator: its se
    |  _____________--------------_^
    | |             |
    | |             required by a bound introduced by this call
- 9 | |         scope(App) [ construct::<Service>() ],
+ 9 | |         scope(App) [ provide::<Service>() ],
 10 | |         provide(App, async || Ok::<_, InstantiateErrorKind>(7u32)),
 11 | |     });
    | |_____^ `Inject<u32>` requires async construction

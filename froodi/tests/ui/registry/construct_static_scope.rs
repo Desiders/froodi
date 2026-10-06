@@ -13,7 +13,7 @@ struct Service {
 
 fn main() {
     let _ = Container::new(froodi::registry! {
-        scope(App) [ construct::<Service>() ],
+        scope(App) [ provide::<Service>() ],
         provide(Request, instance(7u32)),
     });
 }

@@ -4,5 +4,5 @@ use froodi::{Container, DefaultScope::App};
 struct Bad<T> { values: Vec<T> }
 
 fn main() {
-    let _ = Container::new(froodi::registry! { scope(App) [ construct::<Bad<u32>>() ] });
+    let _ = Container::new(froodi::registry! { scope(App) [ provide::<Bad<u32>>() ] });
 }

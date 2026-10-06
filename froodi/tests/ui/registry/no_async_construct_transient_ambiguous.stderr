@@ -6,7 +6,7 @@ error[E0283]: type annotations needed
    | |             |
    | |             required by a bound introduced by this call
    | |             required by a bound introduced by this call
-11 | |         scope(App) [ construct::<Service>() ],
+11 | |         scope(App) [ provide::<Service>() ],
 12 | |         provide(App, instance(7u32)),
 13 | |         provide(App, instance(8u32)),
 14 | |     });

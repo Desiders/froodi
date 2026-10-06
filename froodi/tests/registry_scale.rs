@@ -4,7 +4,7 @@
 
 extern crate alloc;
 
-use froodi::{registry, Container, DefaultScope::App, InstantiateErrorKind};
+use froodi::{fragment, registry, Container, DefaultScope::App, InstantiateErrorKind};
 
 pub struct T<const N: usize>;
 
@@ -49,4 +49,43 @@ fn flat_500_links_under_the_default_recursion_limit() {
     let container = Container::new(with_500_ids!(entries));
     container.get::<T<0>>().unwrap();
     container.get::<T<499>>().unwrap();
+}
+
+macro_rules! fragment_entries {
+    ($($index:literal)+) => {
+        #[fragment(all)]
+        registry! { scope(App) [ $(provide(inst::<$index>)),+ ] }
+    };
+}
+
+with_500_ids!(fragment_entries);
+
+#[test]
+fn a_fragment_with_500_registrations_keeps_a_balanced_tree() {
+    let container = Container::new(registry! { extend_fragment(all!()), });
+    container.get::<T<0>>().unwrap();
+    container.get::<T<499>>().unwrap();
+}
+
+#[fragment(one(factory))]
+registry! { provide(App, factory), }
+
+#[test]
+fn fifty_small_fragments_link_under_the_default_recursion_limit() {
+    let container = Container::new(registry! {
+        extend_fragment(
+            one!(inst::<0>), one!(inst::<1>), one!(inst::<2>), one!(inst::<3>), one!(inst::<4>),
+            one!(inst::<5>), one!(inst::<6>), one!(inst::<7>), one!(inst::<8>), one!(inst::<9>),
+            one!(inst::<10>), one!(inst::<11>), one!(inst::<12>), one!(inst::<13>), one!(inst::<14>),
+            one!(inst::<15>), one!(inst::<16>), one!(inst::<17>), one!(inst::<18>), one!(inst::<19>),
+            one!(inst::<20>), one!(inst::<21>), one!(inst::<22>), one!(inst::<23>), one!(inst::<24>),
+            one!(inst::<25>), one!(inst::<26>), one!(inst::<27>), one!(inst::<28>), one!(inst::<29>),
+            one!(inst::<30>), one!(inst::<31>), one!(inst::<32>), one!(inst::<33>), one!(inst::<34>),
+            one!(inst::<35>), one!(inst::<36>), one!(inst::<37>), one!(inst::<38>), one!(inst::<39>),
+            one!(inst::<40>), one!(inst::<41>), one!(inst::<42>), one!(inst::<43>), one!(inst::<44>),
+            one!(inst::<45>), one!(inst::<46>), one!(inst::<47>), one!(inst::<48>), one!(inst::<49>),
+        ),
+    });
+    container.get::<T<0>>().unwrap();
+    container.get::<T<49>>().unwrap();
 }

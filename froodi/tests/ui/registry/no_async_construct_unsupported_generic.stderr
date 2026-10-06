@@ -1,12 +1,12 @@
 error[E0277]: Construct field `Vec<u32>` cannot use Inject resolution
- --> tests/ui/registry/no_async_construct_unsupported_generic.rs:7:73
+ --> tests/ui/registry/no_async_construct_unsupported_generic.rs:7:71
   |
-7 |     let _ = Container::new(froodi::registry! { scope(App) [ construct::<Bad<u32>>() ] });
-  |                                                                         ^^^^^^^^ the trait `froodi::macros_utils::typed::ConstructField<u32>` is not implemented for `Vec<u32>`
+7 |     let _ = Container::new(froodi::registry! { scope(App) [ provide::<Bad<u32>>() ] });
+  |                                                                       ^^^^^^^^ the trait `froodi::macros_utils::typed::ConstructField<u32>` is not implemented for `Vec<u32>`
   |
   = note: Inject fields use Arc<T> in thread-safe mode or Rc<T> in local mode; select #[di(inject_transient)] for InjectTransient resolution, or write provide(...)
 help: `Arc<T>` implements trait `froodi::macros_utils::typed::ConstructField<Dep>`
- --> src/construct.rs
+ --> src/provide.rs
   |
   | impl<T> ConstructField<T> for RcThreadSafety<T> {
   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `froodi::macros_utils::typed::ConstructField<T>`
@@ -22,21 +22,21 @@ note: required for `Bad<u32>` to implement `Construct`
   |        ^^^^^^
   = help: consider manually implementing `Construct` to avoid undesired bounds caused by "imperfect derives"
   = note: to learn more, visit <https://github.com/rust-lang/rust/issues/26925>
-note: required by a bound in `construct`
- --> src/construct.rs
+note: required by a bound in `froodi::provide`
+ --> src/provide.rs
   |
-  | pub fn construct<T: Construct>() -> impl Instantiator<T::Deps, Provides = T, Error = InstantiateErrorKind> + SendSafety + SyncSafety {
-  |                     ^^^^^^^^^ required by this bound in `construct`
+  | pub fn provide<T: Construct>() -> impl Instantiator<T::Deps, Provides = T, Error = InstantiateErrorKind> + SendSafety + SyncSafety {
+  |                   ^^^^^^^^^ required by this bound in `provide`
 
 error[E0277]: Construct field `Vec<u32>` cannot use Inject resolution
  --> tests/ui/registry/no_async_construct_unsupported_generic.rs:7:28
   |
-7 |     let _ = Container::new(froodi::registry! { scope(App) [ construct::<Bad<u32>>() ] });
-  |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `froodi::macros_utils::typed::ConstructField<u32>` is not implemented for `Vec<u32>`
+7 |     let _ = Container::new(froodi::registry! { scope(App) [ provide::<Bad<u32>>() ] });
+  |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `froodi::macros_utils::typed::ConstructField<u32>` is not implemented for `Vec<u32>`
   |
   = note: Inject fields use Arc<T> in thread-safe mode or Rc<T> in local mode; select #[di(inject_transient)] for InjectTransient resolution, or write provide(...)
 help: `Arc<T>` implements trait `froodi::macros_utils::typed::ConstructField<Dep>`
- --> src/construct.rs
+ --> src/provide.rs
   |
   | impl<T> ConstructField<T> for RcThreadSafety<T> {
   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `froodi::macros_utils::typed::ConstructField<T>`
@@ -52,18 +52,18 @@ note: required for `Bad<u32>` to implement `Construct`
   |        ^^^^^^
   = help: consider manually implementing `Construct` to avoid undesired bounds caused by "imperfect derives"
   = note: to learn more, visit <https://github.com/rust-lang/rust/issues/26925>
-note: required by a bound in `construct`
- --> src/construct.rs
+note: required by a bound in `froodi::provide`
+ --> src/provide.rs
   |
-  | pub fn construct<T: Construct>() -> impl Instantiator<T::Deps, Provides = T, Error = InstantiateErrorKind> + SendSafety + SyncSafety {
-  |                     ^^^^^^^^^ required by this bound in `construct`
+  | pub fn provide<T: Construct>() -> impl Instantiator<T::Deps, Provides = T, Error = InstantiateErrorKind> + SendSafety + SyncSafety {
+  |                   ^^^^^^^^^ required by this bound in `provide`
   = note: this error originates in the macro `froodi::registry` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error[E0277]: `provide(...)` requires a Froodi instantiator; `impl froodi::Instantiator<<Bad<u32> as Construct>::Deps, Provides = Bad<u32>, Error = InstantiateErrorKind> + SendSafety + SyncSafety` is not supported
  --> tests/ui/registry/no_async_construct_unsupported_generic.rs:7:28
   |
-7 |     let _ = Container::new(froodi::registry! { scope(App) [ construct::<Bad<u32>>() ] });
-  |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+7 |     let _ = Container::new(froodi::registry! { scope(App) [ provide::<Bad<u32>>() ] });
+  |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
   |                            |
   |                            `impl froodi::Instantiator<<Bad<u32> as Construct>::Deps, Provides = Bad<u32>, Error = InstantiateErrorKind> + SendSafety + SyncSafety` doesn't satisfy the trait bound
   |                            expected an instantiator returning `Result<T, InstantiateErrorKind>` (or a future returning it for async registration)
@@ -80,12 +80,12 @@ note: required by a bound in `froodi::macros_utils::typed::reg`
 error[E0277]: Construct field `Vec<u32>` cannot use Inject resolution
  --> tests/ui/registry/no_async_construct_unsupported_generic.rs:7:28
   |
-7 |     let _ = Container::new(froodi::registry! { scope(App) [ construct::<Bad<u32>>() ] });
-  |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `froodi::macros_utils::typed::ConstructField<u32>` is not implemented for `Vec<u32>`
+7 |     let _ = Container::new(froodi::registry! { scope(App) [ provide::<Bad<u32>>() ] });
+  |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `froodi::macros_utils::typed::ConstructField<u32>` is not implemented for `Vec<u32>`
   |
   = note: Inject fields use Arc<T> in thread-safe mode or Rc<T> in local mode; select #[di(inject_transient)] for InjectTransient resolution, or write provide(...)
 help: `Arc<T>` implements trait `froodi::macros_utils::typed::ConstructField<Dep>`
- --> src/construct.rs
+ --> src/provide.rs
   |
   | impl<T> ConstructField<T> for RcThreadSafety<T> {
   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `froodi::macros_utils::typed::ConstructField<T>`
@@ -101,22 +101,22 @@ note: required for `Bad<u32>` to implement `Construct`
   |        ^^^^^^
   = help: consider manually implementing `Construct` to avoid undesired bounds caused by "imperfect derives"
   = note: to learn more, visit <https://github.com/rust-lang/rust/issues/26925>
-note: required by a bound in `construct`
- --> src/construct.rs
+note: required by a bound in `froodi::provide`
+ --> src/provide.rs
   |
-  | pub fn construct<T: Construct>() -> impl Instantiator<T::Deps, Provides = T, Error = InstantiateErrorKind> + SendSafety + SyncSafety {
-  |                     ^^^^^^^^^ required by this bound in `construct`
+  | pub fn provide<T: Construct>() -> impl Instantiator<T::Deps, Provides = T, Error = InstantiateErrorKind> + SendSafety + SyncSafety {
+  |                   ^^^^^^^^^ required by this bound in `provide`
   = note: this error originates in the macro `$crate::macros_utils::typed::registry` which comes from the expansion of the macro `froodi::registry` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error[E0277]: Construct field `Vec<u32>` cannot use Inject resolution
  --> tests/ui/registry/no_async_construct_unsupported_generic.rs:7:28
   |
-7 |     let _ = Container::new(froodi::registry! { scope(App) [ construct::<Bad<u32>>() ] });
-  |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `froodi::macros_utils::typed::ConstructField<u32>` is not implemented for `Vec<u32>`
+7 |     let _ = Container::new(froodi::registry! { scope(App) [ provide::<Bad<u32>>() ] });
+  |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `froodi::macros_utils::typed::ConstructField<u32>` is not implemented for `Vec<u32>`
   |
   = note: Inject fields use Arc<T> in thread-safe mode or Rc<T> in local mode; select #[di(inject_transient)] for InjectTransient resolution, or write provide(...)
 help: `Arc<T>` implements trait `froodi::macros_utils::typed::ConstructField<Dep>`
- --> src/construct.rs
+ --> src/provide.rs
   |
   | impl<T> ConstructField<T> for RcThreadSafety<T> {
   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `froodi::macros_utils::typed::ConstructField<T>`
@@ -132,22 +132,22 @@ note: required for `Bad<u32>` to implement `Construct`
   |        ^^^^^^
   = help: consider manually implementing `Construct` to avoid undesired bounds caused by "imperfect derives"
   = note: to learn more, visit <https://github.com/rust-lang/rust/issues/26925>
-note: required by a bound in `construct`
- --> src/construct.rs
+note: required by a bound in `froodi::provide`
+ --> src/provide.rs
   |
-  | pub fn construct<T: Construct>() -> impl Instantiator<T::Deps, Provides = T, Error = InstantiateErrorKind> + SendSafety + SyncSafety {
-  |                     ^^^^^^^^^ required by this bound in `construct`
+  | pub fn provide<T: Construct>() -> impl Instantiator<T::Deps, Provides = T, Error = InstantiateErrorKind> + SendSafety + SyncSafety {
+  |                   ^^^^^^^^^ required by this bound in `provide`
   = note: this error originates in the macro `froodi::registry` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error[E0277]: Construct field `Vec<u32>` cannot use Inject resolution
  --> tests/ui/registry/no_async_construct_unsupported_generic.rs:7:13
   |
-7 |     let _ = Container::new(froodi::registry! { scope(App) [ construct::<Bad<u32>>() ] });
+7 |     let _ = Container::new(froodi::registry! { scope(App) [ provide::<Bad<u32>>() ] });
   |             ^^^^^^^^^^^^^^ the trait `froodi::macros_utils::typed::ConstructField<u32>` is not implemented for `Vec<u32>`
   |
   = note: Inject fields use Arc<T> in thread-safe mode or Rc<T> in local mode; select #[di(inject_transient)] for InjectTransient resolution, or write provide(...)
 help: `Arc<T>` implements trait `froodi::macros_utils::typed::ConstructField<Dep>`
- --> src/construct.rs
+ --> src/provide.rs
   |
   | impl<T> ConstructField<T> for RcThreadSafety<T> {
   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `froodi::macros_utils::typed::ConstructField<T>`
@@ -163,17 +163,17 @@ note: required for `Bad<u32>` to implement `Construct`
   |        ^^^^^^
   = help: consider manually implementing `Construct` to avoid undesired bounds caused by "imperfect derives"
   = note: to learn more, visit <https://github.com/rust-lang/rust/issues/26925>
-note: required by a bound in `construct`
- --> src/construct.rs
+note: required by a bound in `froodi::provide`
+ --> src/provide.rs
   |
-  | pub fn construct<T: Construct>() -> impl Instantiator<T::Deps, Provides = T, Error = InstantiateErrorKind> + SendSafety + SyncSafety {
-  |                     ^^^^^^^^^ required by this bound in `construct`
+  | pub fn provide<T: Construct>() -> impl Instantiator<T::Deps, Provides = T, Error = InstantiateErrorKind> + SendSafety + SyncSafety {
+  |                   ^^^^^^^^^ required by this bound in `provide`
 
 error[E0277]: the trait bound `impl froodi::Instantiator<<Bad<u32> as Construct>::Deps, Provides = Bad<u32>, Error = InstantiateErrorKind> + SendSafety + SyncSafety: froodi::Instantiator<_>` is not satisfied
  --> tests/ui/registry/no_async_construct_unsupported_generic.rs:7:28
   |
-7 |     let _ = Container::new(froodi::registry! { scope(App) [ construct::<Bad<u32>>() ] });
-  |             -------------- ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ unsatisfied trait bound
+7 |     let _ = Container::new(froodi::registry! { scope(App) [ provide::<Bad<u32>>() ] });
+  |             -------------- ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ unsatisfied trait bound
   |             |
   |             required by a bound introduced by this call
   |

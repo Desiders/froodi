@@ -17,6 +17,7 @@ mod construction;
 mod deep_async;
 mod edges;
 mod expression_order;
+mod fragments;
 #[cfg(feature = "thread_safe")]
 mod lifecycle;
 #[cfg(not(feature = "thread_safe"))]

@@ -1,4 +1,4 @@
-error: expected `scope(...) [ ... ]`, `provide(...)` or `extend(...)`
+error: expected `scope(...) [ ... ]`, `provide(...)`, `extend(...)` or `extend_fragment(...)`
  --> tests/ui/registry/unknown_clause.rs:8:9
   |
 8 |         frobnicate(App),

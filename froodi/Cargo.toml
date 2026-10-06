@@ -134,6 +134,11 @@ path = "benches/compare/construct.rs"
 harness = false
 required-features = ["thread_safe"]
 
+[[bench]]
+name = "fragment_compare"
+path = "benches/compare/fragments.rs"
+harness = false
+
 [[test]]
 name = "auto_registration_async"
 path = "tests/auto/async.rs"

@@ -1,6 +1,8 @@
 //! rustc --edition=2021 tools/compile_bench.rs -o /tmp/froodi-build-bench
-//! /tmp/froodi-build-bench <repo> <fresh-output> [samples=3] [measurement] [default|runtime|static] [shapes] [sync|mixed] [provide|construct|alternating]
-//! Only app artifacts are cleaned; dependencies stay warm. All generated files are disposable.
+//! /tmp/froodi-build-bench <repo> <fresh-output> [samples=3] [measurement] [default|runtime|static] [shapes] [sync|mixed] [provide|construct|alternating] [values|inline|fragments]
+//! clean-app keeps dependencies warm; clean clears all artifacts. Generated files are disposable.
+//! Construction selection applies to fields100/fields500. realistic100/realistic500
+//! use a fixed mix of providers and Construct, with static scopes and mixed execution.
 use std::{
     env, fs,
     path::{Path, PathBuf},
@@ -58,7 +60,7 @@ fn construction_source(count: usize, edit: &str, construction: &str) -> String {
     for index in 0..count {
         let derived = construction == "construct" || (construction == "alternating" && index % 2 == 0);
         if derived {
-            text.push_str(&format!("construct::<Service{index}>(),\n"));
+            text.push_str(&format!("provide::<Service{index}>(),\n"));
         } else {
             let extra_parameter = if edit == "body" && index == 0 {
                 ", InjectTransient(extra): InjectTransient<RequestId>"
@@ -193,11 +195,127 @@ impl Scope for BenchScope {
     text
 }
 
+fn registry_syntax(entries: &[String], scope: &str, syntax: &str, edit: &str) -> String {
+    let width = entries.len().div_ceil(10);
+    let groups = entries.chunks(width).map(|group| group.join("\n")).collect::<Vec<_>>();
+    let mut order = (0..groups.len()).collect::<Vec<_>>();
+    if edit == "topology" {
+        order.swap(0, 1);
+    }
+    if syntax == "fragments" {
+        let mut text = String::new();
+        for (index, body) in groups.iter().enumerate() {
+            text.push_str(&format!(
+                "#[froodi::fragment(fragment{index}(seed))]\nregistry! {{ scope({scope}) [{body}] }}\n"
+            ));
+        }
+        text.push_str("fn main() { let registry = registry! { extend_fragment(\n");
+        for index in &order {
+            text.push_str(&format!("fragment{index}!(7usize),\n"));
+        }
+        text.push_str(") };\n");
+        text
+    } else {
+        format!(
+            "fn main() {{ let seed = 7usize; let registry = registry! {{ scope({scope}) [{}] }};\n",
+            order.iter().map(|index| groups[*index].as_str()).collect::<Vec<_>>().join("\n")
+        )
+    }
+}
+
+fn realistic_source(count: usize, edit: &str, syntax: &str) -> String {
+    let mut text = String::from(
+        r#"#![allow(unused_variables, unused_imports, dead_code)]
+use froodi::{registry, Inject, InstantiateErrorKind, ScopeData, Scopes, StaticScope};
+use froodi::async_impl::Container;
+use std::sync::Arc;
+#[derive(Eq, PartialEq, Ord, PartialOrd)]
+struct App;
+impl StaticScope for App {
+    const DATA: ScopeData = ScopeData { name: "app", priority: 1, is_skipped_by_default: false };
+}
+impl From<App> for ScopeData { fn from(_: App) -> Self { App::DATA } }
+impl Scopes<0> for App { type Scope = Self; fn all() -> (Self, [Self; 0]) { (App, []) } }
+#[derive(Clone)] struct T0 { value: usize }
+fn p0() -> Result<T0, InstantiateErrorKind> { Ok(T0 { value: 1 }) }
+"#,
+    );
+    let mut entries = vec![if edit == "body" {
+        "provide(|| p0()),".to_owned()
+    } else {
+        "provide(p0),".to_owned()
+    }];
+    for index in 1..count {
+        if index % 2 == 1 {
+            let previous = if index == 1 { 0 } else { index - 2 };
+            text.push_str(&format!("struct T{index} {{ value: usize }}\nasync fn p{index}(dependency: Inject<T{previous}>) -> Result<T{index}, InstantiateErrorKind> {{ Ok(T{index} {{ value: dependency.0.value + 1 }}) }}\n"));
+            entries.push(format!("provide(p{index}),"));
+        } else if index % 4 == 2 {
+            let previous = index - 2;
+            text.push_str(&format!(
+                "#[derive(froodi::Construct)] struct T{index} {{ previous: Arc<T{previous}>, #[di(inject_transient)] fresh: T0 }}\n"
+            ));
+            // Later providers read the same field through an inherent method below.
+            text.push_str(&format!(
+                "impl T{index} {{ fn value(&self) -> usize {{ self.previous.value + self.fresh.value }} }}\n"
+            ));
+            entries.push(format!("provide::<T{index}>(),"));
+        } else {
+            let previous = index - 2;
+            text.push_str(&format!("struct T{index} {{ value: usize }}\n"));
+            entries.push(format!("provide(move |dependency: Inject<T{previous}>| Ok::<_, InstantiateErrorKind>(T{index} {{ value: dependency.0.value() + seed }})),"));
+        }
+    }
+    // Construct-generated providers retain transient fields. Captured providers depend
+    // across groups on those types; async providers form their own legal dependency chain.
+    text.push_str(&registry_syntax(&entries, "App", syntax, edit));
+    text.push_str(&format!("tokio::runtime::Builder::new_current_thread().build().unwrap().block_on(async {{ let container = Container::new(registry); std::hint::black_box(container.get::<T{}>().await.unwrap().value); container.close().await; }}); }}\n", count - 1));
+    text
+}
+
+fn benchmark_source(shape: &str, edit: &str, scope: &str, mixed: bool, construction: &str, syntax: &str) -> String {
+    if shape.starts_with("realistic") {
+        assert!(mixed && syntax != "values");
+        return realistic_source(if shape == "realistic100" { 100 } else { 500 }, edit, syntax);
+    }
+    if syntax == "values" {
+        return source(shape, edit, scope, mixed, construction);
+    }
+    let original = source(shape, if edit == "topology" { "none" } else { edit }, scope, mixed, construction);
+    let (definitions, root) = original.split_once("fn main() {").unwrap();
+    let scope = if scope == "default" { "App" } else { "BenchScope" };
+    let mut entries = root
+        .lines()
+        .filter(|line| line.starts_with("provide(") || line.starts_with("provide::<"))
+        .map(|line| line.replacen(&format!("provide({scope}, "), "provide(", 1))
+        .collect::<Vec<_>>();
+    if edit == "body" && !shape.starts_with("fields") {
+        entries[0] = entries[0].replace("p0", "|| p0()");
+    }
+    let mut text = definitions.replace(
+        "#![allow(unused_imports, dead_code)]",
+        "#![allow(unused_variables, unused_imports, dead_code)]",
+    );
+    text.push_str(&registry_syntax(&entries, scope, syntax, edit));
+    let count = if shape.ends_with("100") { 100 } else { 500 };
+    if shape.starts_with("fields") {
+        text.push_str(&format!("let container = Container::new(registry); let service = container.get::<Service{}>().unwrap(); std::hint::black_box((service.repository.0, service.request_id.0)); }}\n", count - 1));
+    } else if mixed {
+        text.push_str(&format!("tokio::runtime::Builder::new_current_thread().build().unwrap().block_on(async {{ let container = AsyncContainer::new(registry); std::hint::black_box(container.get::<T{}>().await.unwrap().0); }}); }}\n", count - 1));
+    } else {
+        text.push_str(&format!(
+            "let container = Container::new(registry); std::hint::black_box(container.get::<T{}>().unwrap().0); }}\n",
+            count - 1
+        ));
+    }
+    text
+}
+
 fn main() {
     let args: Vec<_> = env::args().collect();
     assert!(
         args.len() >= 3,
-        "usage: compile-bench <repo> <fresh-output> [samples=3] [measurement] [default|runtime|static] [shapes] [sync|mixed] [provide|construct|alternating]"
+        "usage: compile-bench <repo> <fresh-output> [samples=3] [measurement] [default|runtime|static] [shapes] [sync|mixed] [provide|construct|alternating] [values|inline|fragments]"
     );
     let repo = fs::canonicalize(&args[1]).unwrap();
     let output = PathBuf::from(&args[2]);
@@ -215,15 +333,31 @@ fn main() {
     let mixed = execution == "mixed";
     let construction = args.get(8).map_or("provide", String::as_str);
     assert!(matches!(construction, "provide" | "construct" | "alternating"));
-    assert!(construction == "provide" || shapes.split(',').all(|shape| matches!(shape, "fields100" | "fields500")));
+    assert!(
+        construction == "provide" || shapes.split(',').all(|shape| matches!(shape, "fields100" | "fields500")),
+        "construction selection only applies to fields100/fields500"
+    );
     assert!(!shapes.split(',').any(|shape| matches!(shape, "fields100" | "fields500")) || (scope == "default" && !mixed));
-    assert!(!mixed || shapes.split(',').all(|shape| matches!(shape, "chain100" | "flat500")));
-    assert!(shapes
-        .split(',')
-        .all(|shape| matches!(shape, "chain100" | "flat500" | "edges500" | "edges2000" | "fields100" | "fields500")));
+    assert!(
+        !mixed
+            || shapes
+                .split(',')
+                .all(|shape| matches!(shape, "chain100" | "flat500" | "realistic100" | "realistic500"))
+    );
+    assert!(shapes.split(',').all(|shape| matches!(
+        shape,
+        "chain100" | "flat500" | "edges500" | "edges2000" | "fields100" | "fields500" | "realistic100" | "realistic500"
+    )));
     assert!(only.is_none_or(|only| only
         .split(',')
         .all(|measurement| matches!(measurement, "clean" | "clean-app" | "body" | "topology" | "release"))));
+    let syntax = args.get(9).map_or("values", String::as_str);
+    assert!(matches!(syntax, "values" | "inline" | "fragments"));
+    assert!(
+        !shapes.split(',').any(|shape| matches!(shape, "realistic100" | "realistic500"))
+            || (scope == "static" && mixed && syntax != "values"),
+        "realistic fixtures require static scopes, mixed execution, and inline or fragments syntax"
+    );
     let target = output.join("target");
     let version = Command::new("rustc").arg("-Vv").output().unwrap();
     fs::write(output.join("toolchain.txt"), version.stdout).unwrap();
@@ -239,7 +373,7 @@ fn main() {
         };
         fs::write(dir.join("Cargo.toml"), format!("[package]\nname = \"compile-bench-app\"\nversion = \"0.0.0\"\nedition = \"2021\"\n[workspace]\n[dependencies]\nfroodi = {{ path = {:?}{features} }}\n{runtime}", repo.join("froodi"))).unwrap();
         let src = dir.join("src/main.rs");
-        let original = source(shape, "none", scope, mixed, construction);
+        let original = benchmark_source(shape, "none", scope, mixed, construction, syntax);
         fs::write(&src, &original).unwrap();
         run(cargo(&dir, &target).args(["build", "--offline"]), &dir.join("warm.log"));
         for measurement in ["clean", "clean-app", "body", "topology", "release"] {
@@ -271,7 +405,7 @@ fn main() {
                     }
                     run(&mut clean, &dir.join("clean.log"));
                 } else {
-                    fs::write(&src, source(shape, measurement, scope, mixed, construction)).unwrap();
+                    fs::write(&src, benchmark_source(shape, measurement, scope, mixed, construction, syntax)).unwrap();
                 }
                 samples.push(run(&mut build, &dir.join(format!("{measurement}-{sample}.log"))));
                 let binary = target.join(if release { "release" } else { "debug" }).join("compile-bench-app");

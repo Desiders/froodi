@@ -31,9 +31,15 @@ fn downstream_registry_and_renamed_dependency() {
         use froodi as scope_api;
         pub use froodi::registry;
         pub mod scopes;
+        pub mod fragments;
     };
     fs::write(enabler.join("src/lib.rs"), prettyplease::unparse(&source)).unwrap();
     fs::copy(native.join("tests/ui/registry/support/scopes.rs"), enabler.join("src/scopes.rs")).unwrap();
+    fs::copy(
+        native.join("tests/ui/registry/support/fragments.rs"),
+        enabler.join("src/fragments.rs"),
+    )
+    .unwrap();
 
     let packaged = std::env::var_os("FROODI_PACKAGE_DIR").map(PathBuf::from);
     let (native, macros) = if let Some(packages) = &packaged {
@@ -62,6 +68,56 @@ fn downstream_registry_and_renamed_dependency() {
             args.extend(["--features", features]);
         }
         project.success(&args);
+    }
+
+    project.success(&["run", "--offline", "--features", "external-scopes", "--bin", "fragments"]);
+    for (bin, command, detail) in [
+        ("missing", "check", "ProviderPath"),
+        ("ambiguous", "check", "E0283"),
+        ("transient", "check", "ProviderPath"),
+        ("cycle", "build", "dependency cycle in closed static registry"),
+        ("construct_cycle", "build", "dependency cycle in closed static registry"),
+        ("scope", "build", "incompatible static scopes: app -> request"),
+        ("sync_async", "check", "cannot resolve"),
+        ("construct_async", "check", "cannot resolve"),
+        ("arity", "check", "expected 1 argument(s)"),
+        ("wrong_type", "check", "E0308"),
+        ("unknown", "check", "cannot find macro"),
+        (
+            "conditional_import",
+            "check",
+            "conditional fragment imports must be placed at module scope",
+        ),
+        ("recursion", "check", "recursive registry fragment: repeated -> repeated"),
+        (
+            "indirect_recursion",
+            "check",
+            "recursive registry fragment: first -> second -> first",
+        ),
+        ("private_body", "check", "E0603"),
+        ("private_import", "check", "private_fragment"),
+        ("invalid_body", "check", "expected `scope(...)"),
+        ("continuation", "check", "incomplete registry fragment expansion"),
+        ("invalid_parameter", "check", "fragment parameters must be identifiers"),
+        ("typed_parameter", "check", "fragment parameters are untyped identifiers"),
+        ("duplicate_parameter", "check", "fragment parameter is given twice"),
+        ("invalid_target", "check", "fragment must annotate a `registry! { ... }` invocation"),
+        (
+            "direct",
+            "check",
+            "fragment `configuration` can only be expanded inside `registry!`",
+        ),
+        (
+            "extend",
+            "check",
+            "fragment `configuration` can only be expanded inside `registry!`",
+        ),
+    ] {
+        let bin = format!("fragment_{bin}");
+        let output = project.cargo(&[command, "--offline", "--features", "external-scopes,async", "--bin", &bin]);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(!output.status.success(), "{bin} unexpectedly passed");
+        assert!(stderr.contains(detail), "{bin}:\n{stderr}");
     }
 
     // rustc changes the full wording of these errors between toolchains.

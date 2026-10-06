@@ -4,5 +4,5 @@ use froodi::{registry, DefaultScope::App};
 struct Service;
 
 fn main() {
-    let _ = registry! { construct::<Service>(App) };
+    let _ = registry! { provide::<Service>(App) };
 }

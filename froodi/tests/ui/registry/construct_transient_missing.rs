@@ -7,5 +7,5 @@ struct Service {
 }
 
 fn main() {
-    let _ = Container::new(froodi::registry! { scope(App) [ construct::<Service>() ] });
+    let _ = Container::new(froodi::registry! { scope(App) [ provide::<Service>() ] });
 }

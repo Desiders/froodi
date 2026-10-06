@@ -90,11 +90,11 @@ fn constructed_types_use_normal_registry_linking_and_cache() {
     let container = Container::new(registry! {
         scope(App) [
             provide(instance(Repository(7))),
-            construct::<Service>(),
-            construct::<ExplicitService>(),
-            construct::<Pair>(),
-            construct::<Unit>(),
-            construct::<Generic<Repository>>(),
+            provide::<Service>(),
+            provide::<ExplicitService>(),
+            provide::<Pair>(),
+            provide::<Unit>(),
+            provide::<Generic<Repository>>(),
         ]
     });
     let pair = container.get::<Pair>().unwrap();
@@ -116,9 +116,9 @@ fn mixed_fields_preserve_modes_and_repeated_dependency_order() {
                 let calls = calls.clone();
                 move || Ok::<_, froodi::InstantiateErrorKind>(RequestId(calls.fetch_add(1, Ordering::SeqCst) + 1))
             }),
-            construct::<Mixed>(),
-            construct::<MixedTuple>(),
-            construct::<TransientGeneric<RequestId>>(),
+            provide::<Mixed>(),
+            provide::<MixedTuple>(),
+            provide::<TransientGeneric<RequestId>>(),
         ],
     });
     let first = container.get::<Mixed>().unwrap();
@@ -140,7 +140,7 @@ fn transient_mode_uses_the_exact_field_type_including_pointer_types() {
     let container = Container::new(registry! {
         scope(App) [
             provide(instance(repository.clone())),
-            construct::<TransientPointer>(),
+            provide::<TransientPointer>(),
         ],
     });
     assert!(Shared::ptr_eq(
@@ -159,7 +159,7 @@ fn deriving_does_not_register_a_type() {
 fn trait_object_fields_use_a_sized_shared_pointer_provider() {
     let container = Container::new(registry! {
         provide(App, || Ok::<_, froodi::InstantiateErrorKind>(Shared::new(Greeter) as Shared<dyn Greeting>)),
-        scope(App) [ construct::<TraitService>(), ],
+        scope(App) [ provide::<TraitService>(), ],
     });
     assert_eq!(container.get::<TraitService>().unwrap().greeter.text(), "hello");
 }
@@ -169,7 +169,7 @@ fn boxed_trait_fields_support_both_dependency_modes() {
     let container = Container::new(registry! {
         scope(App) [
             provide(|| Ok::<_, froodi::InstantiateErrorKind>(froodi::boxed!(Greeter; Greeting))),
-            construct::<BoxedTraitService>(),
+            provide::<BoxedTraitService>(),
         ],
     });
     let service = container.get::<BoxedTraitService>().unwrap();
@@ -182,7 +182,7 @@ fn boxed_trait_fields_support_both_dependency_modes() {
 fn construct_resolves_in_custom_scopes_and_retains_parent_dependencies() {
     let container = Container::new(registry! {
         provide(scopes::App, instance(Repository(7))),
-        scope(scopes::Request) [ construct::<ExplicitService>(), ],
+        scope(scopes::Request) [ provide::<ExplicitService>(), ],
     });
     assert!(container.get::<ExplicitService>().is_err());
     let request = container.clone().enter().with_scope(scopes::Request).build().unwrap();
@@ -197,7 +197,7 @@ fn transient_field_resolution_errors_use_the_normal_error_path() {
     let container = Container::new(registry! {
         scope(App) [
             provide(|| Err::<RequestId, _>(froodi::InstantiateErrorKind::Custom(anyhow::anyhow!("request id unavailable")))),
-            construct::<TransientGeneric<RequestId>>(),
+            provide::<TransientGeneric<RequestId>>(),
         ],
     });
     let error = match container.get::<TransientGeneric<RequestId>>() {
@@ -213,7 +213,7 @@ fn construct_accepts_the_existing_registration_options() {
     let container = Container::new(registry! {
         provide(App, instance(Repository(7))),
         scope(App) [
-            construct::<Service>(config = Config { cache_provides: false }, finalizer = {
+            provide::<Service>(config = Config { cache_provides: false }, finalizer = {
                 let finalized = finalized.clone();
                 move |_: Shared<Service>| { finalized.fetch_add(1, Ordering::SeqCst); }
             }),
@@ -232,8 +232,8 @@ fn construct_accepts_the_existing_registration_options() {
 async fn synchronous_construct_works_in_a_mixed_async_registry() {
     let container = froodi::async_impl::Container::new(registry! {
         provide(App, instance(Repository(7))),
-        scope(App) [ construct::<Service>(), ],
-        scope(App) [ construct::<TransientGeneric<RequestId>>(), ],
+        scope(App) [ provide::<Service>(), ],
+        scope(App) [ provide::<TransientGeneric<RequestId>>(), ],
         provide(App, || Ok::<_, froodi::InstantiateErrorKind>(RequestId(11))),
         provide(App, async |froodi::Inject(service): froodi::Inject<Service>| Ok::<_, froodi::InstantiateErrorKind>(service.repository.0)),
     });
