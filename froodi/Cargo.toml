@@ -40,6 +40,7 @@ ruststream = ["dep:ruststream", "thread_safe", "tokio/rt", "std"]
 anyhow = { version = "1.0", default-features = false }
 axum = { version = ">= 0.6, <= 0.8", default-features = false, optional = true }
 dptree = { version = "0.5", optional = true }
+froodi-macros = { version = "1", path = "../froodi-macros" }
 h2 = { version = "0.4", optional = true }
 parking_lot = { version = "0.12", default-features = false, optional = true }
 spin = { version = "0.12", features = ["mutex", "rwlock", "spin_mutex"], default-features = false, optional = true }
@@ -58,9 +59,12 @@ version_check = "0.9"
 axum = { version = "0.8" }
 axum-test = { version = "18", features = ["ws"] }
 criterion = { version = "0.7", features = ["async_tokio"] }
-froodi-auto = { path = "../froodi-auto", default-features = false }
+froodi-auto = { version = "1.0", path = "../froodi-auto", default-features = false }
+prettyplease = "0.2"
 ruststream = { version = "0.7.0-rc.7", features = ["testing", "memory", "macros", "json"] }
+syn = { version = "2", features = ["full"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+toml = "1"
 tracing-test = { version = "0.2", default-features = false }
 trybuild = "1"
 
@@ -119,13 +123,21 @@ doc = false
 required-features = ["async", "thread_safe"]
 
 [[bench]]
-name = "compare_container_resolve"
-path = "benches/compare/sync.rs"
+name = "registry_lifecycle"
+path = "benches/compare/registry.rs"
 harness = false
-test = false
-doctest = false
-doc = false
-required-features = []
+required-features = ["thread_safe"]
+
+[[bench]]
+name = "construct_compare"
+path = "benches/compare/construct.rs"
+harness = false
+required-features = ["thread_safe"]
+
+[[bench]]
+name = "fragment_compare"
+path = "benches/compare/fragments.rs"
+harness = false
 
 [[test]]
 name = "auto_registration_async"

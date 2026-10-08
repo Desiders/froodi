@@ -1,6 +1,6 @@
 [workspace]
-members = ["examples/*", "froodi", "froodi-*"]
-default-members = ["froodi", "froodi-*"]
+members = ["examples/*", "froodi", "froodi-auto", "froodi-macros"]
+default-members = ["froodi", "froodi-auto", "froodi-macros"]
 resolver = "2"
 
 [patch.crates-io]

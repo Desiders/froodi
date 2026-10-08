@@ -1,0 +1,13 @@
+error: put `provide::<T>(...)` inside `scope(...) [ ... ]`
+ --> tests/ui/registry/construct_scope_syntax.rs:7:25
+  |
+7 |     let _ = registry! { provide::<Service>(App) };
+  |                         ^^^^^^^
+
+warning: unused import: `DefaultScope::App`
+ --> tests/ui/registry/construct_scope_syntax.rs:1:24
+  |
+1 | use froodi::{registry, DefaultScope::App};
+  |                        ^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default

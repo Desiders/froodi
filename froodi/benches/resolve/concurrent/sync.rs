@@ -1,7 +1,8 @@
 #![allow(dead_code)]
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
-use froodi::{registry, Container, DefaultScope::*, Inject, InjectTransient};
+use froodi::registry;
+use froodi::{Container, DefaultScope::*, Inject, InjectTransient};
 use std::{
     sync::{
         atomic::{AtomicU64, Ordering},

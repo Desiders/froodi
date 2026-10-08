@@ -1,0 +1,23 @@
+error[E0277]: cannot resolve `String` in a synchronous instantiator: its selected registration is async
+  --> tests/ui/registry/typed_async_in_sync.rs:12:23
+   |
+12 |     let _ = container.get::<String>();
+   |                       ^^^ `String` requires async construction
+   |
+   = note: make the dependent instantiator async
+help: the trait `SupportsExecution<froodi::registry::linking::SyncExecution, String>` is not implemented for `froodi::async_impl::typed_registration::AsyncProvider<String>`
+      but trait `SupportsExecution<froodi::registry::linking::AsyncExecution, String>` is implemented for it
+  --> src/async_impl/typed_registration.rs
+   |
+   | impl<Out, Request> SupportsExecution<AsyncExecution, Request> for AsyncProvider<Out> {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = help: for that trait implementation, expected `froodi::registry::linking::AsyncExecution`, found `froodi::registry::linking::SyncExecution`
+   = note: required for `froodi::macros_utils::typed::Node<froodi::macros_utils::typed::Node<froodi::registry::linking::Provider<u32>, froodi::async_impl::typed_registration::AsyncProvider<String>>, froodi::macros_utils::typed::Node<froodi::registry::linking::Provider<froodi::Container>, froodi::async_impl::typed_registration::AsyncProvider<froodi::async_impl::Container>>>` to implement `froodi::registry::linking::SyncProviderPath<String, froodi::registry::linking::L<froodi::registry::linking::R<froodi::registry::linking::Here>>>`
+note: required by a bound in `froodi::TypedContainerExt::get`
+  --> src/typed_container.rs
+   |
+   |     fn get<Dep: SendSafety + SyncSafety + 'static>(&self) -> Result<RcThreadSafety<Dep>, ResolveErrorKind>
+   |        --- required by a bound in this associated function
+   |     where
+   |         Self::Providers: SyncProviderPath<Dep, Path>;
+   |                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `TypedContainerExt::get`

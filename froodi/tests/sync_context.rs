@@ -4,32 +4,28 @@ extern crate alloc;
 
 use froodi::utils::thread_safety::RcThreadSafety;
 use froodi::{
-    registry, Config, Container, Context,
-    DefaultScope::{Action, App, Request, Step},
-    Inject,
+    registry, Container, Context,
+    DefaultScope::{Action, App, Step},
 };
 
 // `Provided` is never registered in any registry; resolvable ONLY via Context.
 #[derive(PartialEq, Eq, Debug)]
 struct Provided(u32);
-
 #[derive(PartialEq, Eq, Debug)]
 struct Marker(u32);
-
-struct Other(u32);
+struct Other;
+struct ActionOther(u32);
 
 fn registry_without_provided() -> froodi::Registry {
     registry! {
         scope(App) [
-            provide(|| Ok(Other(1))),
-        ],
-        scope(Request) [
-            provide(|Inject(o): Inject<Other>| Ok(Other(o.0 + 1))),
+            provide(|| Ok(Other)),
         ],
         scope(Action) [
-            provide(|| Ok(Other(100)), config = Config::default()),
+            provide(|| Ok(ActionOther(100))),
         ],
     }
+    .into_registry()
 }
 
 #[test]
@@ -133,7 +129,7 @@ fn test_with_scope_and_context_injects_context() {
     assert_eq!(got.0, 123);
 
     // Resolving an Action-provided dep confirms the descend landed on Action.
-    let other = action.get::<Other>().unwrap();
+    let other = action.get::<ActionOther>().unwrap();
     assert_eq!(other.0, 100);
 
     let got2 = action.get::<Provided>().unwrap();

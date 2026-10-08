@@ -1,0 +1,13 @@
+error[E0603]: module `instantiator` is private
+ --> tests/ui/registry/forged_executor.rs:3:21
+  |
+3 |     let _ = froodi::instantiator::linked::ErasedInstantiator {
+  |                     ^^^^^^^^^^^^          ------------------ struct `ErasedInstantiator` is not publicly re-exported
+  |                     |
+  |                     private module
+  |
+note: the module `instantiator` is defined here
+ --> src/lib.rs
+  |
+  | pub(crate) mod instantiator;
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^

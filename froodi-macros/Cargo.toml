@@ -1,0 +1,30 @@
+[package]
+name = "froodi-macros"
+version = "1.0.0"
+edition = "2021"
+authors = ["Desiders"]
+license = "Apache-2.0"
+repository = "https://github.com/Desiders/froodi"
+
+description = "Procedural macros for Froodi and froodi-auto"
+keywords = ["macros", "syn", "ioc", "di", "dependency-injection"]
+categories = ["no-std", "development-tools", "config"]
+
+rust-version = "1.68.2"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[lib]
+proc-macro = true
+
+[dependencies]
+prettyplease = "0.2"
+proc-macro2 = "1.0"
+proc-macro-crate = "3"
+quote = "1.0"
+syn = { version = "2.0", features = ["full"] }
+
+[dev-dependencies]
+froodi = { version = "1.0.0-beta", path = "../froodi", default-features = false, features = ["std", "thread_safe"] }

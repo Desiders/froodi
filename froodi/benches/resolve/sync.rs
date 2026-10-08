@@ -1,7 +1,8 @@
 #![allow(dead_code)]
 
 use criterion::{criterion_group, criterion_main, Criterion};
-use froodi::{registry, utils::thread_safety::RcThreadSafety, Container, DefaultScope::*, Inject, InjectTransient};
+use froodi::registry;
+use froodi::{utils::thread_safety::RcThreadSafety, Container, DefaultScope::*, Inject, InjectTransient};
 
 fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("sync_get_single", |b| {

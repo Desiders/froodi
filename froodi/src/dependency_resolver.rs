@@ -1,9 +1,11 @@
 #[cfg(feature = "async")]
 use core::future::Future;
+use core::slice::Iter;
 
 use super::errors::ResolveErrorKind;
 #[cfg(feature = "async")]
 use crate::async_impl::Container as AsyncContainer;
+use crate::registry::RegistrationId;
 use crate::{any::TypeInfo, utils::thread_safety::SendSafety, Container};
 
 pub trait DependencyResolver: Sized {
@@ -13,6 +15,21 @@ pub trait DependencyResolver: Sized {
 
     #[cfg(feature = "async")]
     fn resolve_async(container: &AsyncContainer) -> impl Future<Output = Result<Self, Self::Error>> + SendSafety;
+
+    // Custom resolvers remain opaque and consume no linked edge.
+    #[doc(hidden)]
+    fn resolve_linked(container: &Container, _: &mut Iter<'_, RegistrationId>) -> Result<Self, Self::Error> {
+        Self::resolve(container)
+    }
+
+    #[cfg(feature = "async")]
+    #[doc(hidden)]
+    fn resolve_async_linked(
+        container: &AsyncContainer,
+        _: &mut Iter<'_, RegistrationId>,
+    ) -> impl Future<Output = Result<Self, Self::Error>> + SendSafety {
+        Self::resolve_async(container)
+    }
 
     #[inline]
     #[must_use]
@@ -47,6 +64,22 @@ macro_rules! impl_dependency_resolver {
             async fn resolve_async(container: &AsyncContainer) -> Result<Self, Self::Error> {
                 Ok(($($ty::resolve_async(container).await.map_err(Into::into)?,)*))
             }
+
+            #[inline]
+            #[allow(unused_variables)]
+            fn resolve_linked(container: &Container, edges: &mut Iter<'_, RegistrationId>) -> Result<Self, Self::Error> {
+                Ok(($($ty::resolve_linked(container, edges).map_err(Into::into)?,)*))
+            }
+
+            #[inline]
+            #[allow(unused_variables)]
+            #[cfg(feature = "async")]
+            async fn resolve_async_linked(
+                container: &AsyncContainer,
+                edges: &mut Iter<'_, RegistrationId>,
+            ) -> Result<Self, Self::Error> {
+                Ok(($($ty::resolve_async_linked(container, edges).await.map_err(Into::into)?,)*))
+            }
         }
     };
 }
@@ -76,7 +109,6 @@ mod tests {
     use tracing_test::traced_test;
 
     struct Request;
-
     #[derive(Clone)]
     struct Instance;
 
@@ -84,6 +116,7 @@ mod tests {
     #[allow(dead_code)]
     fn test_dependency_resolver_impls() {
         fn resolver<T: DependencyResolver>() {}
+
         fn resolver_with_dep<Dep: Send + Sync + 'static>() {
             resolver::<Inject<Dep>>();
             resolver::<InjectTransient<Dep>>();

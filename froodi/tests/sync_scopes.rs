@@ -29,6 +29,7 @@ fn build_registry() -> froodi::Registry {
             provide(|| Ok(StepDep(4))),
         ],
     }
+    .into_registry()
 }
 
 #[test]

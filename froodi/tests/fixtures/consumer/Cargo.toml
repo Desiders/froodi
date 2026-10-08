@@ -1,0 +1,32 @@
+[package]
+name = "froodi-public-consumer"
+default-run = "froodi-public-consumer"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[[bin]]
+name = "static-scope"
+path = "src/bin/static_scope.rs"
+required-features = ["external-scopes"]
+
+[[bin]]
+name = "invalid-async-instantiator"
+path = "src/bin/invalid_async_instantiator.rs"
+required-features = ["async"]
+
+[[bin]]
+name = "fragments"
+path = "src/bin/fragments.rs"
+required-features = ["external-scopes"]
+
+[features]
+async = ["di/async", "dep:tokio"]
+external-scopes = ["dep:scope-support"]
+
+[dependencies]
+di = { package = "froodi", version = "=1.0.0-beta.18" }
+tokio = { version = "1", features = ["rt", "macros"], optional = true }
+scope-support = { path = "scope_support", optional = true }

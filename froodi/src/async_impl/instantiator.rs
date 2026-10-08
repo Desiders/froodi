@@ -3,9 +3,13 @@ use core::{any::Any, future::Future};
 use tracing::debug;
 
 use super::{
-    service::{service_fn, BoxCloneService},
+    service::{service_fn, BoxCloneService, Service},
     Container,
 };
+mod linked;
+
+use self::linked::ErasedInstantiator;
+use crate::registry::RegistrationId;
 use crate::{
     dependency::Dependency,
     dependency_resolver::DependencyResolver,
@@ -22,6 +26,27 @@ where
     type Error: Into<InstantiateErrorKind>;
 
     fn instantiate(&mut self, dependencies: Deps) -> impl Future<Output = Result<Self::Provides, Self::Error>> + SendSafety;
+
+    #[doc(hidden)]
+    fn instantiate_linked(
+        &self,
+        container: &Container,
+        edges: &[RegistrationId],
+    ) -> impl Future<Output = Result<Self::Provides, InstantiatorErrorKind<ResolveErrorKind, InstantiateErrorKind>>> + SendSafety
+    where
+        Self: SendSafety,
+    {
+        let mut instantiator = self.clone();
+        async move {
+            let dependencies = Deps::resolve_async_linked(container, &mut edges.iter())
+                .await
+                .map_err(|err| InstantiatorErrorKind::Deps(err.into()))?;
+            instantiator
+                .instantiate(dependencies)
+                .await
+                .map_err(|err| InstantiatorErrorKind::Factory(err.into()))
+        }
+    }
 
     fn dependencies() -> BTreeSet<Dependency>;
 }
@@ -99,6 +124,33 @@ macro_rules! impl_instantiator {
 
 all_the_tuples!(impl_instantiator);
 
+#[derive(Clone)]
+pub(crate) enum RegistrationInstantiator {
+    Runtime(BoxedCloneInstantiator<ResolveErrorKind, InstantiateErrorKind>),
+    Linked(ErasedInstantiator),
+}
+
+impl From<BoxedCloneInstantiator<ResolveErrorKind, InstantiateErrorKind>> for RegistrationInstantiator {
+    fn from(inst: BoxedCloneInstantiator<ResolveErrorKind, InstantiateErrorKind>) -> Self {
+        Self::Runtime(inst)
+    }
+}
+
+impl RegistrationInstantiator {
+    #[allow(clippy::manual_async_fn)]
+    pub(crate) fn call(
+        &self,
+        container: Container,
+    ) -> impl Future<Output = Result<Box<dyn Any>, InstantiatorErrorKind<ResolveErrorKind, InstantiateErrorKind>>> + SendSafety + '_ {
+        async move {
+            match self {
+                Self::Runtime(inst) => Service::call(&mut inst.clone(), container).await,
+                Self::Linked(inst) => inst.call(container).await,
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     extern crate std;
@@ -106,7 +158,7 @@ mod tests {
     use super::{boxed_instantiator, DependencyResolver, InstantiateErrorKind, Instantiator};
     use crate::{
         async_impl::{service::Service as _, Container},
-        async_registry,
+        registry,
         scope::DefaultScope::*,
         utils::thread_safety::RcThreadSafety,
         Inject, InjectTransient,
@@ -127,6 +179,7 @@ mod tests {
     #[allow(dead_code)]
     fn test_factory_helper() {
         fn resolver<Deps: DependencyResolver, F: Instantiator<Deps>>(_f: F) {}
+
         fn resolver_with_dep<Deps: DependencyResolver>() {
             resolver(async || Ok::<_, InstantiateErrorKind>(()));
         }
@@ -154,11 +207,11 @@ mod tests {
             }
         });
 
-        let container = Container::new(async_registry! {
+        let container = Container::new(registry! {
             scope(App) [
                 provide({
                     let instantiator_request_call_count = instantiator_request_call_count.clone();
-                    move |()| {
+                    move || {
                         let instantiator_request_call_count = instantiator_request_call_count.clone();
 
                         async move {
@@ -203,11 +256,11 @@ mod tests {
             }
         });
 
-        let container = Container::new(async_registry! {
+        let container = Container::new(registry! {
             scope(App) [
                 provide({
                     let instantiator_request_call_count = instantiator_request_call_count.clone();
-                    move |()| {
+                    move || {
                         let instantiator_request_call_count = instantiator_request_call_count.clone();
 
                         async move {

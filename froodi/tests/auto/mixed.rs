@@ -4,7 +4,7 @@ extern crate alloc;
 
 use froodi::{
     async_impl::Container,
-    async_registry,
+    registry,
     utils::thread_safety::RcThreadSafety,
     Config,
     DefaultScope::{App, Request, Session},
@@ -17,7 +17,6 @@ use froodi_auto::{
 
 #[derive(Debug)]
 struct D;
-
 struct C;
 
 #[injectable]
@@ -61,7 +60,7 @@ fn test_entries_count() {
 
 #[tokio::test]
 async fn test_entries() {
-    let container = Container::new_with_start_scope(async_registry! {}.provide_auto_registries_with_sync(), Request);
+    let container = Container::new_with_start_scope(registry! {}.into_registry().provide_auto_registries_with_sync(), Request);
 
     container.get::<C>().await.unwrap();
     container.get::<B>().await.unwrap();

@@ -1,7 +1,8 @@
 #![allow(dead_code)]
 
 use criterion::{criterion_group, criterion_main, Criterion};
-use froodi::{registry, utils::thread_safety::RcThreadSafety, Container, DefaultScope::*};
+use froodi::registry;
+use froodi::{utils::thread_safety::RcThreadSafety, Container, DefaultScope::*};
 
 fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("sync_new", |b| {
@@ -29,29 +30,27 @@ fn criterion_benchmark(c: &mut Criterion) {
         });
     })
     .bench_function("sync_child_start_scope", |b| {
-        let runtime_container = Container::new_with_start_scope(
-            registry! {
-                scope(Runtime) [
-                    provide(|| Ok(())),
-                ],
-                scope(App) [
-                    provide(|| Ok(((), ()))),
-                ],
-                scope(Session) [
-                    provide(|| Ok(((), (), ()))),
-                ],
-                scope(Request) [
-                    provide(|| Ok(((), (), (), ()))),
-                ],
-                scope(Action) [
-                    provide(|| Ok(((), (), (), (), ()))),
-                ],
-                scope(Step) [
-                    provide(|| Ok(((), (), (), (), (), ()))),
-                ],
-            },
-            Runtime,
-        );
+        let registry = registry! {
+            scope(Runtime) [
+                provide(|| Ok(())),
+            ],
+            scope(App) [
+                provide(|| Ok(((), ()))),
+            ],
+            scope(Session) [
+                provide(|| Ok(((), (), ()))),
+            ],
+            scope(Request) [
+                provide(|| Ok(((), (), (), ()))),
+            ],
+            scope(Action) [
+                provide(|| Ok(((), (), (), (), ()))),
+            ],
+            scope(Step) [
+                provide(|| Ok(((), (), (), (), (), ()))),
+            ],
+        };
+        let runtime_container = Container::new_with_start_scope(registry, Runtime);
         b.iter(|| {
             let app_container = runtime_container.clone().enter().with_scope(App).build().unwrap();
             let session_container = app_container.enter().with_scope(Session).build().unwrap();

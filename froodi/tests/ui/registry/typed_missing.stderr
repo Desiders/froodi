@@ -1,0 +1,77 @@
+error[E0277]: no synchronous registration provides `Missing`
+ --> tests/ui/registry/typed_missing.rs:7:23
+  |
+7 |     let _ = container.get::<Missing>();
+  |                       ^^^ `Missing` is requested here, but no sync provider is available
+  |
+  = help: the trait `froodi::registry::linking::ProviderPath<Missing, _>` is not implemented for `froodi::macros_utils::typed::Node<froodi::registry::linking::Provider<u32>, froodi::macros_utils::typed::Node<froodi::registry::linking::Provider<froodi::Container>, froodi::async_impl::typed_registration::AsyncProvider<froodi::async_impl::Container>>>`
+  = note: register a sync factory or instance(...), or use async_impl::TypedContainer for async providers
+help: `froodi::macros_utils::typed::Node<Left, Right>` implements trait `froodi::registry::linking::ProviderPath<T, Path>`
+ --> src/registry/linking.rs
+  |
+  | impl<T, Path, Left: ProviderPath<T, Path>, Right> ProviderPath<T, L<Path>> for Node<Left, Right> {
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `froodi::registry::linking::ProviderPath<T, froodi::registry::linking::L<Path>>`
+...
+  | impl<T, Path, Left: Size, Right: ProviderPath<T, Path>> ProviderPath<T, R<Path>> for Node<Left, Right> {
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `froodi::registry::linking::ProviderPath<T, froodi::registry::linking::R<Path>>`
+  = note: required for `froodi::macros_utils::typed::Node<froodi::registry::linking::Provider<u32>, froodi::macros_utils::typed::Node<froodi::registry::linking::Provider<froodi::Container>, froodi::async_impl::typed_registration::AsyncProvider<froodi::async_impl::Container>>>` to implement `froodi::registry::linking::SyncProviderPath<Missing, _>`
+note: required by a bound in `froodi::TypedContainerExt::get`
+ --> src/typed_container.rs
+  |
+  |     fn get<Dep: SendSafety + SyncSafety + 'static>(&self) -> Result<RcThreadSafety<Dep>, ResolveErrorKind>
+  |        --- required by a bound in this associated function
+  |     where
+  |         Self::Providers: SyncProviderPath<Dep, Path>;
+  |                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `TypedContainerExt::get`
+
+error[E0277]: no synchronous registration provides `Missing`
+ --> tests/ui/registry/typed_missing.rs:8:23
+  |
+8 |     let _ = container.get_transient::<Missing>();
+  |                       ^^^^^^^^^^^^^ `Missing` is requested here, but no sync provider is available
+  |
+  = help: the trait `froodi::registry::linking::ProviderPath<Missing, _>` is not implemented for `froodi::macros_utils::typed::Node<froodi::registry::linking::Provider<u32>, froodi::macros_utils::typed::Node<froodi::registry::linking::Provider<froodi::Container>, froodi::async_impl::typed_registration::AsyncProvider<froodi::async_impl::Container>>>`
+  = note: register a sync factory or instance(...), or use async_impl::TypedContainer for async providers
+help: `froodi::macros_utils::typed::Node<Left, Right>` implements trait `froodi::registry::linking::ProviderPath<T, Path>`
+ --> src/registry/linking.rs
+  |
+  | impl<T, Path, Left: ProviderPath<T, Path>, Right> ProviderPath<T, L<Path>> for Node<Left, Right> {
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `froodi::registry::linking::ProviderPath<T, froodi::registry::linking::L<Path>>`
+...
+  | impl<T, Path, Left: Size, Right: ProviderPath<T, Path>> ProviderPath<T, R<Path>> for Node<Left, Right> {
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `froodi::registry::linking::ProviderPath<T, froodi::registry::linking::R<Path>>`
+  = note: required for `froodi::macros_utils::typed::Node<froodi::registry::linking::Provider<u32>, froodi::macros_utils::typed::Node<froodi::registry::linking::Provider<froodi::Container>, froodi::async_impl::typed_registration::AsyncProvider<froodi::async_impl::Container>>>` to implement `froodi::registry::linking::SyncProviderPath<Missing, _>`
+note: required by a bound in `froodi::TypedContainerExt::get_transient`
+ --> src/typed_container.rs
+  |
+  |     fn get_transient<Dep: 'static>(&self) -> Result<Dep, ResolveErrorKind>
+  |        ------------- required by a bound in this associated function
+  |     where
+  |         Self::Providers: SyncProviderPath<Dep, Path>;
+  |                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `TypedContainerExt::get_transient`
+
+error[E0277]: no synchronous registration provides `Missing`
+ --> tests/ui/registry/typed_missing.rs:9:54
+  |
+9 |     let _ = container.clone().enter_build().unwrap().get::<Missing>();
+  |                                                      ^^^ `Missing` is requested here, but no sync provider is available
+  |
+  = help: the trait `froodi::registry::linking::ProviderPath<Missing, _>` is not implemented for `froodi::macros_utils::typed::Node<froodi::registry::linking::Provider<u32>, froodi::macros_utils::typed::Node<froodi::registry::linking::Provider<froodi::Container>, froodi::async_impl::typed_registration::AsyncProvider<froodi::async_impl::Container>>>`
+  = note: register a sync factory or instance(...), or use async_impl::TypedContainer for async providers
+help: `froodi::macros_utils::typed::Node<Left, Right>` implements trait `froodi::registry::linking::ProviderPath<T, Path>`
+ --> src/registry/linking.rs
+  |
+  | impl<T, Path, Left: ProviderPath<T, Path>, Right> ProviderPath<T, L<Path>> for Node<Left, Right> {
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `froodi::registry::linking::ProviderPath<T, froodi::registry::linking::L<Path>>`
+...
+  | impl<T, Path, Left: Size, Right: ProviderPath<T, Path>> ProviderPath<T, R<Path>> for Node<Left, Right> {
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `froodi::registry::linking::ProviderPath<T, froodi::registry::linking::R<Path>>`
+  = note: required for `froodi::macros_utils::typed::Node<froodi::registry::linking::Provider<u32>, froodi::macros_utils::typed::Node<froodi::registry::linking::Provider<froodi::Container>, froodi::async_impl::typed_registration::AsyncProvider<froodi::async_impl::Container>>>` to implement `froodi::registry::linking::SyncProviderPath<Missing, _>`
+note: required by a bound in `froodi::TypedContainerExt::get`
+ --> src/typed_container.rs
+  |
+  |     fn get<Dep: SendSafety + SyncSafety + 'static>(&self) -> Result<RcThreadSafety<Dep>, ResolveErrorKind>
+  |        --- required by a bound in this associated function
+  |     where
+  |         Self::Providers: SyncProviderPath<Dep, Path>;
+  |                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `TypedContainerExt::get`

@@ -13,7 +13,6 @@ use froodi_auto::{entry_getters::__ENTRY_GETTERS, injectable, AutoRegistries as 
 
 #[derive(Debug)]
 struct D;
-
 struct C;
 
 #[injectable]
@@ -56,7 +55,7 @@ fn test_entries_count() {
 
 #[test]
 fn test_entries() {
-    let container = Container::new_with_start_scope(registry! {}.provide_auto_registries(), Request);
+    let container = Container::new_with_start_scope(registry! {}.into_registry().provide_auto_registries(), Request);
 
     container.get::<C>().unwrap();
     container.get::<B>().unwrap();

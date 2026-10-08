@@ -7,4 +7,4 @@ pub use registry::AutoRegistries;
 pub use registry::AutoRegistriesWithSync;
 
 #[cfg(feature = "macros")]
-pub use froodi_auto_macros::injectable;
+pub use froodi_macros::injectable;

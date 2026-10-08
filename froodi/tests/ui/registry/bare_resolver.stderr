@@ -1,0 +1,36 @@
+error[E0277]: unsupported instantiator parameter `Custom`; use `InjectCustom<Custom>` for a custom resolver
+  --> tests/ui/registry/bare_resolver.rs:19:28
+   |
+19 |       let _ = Container::new(registry! {
+   |  _____________--------------_^
+   | |             |
+   | |             required by a bound introduced by this call
+20 | |         provide(App, |_: Custom| Ok::<_, InstantiateErrorKind>(7u32)),
+21 | |     });
+   | |_____^ wrap this custom resolver in `InjectCustom<Custom>`
+   |
+help: the trait `froodi::registry::linking::LinkDependency<froodi::macros_utils::typed::Node<froodi::registry::linking::Provider<u32>, froodi::macros_utils::typed::Node<froodi::registry::linking::Provider<froodi::Container>, froodi::async_impl::typed_registration::AsyncProvider<froodi::async_impl::Container>>>, _>` is not implemented for `Custom`
+  --> tests/ui/registry/bare_resolver.rs:3:1
+   |
+ 3 | struct Custom;
+   | ^^^^^^^^^^^^^
+   = note: registration parameters use Inject<T>, InjectTransient<T> or InjectCustom<T>
+help: the following other types implement trait `froodi::registry::linking::LinkDependency<Root, Path>`
+  --> src/registry/linking.rs
+   |
+   | impl<Root: ProviderPath<T, Path>, T, Path> LinkDependency<Root, LinkedInject<Path>> for Inject<T> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Inject<T>` implements `froodi::registry::linking::LinkDependency<Root, froodi::registry::linking::LinkedInject<Path>>`
+...
+   | impl<Root: ProviderPath<T, Path>, T, Path> LinkDependency<Root, LinkedInjectTransient<Path>> for InjectTransient<T> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `InjectTransient<T>` implements `froodi::registry::linking::LinkDependency<Root, froodi::registry::linking::LinkedInjectTransient<Path>>`
+...
+   | impl<Root, T> LinkDependency<Root, ByInjectCustom> for InjectCustom<T> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `InjectCustom<T>` implements `froodi::registry::linking::LinkDependency<Root, froodi::registry::linking::ByInjectCustom>`
+   = note: required for `(Custom,)` to implement `froodi::registry::linking::LinkDependencies<froodi::macros_utils::typed::Node<froodi::registry::linking::Provider<u32>, froodi::macros_utils::typed::Node<froodi::registry::linking::Provider<froodi::Container>, froodi::async_impl::typed_registration::AsyncProvider<froodi::async_impl::Container>>>, (_,)>`
+   = note: required for `froodi::registry::registration::Registration<u32, {closure@$DIR/tests/ui/registry/bare_resolver.rs:20:22: 20:33}, (Custom,), froodi::macros_utils::typed::NoFinalizer>` to implement `froodi::registry::linking::Link<froodi::macros_utils::typed::Node<froodi::registry::linking::Provider<u32>, froodi::macros_utils::typed::Node<froodi::registry::linking::Provider<froodi::Container>, froodi::async_impl::typed_registration::AsyncProvider<froodi::async_impl::Container>>>, (_,)>`
+   = note: required for `froodi::macros_utils::typed::Registry<froodi::macros_utils::typed::LocatedRegistration<froodi::registry::registration::Registration<u32, {closure@$DIR/tests/ui/registry/bare_resolver.rs:20:22: 20:33}, (Custom,), froodi::macros_utils::typed::NoFinalizer>, __FroodiRegistrationSource>>` to implement `froodi::registry::frontend::IntoRegistry<((_,), ((), ()))>`
+note: required by a bound in `froodi::Container::new`
+  --> src/container.rs
+   |
+   |     pub fn new<Links>(registry: impl IntoRegistry<Links>) -> Self {
+   |                                      ^^^^^^^^^^^^^^^^^^^ required by this bound in `Container::new`

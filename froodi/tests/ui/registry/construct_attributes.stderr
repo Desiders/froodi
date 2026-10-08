@@ -1,0 +1,35 @@
+error: Construct field `Unsupported.value`: expected `inject` or `inject_transient`; registration options belong in `registry!`
+ --> tests/ui/registry/construct_attributes.rs:5:10
+  |
+5 |     #[di(optional)]
+  |          ^^^^^^^^
+
+error: Construct field `Conflicting.value`: dependency mode specified more than once; choose either `inject` or `inject_transient`
+  --> tests/ui/registry/construct_attributes.rs:11:18
+   |
+11 |     #[di(inject, inject_transient)]
+   |                  ^^^^^^^^^^^^^^^^
+
+error: Construct field `Repeated.value`: dependency mode specified more than once; choose either `inject` or `inject_transient`
+  --> tests/ui/registry/construct_attributes.rs:18:10
+   |
+18 |     #[di(inject_transient)]
+   |          ^^^^^^^^^^^^^^^^
+
+error: Construct field `Arguments.value`: dependency modes take no arguments; use `#[di(inject)]` or `#[di(inject_transient)]`
+  --> tests/ui/registry/construct_attributes.rs:24:17
+   |
+24 |     #[di(inject = true)]
+   |                 ^
+
+error: Construct accepts `#[di(inject)]` and `#[di(inject_transient)]` on fields only; registration options belong in `registry!`
+  --> tests/ui/registry/construct_attributes.rs:29:1
+   |
+29 | #[di(scope = App)]
+   | ^
+
+error: Construct field `FieldPolicy.value`: expected `inject` or `inject_transient`; registration options belong in `registry!`
+  --> tests/ui/registry/construct_attributes.rs:34:10
+   |
+34 |     #[di(config = ())]
+   |          ^^^^^^
