@@ -1,7 +1,0 @@
-[package]
-name = "sync_provide"
-version = "1.0.0"
-edition = "2024"
-
-[dependencies]
-froodi = { path = "../../froodi" }

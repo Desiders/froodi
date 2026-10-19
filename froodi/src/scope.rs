@@ -15,6 +15,30 @@ pub trait Scope: Ord + Into<ScopeData> {
     }
 }
 
+/// Adds compile-time scope checks to typed registrations.
+///
+/// Implementing this trait also supplies the [`Scope`] methods from `DATA`.
+/// [`DATA`](Self::DATA) must match the [`ScopeData`] produced by every value of
+/// this type. Distinct scope types share a [`Scopes`] family; [`DefaultScope`]
+/// remains dynamic. Registration syntax is unchanged.
+pub trait StaticScope: Ord + Into<ScopeData> {
+    const DATA: ScopeData;
+}
+
+impl<S: StaticScope> Scope for S {
+    fn name(&self) -> &'static str {
+        Self::DATA.name
+    }
+
+    fn priority(&self) -> u8 {
+        Self::DATA.priority
+    }
+
+    fn is_skipped_by_default(&self) -> bool {
+        Self::DATA.is_skipped_by_default
+    }
+}
+
 pub trait Scopes<const N: usize> {
     type Scope;
 
@@ -82,6 +106,12 @@ pub struct ScopeData {
     pub priority: u8,
     pub name: &'static str,
     pub is_skipped_by_default: bool,
+}
+
+impl ScopeData {
+    pub(crate) const fn can_access(&self, dependency: &Self) -> bool {
+        dependency.priority <= self.priority
+    }
 }
 
 impl Display for ScopeData {

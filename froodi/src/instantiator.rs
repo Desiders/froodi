@@ -1,12 +1,16 @@
+mod linked;
+
 use alloc::{boxed::Box, collections::btree_set::BTreeSet};
 use core::any::Any;
+use linked::ErasedInstantiator;
 use tracing::debug;
 
 use super::{
     dependency_resolver::DependencyResolver,
     errors::{InstantiateErrorKind, InstantiatorErrorKind},
-    service::{service_fn, BoxCloneService},
+    service::{service_fn, BoxCloneService, Service},
 };
+use crate::registry::RegistrationId;
 use crate::{
     dependency::Dependency,
     utils::thread_safety::{SendSafety, SyncSafety},
@@ -24,6 +28,18 @@ where
 
     #[must_use]
     fn dependencies() -> BTreeSet<Dependency>;
+
+    #[doc(hidden)]
+    fn instantiate_linked(
+        &self,
+        container: &Container,
+        edges: &[RegistrationId],
+    ) -> Result<Self::Provides, InstantiatorErrorKind<ResolveErrorKind, InstantiateErrorKind>> {
+        let dependencies = Deps::resolve_linked(container, &mut edges.iter()).map_err(|err| InstantiatorErrorKind::Deps(err.into()))?;
+        self.clone()
+            .instantiate(dependencies)
+            .map_err(|err| InstantiatorErrorKind::Factory(err.into()))
+    }
 }
 
 pub(crate) type BoxedCloneInstantiator<DepsErr, FactoryErr> =
@@ -133,6 +149,27 @@ macro_rules! boxed {
     }};
 }
 
+#[derive(Clone)]
+pub(crate) enum RegistrationInstantiator {
+    Runtime(BoxedCloneInstantiator<ResolveErrorKind, InstantiateErrorKind>),
+    Linked(ErasedInstantiator),
+}
+
+impl From<BoxedCloneInstantiator<ResolveErrorKind, InstantiateErrorKind>> for RegistrationInstantiator {
+    fn from(inst: BoxedCloneInstantiator<ResolveErrorKind, InstantiateErrorKind>) -> Self {
+        Self::Runtime(inst)
+    }
+}
+
+impl RegistrationInstantiator {
+    pub(crate) fn call(&self, container: Container) -> Result<Box<dyn Any>, InstantiatorErrorKind<ResolveErrorKind, InstantiateErrorKind>> {
+        match self {
+            Self::Runtime(inst) => Service::call(&mut inst.clone(), container),
+            Self::Linked(inst) => inst.call(container),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     extern crate std;
@@ -162,6 +199,7 @@ mod tests {
     #[allow(dead_code)]
     fn test_factory_helper() {
         fn resolver<Deps: DependencyResolver, F: Instantiator<Deps>>(_f: F) {}
+
         fn resolver_with_dep<Deps: DependencyResolver>() {
             resolver(|| Ok::<_, InstantiateErrorKind>(()));
         }

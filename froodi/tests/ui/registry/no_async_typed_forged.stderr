@@ -1,0 +1,9 @@
+error[E0451]: fields `inner` and `marker` of struct `TypedContainer` are private
+ --> tests/ui/registry/typed_forged.rs
+  |
+  |     let _ = TypedContainer::<()> {
+  |             -------------------- in this type
+  |         inner: Container::new(registry!()),
+  |         ^^^^^ private field
+  |         marker: PhantomData,
+  |         ^^^^^^ private field

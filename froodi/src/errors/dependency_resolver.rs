@@ -5,6 +5,9 @@ use crate::{any::TypeInfo, scope::ScopeData};
 
 #[derive(thiserror::Error, Debug)]
 pub enum ResolveErrorKind {
+    #[cfg(feature = "async")]
+    #[error("Registration for {type_info:?} requires an async Container")]
+    AsyncRequired { type_info: TypeInfo },
     #[error("Instantiator for {type_info:?} not found in registry")]
     NoInstantiator { type_info: TypeInfo },
     #[error(

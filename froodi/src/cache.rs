@@ -91,7 +91,6 @@ mod tests {
 
     #[derive(Debug, PartialEq, Eq)]
     struct Foo(u32);
-
     #[derive(Debug, PartialEq, Eq)]
     struct Bar(u32);
 

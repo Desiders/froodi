@@ -1,0 +1,5 @@
+error: Construct field `Service.value`: Inject fields require Arc<T>, Rc<T>, or RcThreadSafety<T> with one type argument; select #[di(inject_transient)] for InjectTransient resolution
+ --> tests/ui/registry/construct_unsupported.rs:2:25
+  |
+2 | struct Service { value: String }
+  |                         ^^^^^^

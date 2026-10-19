@@ -1,0 +1,25 @@
+error[E0277]: a typed container requires concrete registrations in typed fragments
+ --> tests/ui/registry/typed_boundaries.rs:4:33
+  |
+4 |     let _ = TypedContainer::new(registry! { provide(App, declare::<u32>()) });
+  |             ------------------- ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `froodi::registry::frontend::TypedRegistry` is not implemented for `froodi::registry::boundary::BoundaryLeaf<u32>`
+  |             |
+  |             required by a bound introduced by this call
+  |
+  = note: use Container::new for native fragments or provider declarations
+help: the following other types implement trait `froodi::registry::frontend::TypedRegistry`
+ --> src/registry/frontend.rs
+  |
+  | impl<Out, Inst, Deps, Fin> TypedRegistry for Registration<Out, Inst, Deps, Fin> {}
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `froodi::registry::registration::Registration<Out, Inst, Deps, Fin>`
+  |
+ ::: src/async_impl/typed_registration.rs
+  |
+  | impl<Out, Inst, Deps, Fin> TypedRegistry for AsyncRegistration<Out, Inst, Deps, Fin> {}
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `froodi::async_impl::typed_registration::AsyncRegistration<Out, Inst, Deps, Fin>`
+  = note: required for `froodi::macros_utils::typed::LocatedRegistration<froodi::registry::boundary::BoundaryLeaf<u32>, main::__FroodiRegistrationSource>` to implement `froodi::registry::frontend::TypedRegistry`
+note: required by a bound in `froodi::TypedContainer::new`
+ --> src/typed_container.rs
+  |
+  |     pub fn new<Tree: TypedRegistry, Links>(registry: Registry<Tree>) -> TypedContainer<Index<Tree>>
+  |                      ^^^^^^^^^^^^^ required by this bound in `TypedContainer::new`

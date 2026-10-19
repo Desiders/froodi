@@ -13,6 +13,10 @@ pub enum InstantiatorErrorKind<DepsErr, FactoryErr> {
 
 #[derive(thiserror::Error)]
 pub enum ValidationErrorKind {
+    AsyncDependency {
+        dependent: TypeInfo,
+        dependency: TypeInfo,
+    },
     CyclicDependency {
         graph: (TypeInfo, Box<[TypeInfo]>),
     },
@@ -33,6 +37,12 @@ impl Debug for ValidationErrorKind {
 impl Display for ValidationErrorKind {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
+            ValidationErrorKind::AsyncDependency { dependent, dependency } => write!(
+                f,
+                "Synchronous registration {} depends on async registration {}; use an async instantiator",
+                dependent.short_name(),
+                dependency.short_name()
+            ),
             ValidationErrorKind::CyclicDependency { graph } => {
                 let (type_info, rest) = graph;
                 let short_name = type_info.short_name();

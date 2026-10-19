@@ -4,36 +4,48 @@ mod thread_safe {
     use core::any::Any;
 
     pub trait SendSafety: Send {}
+
     pub trait SyncSafety: Sync {}
 
     impl<T: Send> SendSafety for T {}
+
     impl<T: Sync> SyncSafety for T {}
 
     pub type RcThreadSafety<T> = Arc<T>;
+
     pub type RcAnyThreadSafety = RcThreadSafety<dyn Any + Send + Sync>;
 }
 
 #[cfg(not(feature = "thread_safe"))]
-mod thread_unsafe {
+mod local {
     use alloc::rc::Rc;
     use core::any::Any;
 
     pub trait SendSafety {}
+
     pub trait SyncSafety {}
 
     impl<T> SendSafety for T {}
+
     impl<T> SyncSafety for T {}
 
     pub type RcThreadSafety<T> = Rc<T>;
+
     pub type RcAnyThreadSafety = RcThreadSafety<dyn Any>;
 }
 
 #[cfg(feature = "thread_safe")]
+pub(crate) use thread_safe::RcAnyThreadSafety;
+#[cfg(feature = "thread_safe")]
 pub use thread_safe::RcThreadSafety;
 #[cfg(feature = "thread_safe")]
-pub(crate) use thread_safe::{RcAnyThreadSafety, SendSafety, SyncSafety};
+#[doc(hidden)]
+pub use thread_safe::{SendSafety, SyncSafety};
 
 #[cfg(not(feature = "thread_safe"))]
-pub use thread_unsafe::RcThreadSafety;
+pub(crate) use local::RcAnyThreadSafety;
 #[cfg(not(feature = "thread_safe"))]
-pub(crate) use thread_unsafe::{RcAnyThreadSafety, SendSafety, SyncSafety};
+pub use local::RcThreadSafety;
+#[cfg(not(feature = "thread_safe"))]
+#[doc(hidden)]
+pub use local::{SendSafety, SyncSafety};

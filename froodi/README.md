@@ -30,6 +30,8 @@ It focuses on a small set of DI problems:
 - **Finalizers**. Dependencies can register cleanup logic that runs when a scope is closed.
 - **Sync and async support**. The crate supports both sync and async factories and containers.
 - **Modular registries**. Registries can be split and extended instead of building one large registration block.
+- **Registration checks**. Froodi catches missing or duplicate providers during compilation and can check cycles and static scopes before the app runs.
+- **Explicit construction**. `#[derive(froodi::Construct)]` describes field construction with `Inject` or `InjectTransient`; `provide::<T>()` includes it in a chosen registry and scope.
 - **Auto-registration**. `froodi-auto` can collect providers declared with macros.
 - **Framework integrations**. `axum`, `dptree`, `telers`, and `ruststream` are supported out of the box.
 
@@ -122,7 +124,7 @@ let request_container = app_container.clone().enter_build().unwrap();
 
 5. **Resolve dependencies.**
 
-Use `get::<T>()` for scoped shared dependencies and `get_transient::<T>()` for fresh values.
+Use `get::<T>()` to resolve a dependency using its scope and cache settings, and `get_transient::<T>()` to request a fresh instance.
 
 ```rust
 let handler = request_container.get_transient::<WelcomeHandler>().unwrap();
@@ -215,9 +217,30 @@ fn main() {
 
 7. **(Optional) Add async support or framework integration.**
 
-- For async containers and factories, see [async provide][examples/async_provide]
-- For `froodi-auto`, see [sync auto provide][examples/sync_auto_provide] and [async auto provide][examples/async_auto_provide]
-- For framework integration, see [axum][examples/axum], [dptree][examples/dptree], [telers][examples/telers], and [ruststream][examples/ruststream]
+- For async containers and factories, see [async registration][examples/async_registration]
+- For `froodi-auto`, see [auto registration][examples/auto_registration] and [async auto registration][examples/async_auto_registration]
+- For framework integration, see [axum][examples/axum_integration], [dptree][examples/dptree_integration], [telers][examples/telers_integration], and [ruststream][examples/ruststream_integration]
+
+### Alternative for simple constructors
+
+The `WelcomeHandler` above can use Froodi's `Inject` resolution directly. You can derive `Construct` on that struct:
+
+```rust
+#[derive(froodi::Construct)]
+struct WelcomeHandler {
+    greeter: Arc<Box<dyn Greeter>>,
+}
+```
+
+Then replace its handwritten `provide` registration in `scope(Request)` with:
+
+```rust
+provide::<WelcomeHandler>(),
+```
+
+The derive describes construction; the registry chooses whether to include the type and in which scope. Fields use ordinary `Inject<T>` semantics by default, and `#[di(inject)]` selects the same mode explicitly. For a field that needs a fresh value, use `#[di(inject_transient)]` on its ordinary value type. Scope, `config`, and `finalizer` stay on the registry entry. Use `provide(...)` for fallible, async, or custom construction.
+
+See [Construct registration][examples/construct_registration] for a runnable example using both field modes.
 
 ## Concepts
 
@@ -264,7 +287,7 @@ let session_container = runtime_container.clone().enter().with_scope(Session).bu
 
 The container holds resolved scoped dependencies and is used to access them.
 
-- `get::<T>()` returns a scoped shared dependency
+- `get::<T>()` resolves a dependency using its scope and cache settings
 - `get_transient::<T>()` creates a fresh value
 - `enter_build()` creates the next child scope
 - `close()` runs finalizers for resolved dependencies in that scope
@@ -279,9 +302,31 @@ The registry defines how dependencies are constructed.
 The main registration forms are:
 
 - `provide(scope, factory)`
-- `scope(ScopeName) [ provide(factory), ... ]`
+- `provide::<T>()` for a type with `#[derive(froodi::Construct)]`
+- `scope(ScopeName) [ provide(factory), provide::<T>(), ... ]`
 - `extend(other_registry)`
+- `extend_fragment(infrastructure!(config), services!())` for reusable syntax
 - `instance(value)` for values created outside the container
+
+Use `#[froodi::fragment(name)]` at module scope to save a registry template.
+Parameters accept expressions with inferred types. Dependencies are checked
+together with the surrounding registry.
+
+```rust
+use froodi::{instance, registry, DefaultScope::App};
+
+#[froodi::fragment(configuration(message))]
+registry! {
+    provide(App, instance(message)),
+}
+
+let registry = registry! {
+    extend_fragment(configuration!("Hello".to_owned())),
+};
+```
+
+`extend_fragment` includes reusable syntax; `extend` accepts registry values.
+Use `.into_registry()` on a final composition when you need an erased `Registry`.
 
 ### Finalizer
 
@@ -363,18 +408,43 @@ Important feature flags:
 
 Disable default features if you want to turn off `thread_safe`.
 
+### Registration checks
+
+`registry!` catches missing or duplicate providers while
+compiling. It also catches dependency cycles when you build an application with a
+closed registry. Use `Inject<T>` or `InjectTransient<T>` for ordinary dependencies.
+
+Values supplied later through `Context` or another registry can be declared with
+`declare::<T>()`. Use `InjectCustom<T>` for a custom resolver. Froodi checks these
+runtime boundaries when the container runs. Custom `StaticScope` types can enable
+earlier scope checks; ordinary scope values keep runtime checks.
+
+Use `TypedContainer` when you also want unknown `get::<T>()` requests to fail at
+compile time. For more detail, see the API documentation for [`registry!`][docs-url].
+
+With the `async` feature, the same `registry!` accepts sync and async factories
+together. `async_impl::Container` resolves either kind; `Container` resolves only
+sync providers, even when unrelated async providers are registered.
+Sync factories can depend only on sync providers; async factories can use either.
+
+Use `.into_registry()` to return a composition as `Registry`. The same `Registry`
+can hold sync, async or mixed registrations and be extended into another registry.
+
 ## Examples
 
-- [Sync provide][examples/sync_provide]. Basic sync container setup
-- [Async provide][examples/async_provide]. Basic async container setup
-- [Sync finalizer][examples/sync_finalizer]. Scoped cleanup with sync finalizers
-- [Async finalizer][examples/async_finalizer]. Scoped cleanup with async finalizers
-- [Sync auto provide][examples/sync_auto_provide]. Sync auto-registration with `froodi-auto`
-- [Async auto provide][examples/async_auto_provide]. Async auto-registration with `froodi-auto`
-- [Axum][examples/axum]. Request injection in `axum`
-- [Dptree][examples/dptree]. Endpoint injection in `dptree`
-- [Telers][examples/telers]. Handler injection in `telers`
-- [RustStream][examples/ruststream]. Handler injection in `ruststream`
+- [Registration][examples/registration]. Basic synchronous container setup
+- [Construct registration][examples/construct_registration]. Derive field construction with `Inject` and `InjectTransient`
+- [Fragments][examples/fragments]. Split the greeting example into reusable registrations across modules
+- [Async registration][examples/async_registration]. Sync and async factories in one registry
+- [Finalization][examples/finalization]. Scoped cleanup with synchronous finalizers
+- [Async finalization][examples/async_finalization]. Scoped cleanup with async finalizers
+- [Auto registration][examples/auto_registration]. Synchronous auto-registration with `froodi-auto`
+- [Async auto registration][examples/async_auto_registration]. Async auto-registration with `froodi-auto`
+- [Context][examples/context]. Supply request values through `Context`
+- [Axum integration][examples/axum_integration]. Request injection in `axum`
+- [Dptree integration][examples/dptree_integration]. Endpoint injection in `dptree`
+- [Telers integration][examples/telers_integration]. Handler injection in `telers`
+- [RustStream integration][examples/ruststream_integration]. Handler injection in `ruststream`
 
 Browse the full [examples directory][examples].
 
@@ -391,16 +461,19 @@ Contributions are welcome.
 [Apache License, Version 2.0][license_apache]
 
 [examples]: https://github.com/Desiders/froodi/tree/master/examples
-[examples/sync_provide]: https://github.com/Desiders/froodi/tree/master/examples/sync_provide
-[examples/async_provide]: https://github.com/Desiders/froodi/tree/master/examples/async_provide
-[examples/sync_auto_provide]: https://github.com/Desiders/froodi/tree/master/examples/sync_auto_provide
-[examples/async_auto_provide]: https://github.com/Desiders/froodi/tree/master/examples/async_auto_provide
-[examples/sync_finalizer]: https://github.com/Desiders/froodi/tree/master/examples/sync_finalizer
-[examples/async_finalizer]: https://github.com/Desiders/froodi/tree/master/examples/async_finalizer
-[examples/axum]: https://github.com/Desiders/froodi/tree/master/examples/axum
-[examples/dptree]: https://github.com/Desiders/froodi/tree/master/examples/dptree
-[examples/telers]: https://github.com/Desiders/froodi/tree/master/examples/telers
-[examples/ruststream]: https://github.com/Desiders/froodi/tree/master/examples/ruststream
+[examples/registration]: https://github.com/Desiders/froodi/tree/master/examples/registration
+[examples/construct_registration]: https://github.com/Desiders/froodi/tree/master/examples/construct_registration
+[examples/fragments]: https://github.com/Desiders/froodi/tree/master/examples/fragments
+[examples/async_registration]: https://github.com/Desiders/froodi/tree/master/examples/async_registration
+[examples/auto_registration]: https://github.com/Desiders/froodi/tree/master/examples/auto_registration
+[examples/async_auto_registration]: https://github.com/Desiders/froodi/tree/master/examples/async_auto_registration
+[examples/finalization]: https://github.com/Desiders/froodi/tree/master/examples/finalization
+[examples/async_finalization]: https://github.com/Desiders/froodi/tree/master/examples/async_finalization
+[examples/context]: https://github.com/Desiders/froodi/tree/master/examples/context
+[examples/axum_integration]: https://github.com/Desiders/froodi/tree/master/examples/axum_integration
+[examples/dptree_integration]: https://github.com/Desiders/froodi/tree/master/examples/dptree_integration
+[examples/telers_integration]: https://github.com/Desiders/froodi/tree/master/examples/telers_integration
+[examples/ruststream_integration]: https://github.com/Desiders/froodi/tree/master/examples/ruststream_integration
 
 [docs-badge]: https://docs.rs/froodi/badge.svg
 [docs-url]: https://docs.rs/froodi

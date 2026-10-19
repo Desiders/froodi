@@ -15,10 +15,8 @@ use alloc::{
 
 #[derive(Debug)]
 struct Missing;
-
 #[derive(Debug)]
 struct RequestOnly;
-
 #[derive(Debug)]
 struct DependsOnRequestOnly(#[allow(dead_code)] RcThreadSafety<RequestOnly>);
 

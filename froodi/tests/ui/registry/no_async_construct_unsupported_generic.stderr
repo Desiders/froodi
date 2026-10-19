@@ -1,0 +1,199 @@
+error[E0277]: Construct field `Vec<u32>` cannot use Inject resolution
+ --> tests/ui/registry/no_async_construct_unsupported_generic.rs:7:71
+  |
+7 |     let _ = Container::new(froodi::registry! { scope(App) [ provide::<Bad<u32>>() ] });
+  |                                                                       ^^^^^^^^ the trait `froodi::macros_utils::typed::ConstructField<u32>` is not implemented for `Vec<u32>`
+  |
+  = note: Inject fields use Arc<T> in thread-safe mode or Rc<T> in local mode; select #[di(inject_transient)] for InjectTransient resolution, or write provide(...)
+help: `Arc<T>` implements trait `froodi::macros_utils::typed::ConstructField<Dep>`
+ --> src/provide.rs
+  |
+  | impl<T> ConstructField<T> for RcThreadSafety<T> {
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `froodi::macros_utils::typed::ConstructField<T>`
+...
+  | impl<T: ?Sized> ConstructField<RcThreadSafety<T>> for RcThreadSafety<T> {
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `froodi::macros_utils::typed::ConstructField<Arc<T>>`
+note: required for `Bad<u32>` to implement `Construct`
+ --> tests/ui/registry/no_async_construct_unsupported_generic.rs:4:8
+  |
+3 | #[derive(froodi::Construct)]
+  |          ----------------- type parameter would need to implement `Construct`
+4 | struct Bad<T> { values: Vec<T> }
+  |        ^^^^^^
+  = help: consider manually implementing `Construct` to avoid undesired bounds caused by "imperfect derives"
+  = note: to learn more, visit <https://github.com/rust-lang/rust/issues/26925>
+note: required by a bound in `froodi::provide`
+ --> src/provide.rs
+  |
+  | pub fn provide<T: Construct>() -> impl Instantiator<T::Deps, Provides = T, Error = InstantiateErrorKind> + SendSafety + SyncSafety {
+  |                   ^^^^^^^^^ required by this bound in `provide`
+
+error[E0277]: Construct field `Vec<u32>` cannot use Inject resolution
+ --> tests/ui/registry/no_async_construct_unsupported_generic.rs:7:28
+  |
+7 |     let _ = Container::new(froodi::registry! { scope(App) [ provide::<Bad<u32>>() ] });
+  |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `froodi::macros_utils::typed::ConstructField<u32>` is not implemented for `Vec<u32>`
+  |
+  = note: Inject fields use Arc<T> in thread-safe mode or Rc<T> in local mode; select #[di(inject_transient)] for InjectTransient resolution, or write provide(...)
+help: `Arc<T>` implements trait `froodi::macros_utils::typed::ConstructField<Dep>`
+ --> src/provide.rs
+  |
+  | impl<T> ConstructField<T> for RcThreadSafety<T> {
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `froodi::macros_utils::typed::ConstructField<T>`
+...
+  | impl<T: ?Sized> ConstructField<RcThreadSafety<T>> for RcThreadSafety<T> {
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `froodi::macros_utils::typed::ConstructField<Arc<T>>`
+note: required for `Bad<u32>` to implement `Construct`
+ --> tests/ui/registry/no_async_construct_unsupported_generic.rs:4:8
+  |
+3 | #[derive(froodi::Construct)]
+  |          ----------------- type parameter would need to implement `Construct`
+4 | struct Bad<T> { values: Vec<T> }
+  |        ^^^^^^
+  = help: consider manually implementing `Construct` to avoid undesired bounds caused by "imperfect derives"
+  = note: to learn more, visit <https://github.com/rust-lang/rust/issues/26925>
+note: required by a bound in `froodi::provide`
+ --> src/provide.rs
+  |
+  | pub fn provide<T: Construct>() -> impl Instantiator<T::Deps, Provides = T, Error = InstantiateErrorKind> + SendSafety + SyncSafety {
+  |                   ^^^^^^^^^ required by this bound in `provide`
+  = note: this error originates in the macro `froodi::registry` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: `provide(...)` requires a Froodi instantiator; `impl froodi::Instantiator<<Bad<u32> as Construct>::Deps, Provides = Bad<u32>, Error = InstantiateErrorKind> + SendSafety + SyncSafety` is not supported
+ --> tests/ui/registry/no_async_construct_unsupported_generic.rs:7:28
+  |
+7 |     let _ = Container::new(froodi::registry! { scope(App) [ provide::<Bad<u32>>() ] });
+  |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |                            |
+  |                            `impl froodi::Instantiator<<Bad<u32> as Construct>::Deps, Provides = Bad<u32>, Error = InstantiateErrorKind> + SendSafety + SyncSafety` doesn't satisfy the trait bound
+  |                            expected an instantiator returning `Result<T, InstantiateErrorKind>` (or a future returning it for async registration)
+  |
+  = help: the trait `froodi::registry::registration::Provide<froodi::registry::linking::SyncExecution, _, _>` is not implemented for `impl froodi::Instantiator<<Bad<u32> as Construct>::Deps, Provides = Bad<u32>, Error = InstantiateErrorKind> + SendSafety + SyncSafety`
+  = note: instantiators must be Clone + 'static, with resolvable parameters and Error = InstantiateErrorKind
+note: required by a bound in `froodi::macros_utils::typed::reg`
+ --> src/registry/registration.rs
+  |
+  | pub fn reg<Inst: Provide<Execution, Deps, Fin>, Execution, Deps, Fin>(
+  |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `reg`
+  = note: this error originates in the macro `froodi::registry` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: Construct field `Vec<u32>` cannot use Inject resolution
+ --> tests/ui/registry/no_async_construct_unsupported_generic.rs:7:28
+  |
+7 |     let _ = Container::new(froodi::registry! { scope(App) [ provide::<Bad<u32>>() ] });
+  |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `froodi::macros_utils::typed::ConstructField<u32>` is not implemented for `Vec<u32>`
+  |
+  = note: Inject fields use Arc<T> in thread-safe mode or Rc<T> in local mode; select #[di(inject_transient)] for InjectTransient resolution, or write provide(...)
+help: `Arc<T>` implements trait `froodi::macros_utils::typed::ConstructField<Dep>`
+ --> src/provide.rs
+  |
+  | impl<T> ConstructField<T> for RcThreadSafety<T> {
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `froodi::macros_utils::typed::ConstructField<T>`
+...
+  | impl<T: ?Sized> ConstructField<RcThreadSafety<T>> for RcThreadSafety<T> {
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `froodi::macros_utils::typed::ConstructField<Arc<T>>`
+note: required for `Bad<u32>` to implement `Construct`
+ --> tests/ui/registry/no_async_construct_unsupported_generic.rs:4:8
+  |
+3 | #[derive(froodi::Construct)]
+  |          ----------------- type parameter would need to implement `Construct`
+4 | struct Bad<T> { values: Vec<T> }
+  |        ^^^^^^
+  = help: consider manually implementing `Construct` to avoid undesired bounds caused by "imperfect derives"
+  = note: to learn more, visit <https://github.com/rust-lang/rust/issues/26925>
+note: required by a bound in `froodi::provide`
+ --> src/provide.rs
+  |
+  | pub fn provide<T: Construct>() -> impl Instantiator<T::Deps, Provides = T, Error = InstantiateErrorKind> + SendSafety + SyncSafety {
+  |                   ^^^^^^^^^ required by this bound in `provide`
+  = note: this error originates in the macro `$crate::macros_utils::typed::registry` which comes from the expansion of the macro `froodi::registry` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: Construct field `Vec<u32>` cannot use Inject resolution
+ --> tests/ui/registry/no_async_construct_unsupported_generic.rs:7:28
+  |
+7 |     let _ = Container::new(froodi::registry! { scope(App) [ provide::<Bad<u32>>() ] });
+  |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `froodi::macros_utils::typed::ConstructField<u32>` is not implemented for `Vec<u32>`
+  |
+  = note: Inject fields use Arc<T> in thread-safe mode or Rc<T> in local mode; select #[di(inject_transient)] for InjectTransient resolution, or write provide(...)
+help: `Arc<T>` implements trait `froodi::macros_utils::typed::ConstructField<Dep>`
+ --> src/provide.rs
+  |
+  | impl<T> ConstructField<T> for RcThreadSafety<T> {
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `froodi::macros_utils::typed::ConstructField<T>`
+...
+  | impl<T: ?Sized> ConstructField<RcThreadSafety<T>> for RcThreadSafety<T> {
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `froodi::macros_utils::typed::ConstructField<Arc<T>>`
+note: required for `Bad<u32>` to implement `Construct`
+ --> tests/ui/registry/no_async_construct_unsupported_generic.rs:4:8
+  |
+3 | #[derive(froodi::Construct)]
+  |          ----------------- type parameter would need to implement `Construct`
+4 | struct Bad<T> { values: Vec<T> }
+  |        ^^^^^^
+  = help: consider manually implementing `Construct` to avoid undesired bounds caused by "imperfect derives"
+  = note: to learn more, visit <https://github.com/rust-lang/rust/issues/26925>
+note: required by a bound in `froodi::provide`
+ --> src/provide.rs
+  |
+  | pub fn provide<T: Construct>() -> impl Instantiator<T::Deps, Provides = T, Error = InstantiateErrorKind> + SendSafety + SyncSafety {
+  |                   ^^^^^^^^^ required by this bound in `provide`
+  = note: this error originates in the macro `froodi::registry` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: Construct field `Vec<u32>` cannot use Inject resolution
+ --> tests/ui/registry/no_async_construct_unsupported_generic.rs:7:13
+  |
+7 |     let _ = Container::new(froodi::registry! { scope(App) [ provide::<Bad<u32>>() ] });
+  |             ^^^^^^^^^^^^^^ the trait `froodi::macros_utils::typed::ConstructField<u32>` is not implemented for `Vec<u32>`
+  |
+  = note: Inject fields use Arc<T> in thread-safe mode or Rc<T> in local mode; select #[di(inject_transient)] for InjectTransient resolution, or write provide(...)
+help: `Arc<T>` implements trait `froodi::macros_utils::typed::ConstructField<Dep>`
+ --> src/provide.rs
+  |
+  | impl<T> ConstructField<T> for RcThreadSafety<T> {
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `froodi::macros_utils::typed::ConstructField<T>`
+...
+  | impl<T: ?Sized> ConstructField<RcThreadSafety<T>> for RcThreadSafety<T> {
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `froodi::macros_utils::typed::ConstructField<Arc<T>>`
+note: required for `Bad<u32>` to implement `Construct`
+ --> tests/ui/registry/no_async_construct_unsupported_generic.rs:4:8
+  |
+3 | #[derive(froodi::Construct)]
+  |          ----------------- type parameter would need to implement `Construct`
+4 | struct Bad<T> { values: Vec<T> }
+  |        ^^^^^^
+  = help: consider manually implementing `Construct` to avoid undesired bounds caused by "imperfect derives"
+  = note: to learn more, visit <https://github.com/rust-lang/rust/issues/26925>
+note: required by a bound in `froodi::provide`
+ --> src/provide.rs
+  |
+  | pub fn provide<T: Construct>() -> impl Instantiator<T::Deps, Provides = T, Error = InstantiateErrorKind> + SendSafety + SyncSafety {
+  |                   ^^^^^^^^^ required by this bound in `provide`
+
+error[E0277]: the trait bound `impl froodi::Instantiator<<Bad<u32> as Construct>::Deps, Provides = Bad<u32>, Error = InstantiateErrorKind> + SendSafety + SyncSafety: froodi::Instantiator<_>` is not satisfied
+ --> tests/ui/registry/no_async_construct_unsupported_generic.rs:7:28
+  |
+7 |     let _ = Container::new(froodi::registry! { scope(App) [ provide::<Bad<u32>>() ] });
+  |             -------------- ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ unsatisfied trait bound
+  |             |
+  |             required by a bound introduced by this call
+  |
+  = help: the trait `froodi::Instantiator<_>` is not implemented for `impl froodi::Instantiator<<Bad<u32> as Construct>::Deps, Provides = Bad<u32>, Error = InstantiateErrorKind> + SendSafety + SyncSafety`
+help: the trait `froodi::registry::frontend::IntoRegistry<Links>` is conditionally implemented for `froodi::macros_utils::typed::Registry<Tree>`
+ --> src/registry/frontend.rs
+  |
+  | / impl<Tree, Links> IntoRegistry<Links> for Registry<Tree>
+  | | where
+  | |     Root<Tree>: RegistryIndex + Link<Index<Tree>, Links>,
+  | |     <Root<Tree> as Link<Index<Tree>, Links>>::Linked: Collect,
+  | |_______________________________________________________-------^
+  |                                                         |
+  |                                                         unsatisfied requirement introduced here: `<froodi::macros_utils::typed::Node<froodi::macros_utils::typed::LocatedRegistration<froodi::registry::registration::Registration<_, impl froodi::Instantiator<<Bad<u32> as Construct>::Deps, Provides = Bad<u32>, Error = InstantiateErrorKind> + SendSafety + SyncSafety, _, froodi::macros_utils::typed::NoFinalizer>, __FroodiRegistrationSource>, froodi::registry::frontend::ContainerLeaf> as froodi::registry::linking::Link<<froodi::macros_utils::typed::Node<froodi::macros_utils::typed::LocatedRegistration<froodi::registry::registration::Registration<_, impl froodi::Instantiator<<Bad<u32> as Construct>::Deps, Provides = Bad<u32>, Error = InstantiateErrorKind> + SendSafety + SyncSafety, _, froodi::macros_utils::typed::NoFinalizer>, __FroodiRegistrationSource>, froodi::registry::frontend::ContainerLeaf> as froodi::registry::linking::RegistryIndex>::Index, (_, ())>>::Linked: froodi::registry::frontend::Collect`
+  = note: required for `froodi::registry::registration::Linked<_, impl froodi::Instantiator<<Bad<u32> as Construct>::Deps, Provides = Bad<u32>, Error = InstantiateErrorKind> + SendSafety + SyncSafety, _, froodi::macros_utils::typed::NoFinalizer>` to implement `froodi::registry::frontend::Collect`
+  = note: 1 redundant requirement hidden
+  = note: required for `froodi::macros_utils::typed::Node<froodi::registry::registration::Linked<_, impl froodi::Instantiator<<Bad<u32> as Construct>::Deps, Provides = Bad<u32>, Error = InstantiateErrorKind> + SendSafety + SyncSafety, _, froodi::macros_utils::typed::NoFinalizer>, froodi::registry::frontend::ContainerLeaf>` to implement `froodi::registry::frontend::Collect`
+  = note: required for `froodi::macros_utils::typed::Registry<froodi::macros_utils::typed::LocatedRegistration<froodi::registry::registration::Registration<_, impl froodi::Instantiator<<Bad<u32> as Construct>::Deps, Provides = Bad<u32>, Error = InstantiateErrorKind> + SendSafety + SyncSafety, _, froodi::macros_utils::typed::NoFinalizer>, __FroodiRegistrationSource>>` to implement `froodi::registry::frontend::IntoRegistry<(_, ())>`
+note: required by a bound in `Container::new`
+ --> src/container.rs
+  |
+  |     pub fn new<Links>(registry: impl IntoRegistry<Links>) -> Self {
+  |                                      ^^^^^^^^^^^^^^^^^^^ required by this bound in `Container::new`

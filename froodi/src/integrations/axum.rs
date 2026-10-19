@@ -21,7 +21,7 @@ use tracing::error;
 use crate::async_impl::Container as AsyncContainer;
 use crate::{
     utils::future::BoxFuture,
-    Container,
+    Container, Context as InjectionContext,
     DefaultScope::{Request as RequestScope, Session as SessionScope},
     Inject, InjectTransient, ResolveErrorKind, Scope,
 };
@@ -118,7 +118,7 @@ where
     fn call(&mut self, request: Request<ResBody>) -> Self::Future {
         let (parts, body) = request.into_parts();
         let is_websocket = is_websocket_request(&parts);
-        let mut context = crate::Context::new();
+        let mut context = InjectionContext::new();
         context.insert(parts.clone());
         let mut request = Request::from_parts(parts, body);
 
@@ -194,7 +194,7 @@ where
     fn call(&mut self, request: Request<ResBody>) -> Self::Future {
         let (parts, body) = request.into_parts();
         let is_websocket = is_websocket_request(&parts);
-        let mut context = crate::Context::new();
+        let mut context = InjectionContext::new();
         context.insert(parts.clone());
         let mut request = Request::from_parts(parts, body);
 
@@ -468,8 +468,6 @@ mod tests {
     #[cfg(feature = "async")]
     use super::{setup_async_default, AsyncContainer};
     use super::{setup_default, Container, Inject, InjectTransient};
-    #[cfg(feature = "async")]
-    use crate::async_registry;
     use crate::{
         registry,
         DefaultScope::{App, Request, Session},
@@ -524,7 +522,7 @@ mod tests {
             ],
         });
         #[cfg(feature = "async")]
-        let async_container = AsyncContainer::new(async_registry! {
+        let async_container = AsyncContainer::new(registry! {
             scope(Request) [
                 provide(async |Inject(cfg): Inject<Config>| Ok(cfg.num + 1)),
             ],
@@ -598,7 +596,7 @@ mod tests {
             ],
         });
         #[cfg(feature = "async")]
-        let async_container = AsyncContainer::new(async_registry! {
+        let async_container = AsyncContainer::new(registry! {
             scope(Session) [
                 provide(async |Inject(cfg): Inject<Config>| Ok(cfg.num + 1)),
             ],
@@ -643,6 +641,7 @@ mod tests {
                 provide(|| Ok(Config { num: 1 })),
             ],
             scope(Request) [
+                provide(crate::declare::<Parts>()),
                 provide(|Inject(cfg): Inject<Config>, Inject(_parts): Inject<Parts>| Ok(cfg.num + 1)),
             ],
         });

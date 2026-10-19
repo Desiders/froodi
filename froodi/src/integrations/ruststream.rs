@@ -320,8 +320,6 @@ mod tests {
     #[cfg(feature = "async")]
     use super::{AsyncContainer, AsyncContainerLayer};
     use super::{Container, ContainerLayer, Inject, InjectTransient};
-    #[cfg(feature = "async")]
-    use crate::async_registry;
     use crate::{
         instance, registry,
         utils::thread_safety::RcThreadSafety,
@@ -358,9 +356,7 @@ mod tests {
     struct Greeter {
         counters: Counters,
     }
-
     struct SessionGreeter;
-
     struct Unregistered;
 
     fn build_container(counters: &Counters) -> Container {
@@ -385,7 +381,7 @@ mod tests {
 
     #[cfg(feature = "async")]
     fn build_async_container(counters: &Counters) -> AsyncContainer {
-        AsyncContainer::new(async_registry! {
+        AsyncContainer::new(registry! {
             scope(Request) [
                 provide(
                     |Inject(counters): Inject<Counters>| async move {
