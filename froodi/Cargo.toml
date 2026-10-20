@@ -1,6 +1,6 @@
 [package]
 name = "froodi"
-version = "1.0.0-beta.19"
+version = "1.0.0-beta.20"
 edition = "2021"
 authors = ["Desiders"]
 license = "Apache-2.0"
@@ -19,7 +19,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 [features]
 default = ["std", "thread_safe"]
 
-std = ["anyhow/std", "thiserror/std", "tracing/std", "telers?/std"]
+std = ["anyhow/std", "thiserror/std", "tracing/std"]
 
 thread_safe = []
 lock-parking-lot = ["thread_safe", "std", "dep:parking_lot"]
@@ -32,7 +32,7 @@ http2-axum = ["dep:h2", "axum", "axum/http2"]
 
 dptree = ["dep:dptree", "thread_safe", "std"]
 
-telers = ["dep:telers", "thread_safe", "std"]
+telers = ["dep:telers", "telers/serde", "thread_safe", "std"]
 
 ruststream = ["dep:ruststream", "thread_safe", "tokio/rt", "std"]
 
@@ -45,7 +45,7 @@ h2 = { version = "0.4", optional = true }
 parking_lot = { version = "0.12", default-features = false, optional = true }
 spin = { version = "0.12", features = ["mutex", "rwlock", "spin_mutex"], default-features = false, optional = true }
 ruststream = { version = "0.7", default-features = false, optional = true }
-telers = { version = ">= 1.0.0-beta.1, < 1.0.0", default-features = false, optional = true }
+telers = { version = ">= 1.0.0-beta.10, < 1.0.0", default-features = false, optional = true }
 thiserror = { version = "2.0", default-features = false }
 tokio = { version = "1", default-features = false, optional = true }
 tower-layer = { version = "0.3", optional = true }

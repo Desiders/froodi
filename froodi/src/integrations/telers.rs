@@ -1,9 +1,8 @@
 use alloc::string::ToString as _;
 use core::future::Future;
 use telers::{
-    errors::{EventErrorKind, ExtractionError},
-    event::{telegram::HandlerResponse, EventReturn},
-    middlewares::{outer::MiddlewareResponse, InnerMiddleware, Next, OuterMiddleware},
+    errors::ExtractionError,
+    middlewares::{OuterMiddleware, OuterMiddlewareResult, OuterNext},
     Extractor, Request, Router,
 };
 
@@ -25,91 +24,78 @@ impl From<InjectErrorKind> for ExtractionError {
     }
 }
 
-macro_rules! impl_setup {
-    (
-        $OuterStructName:ident,
-        $InnerStructName:ident,
-        $ContainerType:ty
-    ) => {
-        #[derive(Clone)]
-        pub struct $OuterStructName<WithScope> {
-            container: $ContainerType,
-            scope: WithScope,
-        }
-
-        #[derive(Clone)]
-        pub struct $InnerStructName;
-
-        impl<Client, WithScope> OuterMiddleware<Client> for $OuterStructName<WithScope>
-        where
-            Client: Send,
-            WithScope: Scope + Clone + Send + Sync + 'static,
-        {
-            fn call(
-                &mut self,
-                mut request: Request<Client>,
-            ) -> impl Future<Output = Result<MiddlewareResponse<Client>, EventErrorKind>> + Send {
-                let mut context = Context::new();
-                context.insert(request.update.clone());
-
-                let container = self
-                    .container
-                    .clone()
-                    .enter()
-                    .with_scope(self.scope.clone())
-                    .with_context(context)
-                    .build()
-                    .unwrap();
-                request.extensions.insert(container);
-
-                async move { Ok((request, EventReturn::Finish)) }
-            }
-        }
-    };
+#[derive(Clone)]
+pub struct ContainerOuterMiddleware<WithScope> {
+    container: Container,
+    scope: WithScope,
 }
 
-impl_setup!(ContainerOuterMiddleware, ContainerInnerMiddleware, Container);
-
-impl<Client> InnerMiddleware<Client> for ContainerInnerMiddleware
+impl<Client, WithScope> OuterMiddleware<Client> for ContainerOuterMiddleware<WithScope>
 where
-    Client: Send,
+    Client: Send + Sync + 'static,
+    WithScope: Scope + Clone + Send + Sync + 'static,
 {
     fn call(
         &mut self,
-        request: Request<Client>,
-        next: Next<Client>,
-    ) -> impl Future<Output = Result<HandlerResponse<Client>, EventErrorKind>> + Send {
-        let container_option = request.extensions.get::<Container>().cloned();
+        mut request: Request<Client>,
+        next: OuterNext<Client>,
+    ) -> impl Future<Output = OuterMiddlewareResult<Client>> + Send {
+        let mut context = Context::new();
+        context.insert(request.update.clone());
+
+        let container = self
+            .container
+            .clone()
+            .enter()
+            .with_scope(self.scope.clone())
+            .with_context(context)
+            .build()
+            .unwrap();
+        request.extensions.insert(container.clone());
+
         async move {
-            let resp = next(request).await;
-            if let Some(container) = container_option {
-                container.close();
-            }
-            resp
+            let result = next(request).await;
+            container.close();
+            result
         }
     }
 }
 
 #[cfg(feature = "async")]
-impl_setup!(AsyncContainerOuterMiddleware, AsyncContainerInnerMiddleware, AsyncContainer);
+#[derive(Clone)]
+pub struct AsyncContainerOuterMiddleware<WithScope> {
+    container: AsyncContainer,
+    scope: WithScope,
+}
 
 #[cfg(feature = "async")]
-impl<Client> InnerMiddleware<Client> for AsyncContainerInnerMiddleware
+impl<Client, WithScope> OuterMiddleware<Client> for AsyncContainerOuterMiddleware<WithScope>
 where
-    Client: Send,
+    Client: Send + Sync + 'static,
+    WithScope: Scope + Clone + Send + Sync + 'static,
 {
     fn call(
         &mut self,
-        request: Request<Client>,
-        next: Next<Client>,
-    ) -> impl Future<Output = Result<HandlerResponse<Client>, EventErrorKind>> + Send {
-        let container_option = request.extensions.get::<AsyncContainer>().cloned();
+        mut request: Request<Client>,
+        next: OuterNext<Client>,
+    ) -> impl Future<Output = OuterMiddlewareResult<Client>> + Send {
+        let mut context = Context::new();
+        context.insert(request.update.clone());
+
+        let container = self
+            .container
+            .clone()
+            .enter()
+            .with_scope(self.scope.clone())
+            .with_context(context)
+            .build()
+            .unwrap();
+        request.extensions.insert(container.clone());
+
         async move {
-            let resp = next(request).await;
-            if let Some(container) = container_option {
-                container.close().await;
-            }
-            resp
+            let result = next(request).await;
+            container.close().await;
+            result
         }
     }
 }
@@ -233,9 +219,7 @@ where
     WithScope: Scope + Clone + Send + Sync + 'static,
     Client: Send + Sync + 'static,
 {
-    router
-        .on_all(|observer| observer.register_inner_middleware(ContainerInnerMiddleware))
-        .on_update(|observer| observer.register_outer_middleware(ContainerOuterMiddleware { container, scope }))
+    router.on_update_middleware(ContainerOuterMiddleware { container, scope })
 }
 
 #[inline]
@@ -255,9 +239,7 @@ where
     WithScope: Scope + Clone + Send + Sync + 'static,
     Client: Send + Sync + 'static,
 {
-    router
-        .on_all(|observer| observer.register_inner_middleware(AsyncContainerInnerMiddleware))
-        .on_update(|observer| observer.register_outer_middleware(AsyncContainerOuterMiddleware { container, scope }))
+    router.on_update_middleware(AsyncContainerOuterMiddleware { container, scope })
 }
 
 #[inline]
@@ -268,4 +250,98 @@ where
     Client: Send + Sync + 'static,
 {
     setup_async(router, container, RequestScope)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{registry, InstantiateErrorKind};
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+    use telers::{
+        client::Reqwest,
+        errors::EventErrorKind,
+        event::bases::PropagateEventResult,
+        router::Response,
+        types::{ChatPrivate, MessageText, Update, UpdateMessage},
+        Bot, Extensions,
+    };
+
+    fn request() -> Request<Reqwest> {
+        Request {
+            update: Arc::new(Update::Message(UpdateMessage::new(
+                0,
+                MessageText::new(0, 0, ChatPrivate::new(0), ""),
+            ))),
+            bot: Bot::default(),
+            context: telers::Context::default(),
+            extensions: Extensions::default(),
+        }
+    }
+
+    #[tokio::test]
+    async fn closes_request_scope_after_unhandled_and_failed_routing() {
+        let finalized = Arc::new(AtomicUsize::new(0));
+        let finalizer_count = finalized.clone();
+        let container = Container::new(registry! {
+            provide(RequestScope, || Ok::<_, InstantiateErrorKind>(42u32), finalizer = move |_: Arc<u32>| {
+                finalizer_count.fetch_add(1, Ordering::SeqCst);
+            }),
+        });
+        let mut middleware = ContainerOuterMiddleware {
+            container,
+            scope: RequestScope,
+        };
+
+        let unhandled: OuterNext<Reqwest> = Box::new(|request| {
+            Box::pin(async move {
+                let request_container = request.extensions.get::<Container>().unwrap();
+                assert_eq!(*request_container.get::<u32>().unwrap(), 42);
+                Ok(Response::new(request, PropagateEventResult::Unhandled))
+            })
+        });
+        assert!(middleware.call(request(), unhandled).await.is_ok());
+        assert_eq!(finalized.load(Ordering::SeqCst), 1);
+
+        let failed: OuterNext<Reqwest> = Box::new(|request| {
+            Box::pin(async move {
+                let request_container = request.extensions.get::<Container>().unwrap();
+                assert_eq!(*request_container.get::<u32>().unwrap(), 42);
+                Err((EventErrorKind::Extraction(ExtractionError::new("test")), request))
+            })
+        });
+        assert!(middleware.call(request(), failed).await.is_err());
+        assert_eq!(finalized.load(Ordering::SeqCst), 2);
+    }
+
+    #[cfg(feature = "async")]
+    #[tokio::test]
+    async fn closes_async_request_scope_after_unhandled_routing() {
+        let finalized = Arc::new(AtomicUsize::new(0));
+        let finalizer_count = finalized.clone();
+        let container = AsyncContainer::new(registry! {
+            provide(RequestScope, || async { Ok::<_, InstantiateErrorKind>(42u32) }, finalizer = move |_: Arc<u32>| {
+                let finalizer_count = finalizer_count.clone();
+                async move {
+                    finalizer_count.fetch_add(1, Ordering::SeqCst);
+                }
+            }),
+        });
+        let mut middleware = AsyncContainerOuterMiddleware {
+            container,
+            scope: RequestScope,
+        };
+
+        let unhandled: OuterNext<Reqwest> = Box::new(|request| {
+            Box::pin(async move {
+                let request_container = request.extensions.get::<AsyncContainer>().unwrap();
+                assert_eq!(*request_container.get::<u32>().await.unwrap(), 42);
+                Ok(Response::new(request, PropagateEventResult::Unhandled))
+            })
+        });
+        assert!(middleware.call(request(), unhandled).await.is_ok());
+        assert_eq!(finalized.load(Ordering::SeqCst), 1);
+    }
 }
