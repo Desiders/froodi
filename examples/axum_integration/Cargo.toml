@@ -5,5 +5,5 @@ edition = "2024"
 
 [dependencies]
 axum = { version = "0.8" }
-froodi = { path = "../../froodi", features = ["axum"] }
-tokio = { version = "1.36", features = ["rt", "macros"] }
+froodi = { path = "../../froodi", features = ["axum", "async"] }
+tokio = { version = "1.36", features = ["rt-multi-thread", "macros"] }

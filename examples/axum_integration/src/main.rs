@@ -1,67 +1,59 @@
-use axum::{Router, extract::Path, routing::get};
+#![allow(unused)]
+
+use axum::{Router, routing::get};
 use froodi::{
-    Container,
+    Construct,
     DefaultScope::{App, Request},
     Inject,
-    axum::setup_default,
-    boxed, instance, registry,
+    async_impl::Container,
+    axum::setup_async_default,
+    boxed, registry,
 };
 use std::sync::Arc;
 use tokio::net::TcpListener;
 
-trait Greeter: Send + Sync {
-    fn greet(&self, name: &str) -> String;
+#[derive(Construct)]
+struct APIClient;
+
+#[derive(Construct)]
+struct Conn;
+
+trait UserDao: Send + Sync {}
+
+struct MemoryUserDao {
+    conn: Arc<Conn>,
 }
 
-#[derive(Clone)]
-struct Config {
-    greeting: String,
+impl UserDao for MemoryUserDao {}
+
+#[derive(Construct)]
+struct Service {
+    #[di(inject)]
+    client: Arc<APIClient>,
+    #[di(inject_transient)]
+    dao: Box<dyn UserDao>,
 }
 
-struct GreetingService {
-    greeting: String,
-}
+async fn handler(Inject(_service): Inject<Service>) {}
 
-impl Greeter for GreetingService {
-    fn greet(&self, name: &str) -> String {
-        format!("{}, {name}!", self.greeting)
-    }
-}
-
-struct WelcomeHandler {
-    greeter: Arc<Box<dyn Greeter>>,
-}
-
-impl WelcomeHandler {
-    fn handle(&self, name: &str) -> String {
-        self.greeter.greet(name)
-    }
-}
-
-fn build_container(cfg: Config) -> Container {
-    Container::new(registry! {
-        provide(App, instance(cfg)),
-        scope(Request) [
-            provide(|Inject(cfg): Inject<Config>| Ok(boxed!(GreetingService { greeting: cfg.greeting.clone() }; Greeter))),
-            provide(|Inject(greeter)| Ok(WelcomeHandler { greeter })),
-        ],
-    })
-}
-
-async fn handler(Path(name): Path<String>, Inject(handler): Inject<WelcomeHandler>) -> String {
-    handler.handle(&name)
-}
-
-#[tokio::main(flavor = "current_thread")]
+#[tokio::main]
 async fn main() {
-    let app_container = build_container(Config {
-        greeting: "Hello".to_owned(),
-    });
+    let registry = registry! {
+        scope(App) [
+            provide::<APIClient>()
+        ],
+        scope(Request) [
+            provide::<Conn>(),
+            provide(|Inject(conn)| Ok(boxed!(MemoryUserDao { conn }; UserDao))),
+            provide::<Service>(),
+        ]
+    };
+    let container = Container::new(registry);
 
-    let router = Router::new().route("/{name}", get(handler));
-    let router = setup_default(router, app_container.clone());
+    let router = Router::new().route("/", get(handler));
+    let router = setup_async_default(router, container.clone());
     let listener = TcpListener::bind("0.0.0.0:3000").await.unwrap();
     axum::serve(listener, router).await.unwrap();
 
-    app_container.close();
+    container.close().await;
 }

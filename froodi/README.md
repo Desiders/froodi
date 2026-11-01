@@ -433,13 +433,9 @@ can hold sync, async or mixed registrations and be extended into another registr
 ## Examples
 
 - [Registration][examples/registration]. Basic synchronous container setup
-- [Construct registration][examples/construct_registration]. Derive field construction with `Inject` and `InjectTransient`
 - [Fragments][examples/fragments]. Split the greeting example into reusable registrations across modules
 - [Async registration][examples/async_registration]. Sync and async factories in one registry
 - [Finalization][examples/finalization]. Scoped cleanup with synchronous finalizers
-- [Async finalization][examples/async_finalization]. Scoped cleanup with async finalizers
-- [Auto registration][examples/auto_registration]. Synchronous auto-registration with `froodi-auto`
-- [Async auto registration][examples/async_auto_registration]. Async auto-registration with `froodi-auto`
 - [Context][examples/context]. Supply request values through `Context`
 - [Axum integration][examples/axum_integration]. Request injection in `axum`
 - [Dptree integration][examples/dptree_integration]. Endpoint injection in `dptree`
@@ -462,13 +458,9 @@ Contributions are welcome.
 
 [examples]: https://github.com/Desiders/froodi/tree/master/examples
 [examples/registration]: https://github.com/Desiders/froodi/tree/master/examples/registration
-[examples/construct_registration]: https://github.com/Desiders/froodi/tree/master/examples/construct_registration
 [examples/fragments]: https://github.com/Desiders/froodi/tree/master/examples/fragments
 [examples/async_registration]: https://github.com/Desiders/froodi/tree/master/examples/async_registration
-[examples/auto_registration]: https://github.com/Desiders/froodi/tree/master/examples/auto_registration
-[examples/async_auto_registration]: https://github.com/Desiders/froodi/tree/master/examples/async_auto_registration
 [examples/finalization]: https://github.com/Desiders/froodi/tree/master/examples/finalization
-[examples/async_finalization]: https://github.com/Desiders/froodi/tree/master/examples/async_finalization
 [examples/context]: https://github.com/Desiders/froodi/tree/master/examples/context
 [examples/axum_integration]: https://github.com/Desiders/froodi/tree/master/examples/axum_integration
 [examples/dptree_integration]: https://github.com/Desiders/froodi/tree/master/examples/dptree_integration

@@ -1,51 +1,36 @@
+#![allow(unused)]
+
 use dptree::Endpoint;
 use froodi::{
-    Container,
+    Construct, Container,
     DefaultScope::{App, Request},
     Inject, boxed,
     dptree::{Injectable, MapInject, setup_default},
-    instance, registry,
+    registry,
 };
 use std::ops::ControlFlow;
 use std::sync::Arc;
 
-trait Greeter: Send + Sync {
-    fn greet(&self, name: &str) -> String;
+#[derive(Construct)]
+struct APIClient;
+
+#[derive(Construct)]
+struct Conn;
+
+trait UserDao: Send + Sync {}
+
+struct MemoryUserDao {
+    conn: Arc<Conn>,
 }
 
-#[derive(Clone)]
-struct Config {
-    greeting: String,
-}
+impl UserDao for MemoryUserDao {}
 
-struct GreetingService {
-    greeting: String,
-}
-
-impl Greeter for GreetingService {
-    fn greet(&self, name: &str) -> String {
-        format!("{}, {name}!", self.greeting)
-    }
-}
-
-struct WelcomeHandler {
-    greeter: Arc<Box<dyn Greeter>>,
-}
-
-impl WelcomeHandler {
-    fn handle(&self, name: &str) -> String {
-        self.greeter.greet(name)
-    }
-}
-
-fn build_container(cfg: Config) -> Container {
-    Container::new(registry! {
-        provide(App, instance(cfg)),
-        scope(Request) [
-            provide(|Inject(cfg): Inject<Config>| Ok(boxed!(GreetingService { greeting: cfg.greeting.clone() }; Greeter))),
-            provide(|Inject(greeter)| Ok(WelcomeHandler { greeter })),
-        ],
-    })
+#[derive(Construct)]
+struct Service {
+    #[di(inject)]
+    client: Arc<APIClient>,
+    #[di(inject_transient)]
+    dao: Box<dyn UserDao>,
 }
 
 fn init_branch(container: Container, name: String) -> Endpoint<'static, ()> {
@@ -54,18 +39,26 @@ fn init_branch(container: Container, name: String) -> Endpoint<'static, ()> {
         .endpoint(Injectable::new(handler))
 }
 
-async fn handler(Inject(handler): Inject<WelcomeHandler>, MapInject(name): MapInject<String>) {
-    println!("{}", handler.handle(&name));
-}
+async fn handler(Inject(_service): Inject<Service>, MapInject(_name): MapInject<String>) {}
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
-    let container = build_container(Config {
-        greeting: "Hello".to_owned(),
-    });
+    let registry = registry! {
+        scope(App) [
+            provide::<APIClient>()
+        ],
+        scope(Request) [
+            provide::<Conn>(),
+            provide(|Inject(conn)| Ok(boxed!(MemoryUserDao { conn }; UserDao))),
+            provide::<Service>(),
+        ]
+    };
+    let container = Container::new(registry);
 
-    let handler = dptree::entry().branch(init_branch(container, "dptree".to_owned()));
+    let handler = dptree::entry().branch(init_branch(container.clone(), "dptree".to_owned()));
     let result = handler.dispatch(dptree::deps![]).await;
 
     assert_eq!(result, ControlFlow::Break(()));
+
+    container.close();
 }

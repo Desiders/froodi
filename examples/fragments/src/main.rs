@@ -1,38 +1,24 @@
-use froodi::{Container, registry};
+#![allow(unused)]
 
-use crate::welcome::WelcomeHandler;
+use froodi::{Container, DefaultScope::Request, registry};
 
-mod greeter;
-mod welcome;
+use crate::service::Service;
 
-#[derive(Clone)]
-struct Config {
-    greeting: String,
-}
-
-fn build_container(cfg: Config) -> Container {
-    Container::new(registry! {
-        extend_fragment(
-            greeter::registrations!(cfg),
-            welcome::registrations!(),
-        ),
-    })
-}
+mod client;
+mod database;
+mod service;
 
 fn main() {
-    let cfg = Config {
-        greeting: "Hello".to_owned(),
+    let registry = registry! {
+        extend_fragment(
+            client::registrations!(),
+            database::registrations!(),
+            service::registrations!(),
+        ),
     };
+    let container = Container::new_with_start_scope(registry, Request);
 
-    let app_container = build_container(cfg);
-    let request_container = app_container.clone().enter_build().expect("Failed to enter request scope");
+    let _service = container.get_transient::<Service>().unwrap();
 
-    let handler = request_container
-        .get_transient::<WelcomeHandler>()
-        .expect("WelcomeHandler not registered");
-
-    handler.handle("froodi");
-
-    request_container.close();
-    app_container.close();
+    container.close();
 }

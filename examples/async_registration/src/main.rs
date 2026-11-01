@@ -1,68 +1,47 @@
+#![allow(unused)]
+
 use froodi::{
+    Construct,
     DefaultScope::{App, Request},
-    Inject,
+    Inject, InjectTransient,
     async_impl::Container,
-    boxed, instance, registry,
+    boxed, registry,
 };
 use std::sync::Arc;
 
-trait Greeter: Send + Sync {
-    fn greet(&self, name: &str) -> String;
+#[derive(Construct)]
+struct APIClient;
+
+struct Conn;
+
+trait UserDao: Send + Sync {}
+
+struct MemoryUserDao {
+    conn: Arc<Conn>,
 }
 
-#[derive(Clone)]
-struct Config {
-    greeting: String,
-}
+impl UserDao for MemoryUserDao {}
 
-struct GreetingService {
-    greeting: String,
-}
-
-impl Greeter for GreetingService {
-    fn greet(&self, name: &str) -> String {
-        format!("{}, {name}!", self.greeting)
-    }
-}
-
-struct WelcomeHandler {
-    greeter: Arc<Box<dyn Greeter>>,
-}
-
-impl WelcomeHandler {
-    fn handle(&self, name: &str) {
-        println!("{}", self.greeter.greet(name));
-    }
-}
-
-fn build_container(cfg: Config) -> Container {
-    Container::new(registry! {
-        provide(App, instance(cfg)),
-        scope(Request) [
-            provide(|Inject(cfg): Inject<Config>| {
-                Ok(boxed!(GreetingService { greeting: cfg.greeting.clone() }; Greeter))
-            }),
-            provide(|Inject(greeter)| async { Ok(WelcomeHandler { greeter }) }),
-        ],
-    })
+struct Service {
+    client: Arc<APIClient>,
+    dao: Box<dyn UserDao>,
 }
 
 #[tokio::main]
 async fn main() {
-    let cfg = Config {
-        greeting: "Hello".to_owned(),
+    let registry = registry! {
+        scope(App) [
+            provide::<APIClient>()
+        ],
+        scope(Request) [
+            provide(async || Ok(Conn)),
+            provide(async |Inject(conn)| Ok(boxed!(MemoryUserDao { conn }; UserDao))),
+            provide(async |Inject(client), InjectTransient(dao)| Ok(Service { client, dao })),
+        ]
     };
+    let container = Container::new_with_start_scope(registry, Request);
 
-    let app_container = build_container(cfg);
-    let request_container = app_container.clone().enter_build().expect("Failed to enter request scope");
+    let _service = container.get_transient::<Service>().await.unwrap();
 
-    let handler = request_container
-        .get_transient::<WelcomeHandler>()
-        .await
-        .expect("WelcomeHandler not registered");
-
-    handler.handle("froodi");
-
-    request_container.close().await;
-    app_container.close().await;
+    container.close().await;
 }

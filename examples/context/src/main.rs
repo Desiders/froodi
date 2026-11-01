@@ -1,42 +1,33 @@
-use froodi::{
-    Container, Context,
-    DefaultScope::{App, Request},
-    Inject, InstantiateErrorKind, declare, instance, registry,
-};
+#![allow(unused)]
 
-#[derive(Clone)]
-struct AppSettings {
-    greeting: String,
-}
+use froodi::{Construct, Container, Context, DefaultScope::Request, declare, registry};
 
-struct RequestId(u64);
+struct RequestId(i64);
 
-struct Greeting(String);
-
-fn make_greeting(Inject(settings): Inject<AppSettings>, Inject(request_id): Inject<RequestId>) -> Result<Greeting, InstantiateErrorKind> {
-    Ok(Greeting(format!("{} from request {}", settings.greeting, request_id.0)))
+#[derive(Construct)]
+struct Service {
+    #[di(inject_transient)]
+    req: RequestId,
 }
 
 fn main() {
-    let app = Container::new(registry! {
-        provide(Request, declare::<RequestId>()),
-        provide(Request, make_greeting),
-        extend(registry! {
-            provide(App, instance(AppSettings {
-                greeting: "Hello".to_owned(),
-            })),
-        }),
+    let container = Container::new(registry! {
+        scope(Request) [
+            provide(declare::<RequestId>()),
+            provide::<Service>()
+        ]
     });
 
-    for request_id in [42, 43] {
+    for request_id in [1, 2, 3] {
         let mut context = Context::new();
         context.insert(RequestId(request_id));
 
-        let request = app.clone().enter().with_scope(Request).with_context(context).build().unwrap();
-        let greeting = request.get::<Greeting>().unwrap();
-        println!("{}", greeting.0);
-        request.close();
+        let container = container.clone().enter().with_context(context).build().unwrap();
+
+        let _service = container.get::<Service>().unwrap();
+
+        container.close();
     }
 
-    app.close();
+    container.close();
 }

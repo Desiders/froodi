@@ -1,8 +1,12 @@
+#![allow(unused)]
+
 use froodi::{
-    Container,
+    Construct,
     DefaultScope::{App, Request},
-    Inject, boxed, instance, registry,
-    telers::setup_default,
+    Inject,
+    async_impl::Container,
+    boxed, registry,
+    telers::setup_async_default,
 };
 use std::sync::Arc;
 use telers::{
@@ -11,59 +15,50 @@ use telers::{
     event::telegram::{Handler, HandlerResult},
 };
 
-trait Greeter: Send + Sync {
-    fn greet(&self, name: &str) -> String;
+#[derive(Construct)]
+struct APIClient;
+
+#[derive(Construct)]
+struct Conn;
+
+trait UserDao: Send + Sync {}
+
+struct MemoryUserDao {
+    conn: Arc<Conn>,
 }
 
-#[derive(Clone)]
-struct Config {
-    greeting: String,
+impl UserDao for MemoryUserDao {}
+
+#[derive(Construct)]
+struct Service {
+    #[di(inject)]
+    client: Arc<APIClient>,
+    #[di(inject_transient)]
+    dao: Box<dyn UserDao>,
 }
 
-struct GreetingService {
-    greeting: String,
-}
-
-impl Greeter for GreetingService {
-    fn greet(&self, name: &str) -> String {
-        format!("{}, {name}!", self.greeting)
-    }
-}
-
-struct WelcomeHandler {
-    greeter: Arc<Box<dyn Greeter>>,
-}
-
-impl WelcomeHandler {
-    fn handle(&self, name: &str) -> String {
-        self.greeter.greet(name)
-    }
-}
-
-fn build_container(cfg: Config) -> Container {
-    Container::new(registry! {
-        provide(App, instance(cfg)),
-        scope(Request) [
-            provide(|Inject(cfg): Inject<Config>| Ok(boxed!(GreetingService { greeting: cfg.greeting.clone() }; Greeter))),
-            provide(|Inject(greeter)| Ok(WelcomeHandler { greeter })),
-        ],
-    })
-}
-
-async fn handler(Inject(handler): Inject<WelcomeHandler>) -> HandlerResult<()> {
-    println!("{}", handler.handle("telers"));
+async fn handler(Inject(_service): Inject<Service>) -> HandlerResult<()> {
     Ok(())
 }
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
-    let app_container = build_container(Config {
-        greeting: "Hello".to_owned(),
-    });
+    let registry = registry! {
+        scope(App) [
+            provide::<APIClient>()
+        ],
+        scope(Request) [
+            provide::<Conn>(),
+            provide(|Inject(conn)| Ok(boxed!(MemoryUserDao { conn }; UserDao))),
+            provide::<Service>(),
+        ]
+    };
+    let container = Container::new(registry);
 
     let bot = Bot::from_env();
 
-    let router = setup_default(Router::new("main"), app_container.clone()).on_message(|observer| observer.register(Handler::new(handler)));
+    let router =
+        setup_async_default(Router::new("main"), container.clone()).on_message(|observer| observer.register(Handler::new(handler)));
 
     let dispatcher = Dispatcher::builder()
         .main_router(router.configure_default())
@@ -73,5 +68,5 @@ async fn main() {
 
     dispatcher.run_polling().await.unwrap();
 
-    app_container.close();
+    container.close().await;
 }

@@ -4,7 +4,7 @@ version = "1.0.0"
 edition = "2024"
 
 [dependencies]
-froodi = { path = "../../froodi", features = ["ruststream"] }
+froodi = { path = "../../froodi", features = ["ruststream", "async"] }
 ruststream = { version = "0.7", features = ["macros", "memory"] }
 serde = { version = "1", features = ["derive"] }
-tokio = { version = "1.36", features = ["rt", "macros"] }
+tokio = { version = "1.36", features = ["rt-multi-thread", "macros"] }
