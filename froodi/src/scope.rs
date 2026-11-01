@@ -15,12 +15,15 @@ pub trait Scope: Ord + Into<ScopeData> {
     }
 }
 
-/// Adds compile-time scope checks to typed registrations.
+/// Gives a scope type fixed metadata for compile-time compatibility checks.
 ///
-/// Implementing this trait also supplies the [`Scope`] methods from `DATA`.
-/// [`DATA`](Self::DATA) must match the [`ScopeData`] produced by every value of
-/// this type. Distinct scope types share a [`Scopes`] family; [`DefaultScope`]
-/// remains dynamic. Registration syntax is unchanged.
+/// Implement this on a distinct type for each scope whose data never depends on
+/// the value. Froodi supplies its [`Scope`] methods from [`DATA`](Self::DATA),
+/// which must also match the [`ScopeData`] produced by `Into<ScopeData>`.
+/// Implement [`Scopes`] to define the scope family used by registrations.
+/// Edges between such scopes can be checked in a final closed typed registry;
+/// runtime-valued scopes and erased registries keep runtime validation.
+/// [`DefaultScope`] remains value-based and does not implement this trait.
 pub trait StaticScope: Ord + Into<ScopeData> {
     const DATA: ScopeData;
 }

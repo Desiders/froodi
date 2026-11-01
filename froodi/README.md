@@ -25,222 +25,88 @@ It focuses on a small set of DI problems:
 
 ### Key features
 
-- **Scopes**. Built-in scopes let dependencies live for the whole application, a request, or even shorter units.
+- **Scopes**. Built-in scopes set where a dependency can be resolved and how long a cached value lives.
 - **Thread safety**. Thread safety is enabled by default. You can disable it to use `Rc`-based internals instead of `Arc` and remove `Send` / `Sync` requirements.
-- **Finalizers**. Dependencies can register cleanup logic that runs when a scope is closed.
+- **Finalizers**. Registrations can run cleanup when a scope closes after `get` resolves a value.
 - **Sync and async support**. The crate supports both sync and async factories and containers.
-- **Modular registries**. Registries can be split and extended instead of building one large registration block.
-- **Registration checks**. Froodi catches missing or duplicate providers during compilation and can check cycles and static scopes before the app runs.
-- **Explicit construction**. `#[derive(froodi::Construct)]` describes field construction with `Inject` or `InjectTransient`; `provide::<T>()` includes it in a chosen registry and scope.
+- **Reusable registrations**. Syntax fragments and typed registry values compose registrations; erased `Registry` values mark a runtime boundary.
+- **Registration checks**. Typed registration links known dependencies at compile time. Closed graphs can also reject cycles and incompatible static scopes when built.
+- **Struct construction**. `#[derive(froodi::Construct)]` wires struct fields as dependencies; `provide::<T>()` registers the type in a scope.
 - **Auto-registration**. `froodi-auto` can collect providers declared with macros.
-- **Framework integrations**. `axum`, `dptree`, `telers`, and `ruststream` are supported out of the box.
+- **Framework integrations**. Optional features support `axum`, `dptree`, `telers`, and `ruststream`.
 
 ## Quickstart
 
-1. **Install the crate.**
+Add Froodi to your application:
 
 ```toml
 [dependencies]
-froodi = "1.0.0-beta.18"
+froodi = "1.0.0-beta.20"
 ```
 
-2. **Define your types.**
-
-In this example:
-
-- `Config` lives for the whole application
-- `GreetingService` is created per request
-- `WelcomeHandler` depends on the greeter and is resolved as a transient value
-
-```rust
-use std::sync::Arc;
-
-trait Greeter: Send + Sync {
-    fn greet(&self, name: &str) -> String;
-}
-
-#[derive(Clone)]
-struct Config {
-    greeting: String,
-}
-
-struct GreetingService {
-    greeting: String,
-}
-
-impl Greeter for GreetingService {
-    fn greet(&self, name: &str) -> String {
-        format!("{}, {name}!", self.greeting)
-    }
-}
-
-struct WelcomeHandler {
-    greeter: Arc<Box<dyn Greeter>>,
-}
-
-impl WelcomeHandler {
-    fn handle(&self, name: &str) {
-        println!("{}", self.greeter.greet(name));
-    }
-}
-```
-
-3. **Register factories in a registry.**
+This example registers an API client, a connection, a data access implementation,
+and a service:
 
 ```rust
 use froodi::{
-    Container,
+    Construct, Container,
     DefaultScope::{App, Request},
-    Inject, boxed, instance, registry,
-};
-
-fn build_container(cfg: Config) -> Container {
-    Container::new(registry! {
-        provide(App, instance(cfg)),
-        scope(Request) [
-            provide(|Inject(cfg): Inject<Config>| {
-                Ok(boxed!(GreetingService { greeting: cfg.greeting.clone() }; Greeter))
-            }),
-            provide(|Inject(greeter)| {
-                Ok(WelcomeHandler { greeter })
-            }),
-        ],
-    })
-}
-```
-
-4. **Create a container and enter the next scope.**
-
-`Container::new(...)` starts at the first non-optional default scope, which is usually `App`.
-`enter_build()` moves to the next non-optional child scope, which is usually `Request`.
-
-```rust
-let app_container = build_container(Config {
-    greeting: "Hello".to_owned(),
-});
-
-let request_container = app_container.clone().enter_build().unwrap();
-```
-
-5. **Resolve dependencies.**
-
-Use `get::<T>()` to resolve a dependency using its scope and cache settings, and `get_transient::<T>()` to request a fresh instance.
-
-```rust
-let handler = request_container.get_transient::<WelcomeHandler>().unwrap();
-handler.handle("froodi");
-
-let config = request_container.get::<Config>().unwrap();
-assert_eq!(config.greeting, "Hello");
-```
-
-6. **Close containers when done.**
-
-```rust
-request_container.close();
-app_container.close();
-```
-
-<details>
-<summary>Full example</summary>
-
-```rust
-use froodi::{
-    Container,
-    DefaultScope::{App, Request},
-    Inject, boxed, instance, registry,
+    Inject, boxed, registry,
 };
 use std::sync::Arc;
 
-trait Greeter: Send + Sync {
-    fn greet(&self, name: &str) -> String;
+#[derive(Construct)]
+struct APIClient;
+
+#[derive(Construct)]
+struct Conn;
+
+trait UserDao: Send + Sync {}
+
+struct MemoryUserDao {
+    conn: Arc<Conn>,
 }
 
-#[derive(Clone)]
-struct Config {
-    greeting: String,
-}
+impl UserDao for MemoryUserDao {}
 
-struct GreetingService {
-    greeting: String,
-}
-
-impl Greeter for GreetingService {
-    fn greet(&self, name: &str) -> String {
-        format!("{}, {name}!", self.greeting)
-    }
-}
-
-struct WelcomeHandler {
-    greeter: Arc<Box<dyn Greeter>>,
-}
-
-impl WelcomeHandler {
-    fn handle(&self, name: &str) {
-        println!("{}", self.greeter.greet(name));
-    }
-}
-
-fn build_container(cfg: Config) -> Container {
-    Container::new(registry! {
-        provide(App, instance(cfg)),
-        scope(Request) [
-            provide(|Inject(cfg): Inject<Config>| {
-                Ok(boxed!(GreetingService { greeting: cfg.greeting.clone() }; Greeter))
-            }),
-            provide(|Inject(greeter)| {
-                Ok(WelcomeHandler { greeter })
-            }),
-        ],
-    })
+#[derive(Construct)]
+struct Service {
+    #[di(inject)]
+    client: Arc<APIClient>,
+    #[di(inject_transient)]
+    dao: Box<dyn UserDao>,
 }
 
 fn main() {
-    let app_container = build_container(Config {
-        greeting: "Hello".to_owned(),
-    });
+    let registry = registry! {
+        scope(App) [
+            provide::<APIClient>()
+        ],
+        scope(Request) [
+            provide::<Conn>(),
+            provide(|Inject(conn)| Ok(boxed!(MemoryUserDao { conn }; UserDao))),
+            provide::<Service>(),
+        ]
+    };
+    let container = Container::new_with_start_scope(registry, Request);
 
-    let request_container = app_container.clone().enter_build().unwrap();
+    let _service = container.get_transient::<Service>().unwrap();
 
-    let handler = request_container.get_transient::<WelcomeHandler>().unwrap();
-    handler.handle("froodi");
-
-    let config = request_container.get::<Config>().unwrap();
-    assert_eq!(config.greeting, "Hello");
-
-    request_container.close();
-    app_container.close();
+    container.close();
 }
 ```
 
-</details>
+`provide::<T>()` registers a type implementing `Construct` in the chosen scope;
+the derive supplies that implementation in this example.
+`#[di(inject)]` uses a scoped, shared dependency; `#[di(inject_transient)]`
+creates a fresh value. The example starts directly in `Request` to stay small.
+In an application, you can start in `App` with `Container::new(registry)` and
+enter a request scope when handling a request.
 
-7. **(Optional) Add async support or framework integration.**
-
-- For async containers and factories, see [async registration][examples/async_registration]
-- For `froodi-auto`, see [auto registration][examples/auto_registration] and [async auto registration][examples/async_auto_registration]
-- For framework integration, see [axum][examples/axum_integration], [dptree][examples/dptree_integration], [telers][examples/telers_integration], and [ruststream][examples/ruststream_integration]
-
-### Alternative for simple constructors
-
-The `WelcomeHandler` above can use Froodi's `Inject` resolution directly. You can derive `Construct` on that struct:
-
-```rust
-#[derive(froodi::Construct)]
-struct WelcomeHandler {
-    greeter: Arc<Box<dyn Greeter>>,
-}
-```
-
-Then replace its handwritten `provide` registration in `scope(Request)` with:
-
-```rust
-provide::<WelcomeHandler>(),
-```
-
-The derive describes construction; the registry chooses whether to include the type and in which scope. Fields use ordinary `Inject<T>` semantics by default, and `#[di(inject)]` selects the same mode explicitly. For a field that needs a fresh value, use `#[di(inject_transient)]` on its ordinary value type. Scope, `config`, and `finalizer` stay on the registry entry. Use `provide(...)` for fallible, async, or custom construction.
-
-See [Construct registration][examples/construct_registration] for a runnable example using both field modes.
+See the runnable [registration example][examples/registration]. The
+[fragments example][examples/fragments] splits the same registrations across
+modules; the [async example][examples/async_registration] mixes sync and async
+factories in one `registry!`.
 
 ## Concepts
 
@@ -251,7 +117,8 @@ Factories can depend on other values, and `froodi` resolves those dependencies r
 
 ### Scope
 
-A scope describes how long a dependency lives.
+A scope determines where a dependency is accessible. Cached values live until
+their owning scope closes; transient values are constructed afresh.
 
 The built-in default scope chain is:
 
@@ -268,27 +135,32 @@ If you want one of the optional scopes explicitly:
 ```rust
 use froodi::{Container, DefaultScope::{Request, Runtime, Session}, registry};
 
-let runtime_container = Container::new_with_start_scope(registry! {
-    scope(Runtime) [
-        provide(|| Ok(())),
-    ],
-    scope(Session) [
-        provide(|| Ok(((), ()))),
-    ],
-    scope(Request) [
-        provide(|| Ok(((), (), ()))),
-    ],
-}, Runtime);
+fn main() {
+    let runtime_container = Container::new_with_start_scope(registry! {
+        scope(Runtime) [
+            provide(|| Ok(())),
+        ],
+        scope(Session) [
+            provide(|| Ok(((), ()))),
+        ],
+        scope(Request) [
+            provide(|| Ok(((), (), ()))),
+        ],
+    }, Runtime);
 
-let session_container = runtime_container.clone().enter().with_scope(Session).build().unwrap();
+    let session_container = runtime_container.clone().enter().with_scope(Session).build().unwrap();
+    session_container.close();
+    runtime_container.close();
+}
 ```
 
 ### Container
 
 The container holds resolved scoped dependencies and is used to access them.
 
-- `get::<T>()` resolves a dependency using its scope and cache settings
-- `get_transient::<T>()` creates a fresh value
+- `get::<T>()` resolves a dependency according to its scope and cache settings
+- `get_transient::<T>()` constructs a fresh value instead of using its cache or
+  a `Context` value, and does not schedule its finalizer
 - `enter_build()` creates the next child scope
 - `close()` runs finalizers for resolved dependencies in that scope
 
@@ -302,89 +174,78 @@ The registry defines how dependencies are constructed.
 The main registration forms are:
 
 - `provide(scope, factory)`
-- `provide::<T>()` for a type with `#[derive(froodi::Construct)]`
+- `provide::<T>()` for a type implementing `Construct` (usually with the derive)
 - `scope(ScopeName) [ provide(factory), provide::<T>(), ... ]`
 - `extend(other_registry)`
-- `extend_fragment(infrastructure!(config), services!())` for reusable syntax
+- `extend_fragment(client::registrations!(), service::registrations!())` for reusable syntax
 - `instance(value)` for values created outside the container
 
 Use `#[froodi::fragment(name)]` at module scope to save a registry template.
-Parameters accept expressions with inferred types. Dependencies are checked
-together with the surrounding registry.
+Fragments contribute registrations to the final typed graph, so dependencies
+can cross fragment boundaries. They can also accept expression arguments.
 
 ```rust
-use froodi::{instance, registry, DefaultScope::App};
+use froodi::{Construct, Container, registry};
 
-#[froodi::fragment(configuration(message))]
+#[derive(Construct)]
+struct APIClient;
+
+#[froodi::fragment(client)]
 registry! {
-    provide(App, instance(message)),
+    use froodi::DefaultScope::App;
+    use crate::APIClient;
+
+    scope(App) [
+        provide::<APIClient>()
+    ]
 }
 
-let registry = registry! {
-    extend_fragment(configuration!("Hello".to_owned())),
-};
+fn main() {
+    let container = Container::new(registry! {
+        extend_fragment(client!()),
+    });
+    let _client = container.get::<APIClient>().unwrap();
+    container.close();
+}
 ```
 
 `extend_fragment` includes reusable syntax; `extend` accepts registry values.
 Use `.into_registry()` on a final composition when you need an erased `Registry`.
+See the [fragments example][examples/fragments] for composition across modules.
 
 ### Finalizer
 
-A finalizer is cleanup logic attached to a registered dependency.
-It is executed when the owning scope is closed.
+A finalizer is cleanup logic attached to a registration. It runs when the
+owning scope closes after a value was resolved through `get`. Transient
+resolution does not schedule a finalizer.
 
 ```rust
 use froodi::{
-    Container,
-    DefaultScope::App,
-    instance, registry,
+    Construct, Container,
+    DefaultScope::Request,
+    registry,
 };
 
-#[derive(Clone)]
-struct AppState;
+#[derive(Construct)]
+struct Conn;
 
-let container = Container::new_with_start_scope(
-    registry! {
-        provide(App, instance(AppState), finalizer = |_dep| println!("AppState finalized")),
-    },
-    App,
-);
+fn main() {
+    let container = Container::new_with_start_scope(registry! {
+        scope(Request) [
+            provide::<Conn>(finalizer = |_dep| println!("Conn finalized")),
+        ]
+    }, Request);
 
-let _state = container.get::<AppState>().unwrap();
-container.close();
+    let _conn = container.get::<Conn>().unwrap();
+    container.close();
+}
 ```
 
 ### Trait objects
 
-Use `boxed!` when the provided type should be exposed as a trait object.
-
-```rust
-use froodi::{Inject, boxed, registry};
-use froodi::DefaultScope::Request;
-
-trait Greeter {
-    fn greet(&self) -> &'static str;
-}
-
-struct GreetingService;
-
-impl Greeter for GreetingService {
-    fn greet(&self) -> &'static str {
-        "hello"
-    }
-}
-
-struct Handler {
-    greeter: std::sync::Arc<Box<dyn Greeter>>,
-}
-
-let registry = registry! {
-    scope(Request) [
-        provide(|| Ok(boxed!(GreetingService; Greeter))),
-        provide(|Inject(greeter)| Ok(Handler { greeter })),
-    ],
-};
-```
+Use `boxed!` when a factory should expose a trait object. In the quickstart,
+`boxed!(MemoryUserDao { conn }; UserDao)` provides `Box<dyn UserDao>`, which
+`Service` receives through `#[di(inject_transient)]`.
 
 ## Features
 
@@ -392,7 +253,7 @@ Common feature combinations:
 
 ```toml
 [dependencies]
-froodi = { version = "1.0.0-beta.18", features = ["async", "axum"] } # choose the flags you need
+froodi = { version = "1.0.0-beta.20", features = ["async", "axum"] } # choose the flags you need
 froodi-auto = { version = "1", features = ["async"] }
 ```
 
@@ -403,21 +264,24 @@ Important feature flags:
 - `axum`
 - `http2-axum`
 - `dptree`
-- `telers`
+- `telers` (requires Rust 1.88 or newer through telers)
 - `ruststream`
 
 Disable default features if you want to turn off `thread_safe`.
 
 ### Registration checks
 
-`registry!` catches missing or duplicate providers while
-compiling. It also catches dependency cycles when you build an application with a
-closed registry. Use `Inject<T>` or `InjectTransient<T>` for ordinary dependencies.
+When a typed registry is consumed, `Inject<T>` and `InjectTransient<T>` link to
+providers by type. A missing or ambiguous provider is a compilation error.
+Closed typed graphs can also reject cycles when the container constructor is
+instantiated during `cargo build` or `cargo test`.
 
-Values supplied later through `Context` or another registry can be declared with
-`declare::<T>()`. Use `InjectCustom<T>` for a custom resolver. Froodi checks these
-runtime boundaries when the container runs. Custom `StaticScope` types can enable
-earlier scope checks; ordinary scope values keep runtime checks.
+Declare values supplied later through `Context` or an erased registry with
+`declare::<T>()`. Use `InjectCustom<T>` when a custom resolver performs its own
+lookups. These are runtime boundaries; the typed linker cannot inspect the
+values they will supply. Distinct `StaticScope` types allow compile-time checks
+for eligible edges in a closed typed graph. `DefaultScope` variants and other
+runtime-valued scopes keep runtime checks.
 
 Use `TypedContainer` when you also want unknown `get::<T>()` requests to fail at
 compile time. For more detail, see the API documentation for [`registry!`][docs-url].
@@ -427,13 +291,15 @@ together. `async_impl::Container` resolves either kind; `Container` resolves onl
 sync providers, even when unrelated async providers are registered.
 Sync factories can depend only on sync providers; async factories can use either.
 
-Use `.into_registry()` to return a composition as `Registry`. The same `Registry`
-can hold sync, async or mixed registrations and be extended into another registry.
+Use `.into_registry()` when a first-class `Registry` value is needed. It erases
+the typed provider graph, so further composition keeps runtime validation for
+relationships that cannot be proven from the final typed syntax. `Registry`
+can hold sync, async, or mixed registrations.
 
 ## Examples
 
 - [Registration][examples/registration]. Basic synchronous container setup
-- [Fragments][examples/fragments]. Split the greeting example into reusable registrations across modules
+- [Fragments][examples/fragments]. Compose API client, data access, and service registrations across modules
 - [Async registration][examples/async_registration]. Sync and async factories in one registry
 - [Finalization][examples/finalization]. Scoped cleanup with synchronous finalizers
 - [Context][examples/context]. Supply request values through `Context`

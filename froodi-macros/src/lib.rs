@@ -52,8 +52,9 @@ mod registry;
 ///
 /// `config` is a Froodi `Config`; its `cache_provides` field controls whether
 /// the constructed value is reused. `finalizer` is a function or closure called
-/// with the constructed value when its scope closes. The finalizer is
-/// asynchronous when the constructor is asynchronous.
+/// when the scope closes if the value was resolved through `get`. A transient
+/// resolution does not schedule the finalizer. The finalizer is asynchronous
+/// when the constructor is asynchronous.
 ///
 /// `froodi-auto` collects these registrations when its auto-registry method is
 /// called. For explicit registration, use [`registry`] instead.
@@ -71,7 +72,7 @@ pub fn injectable(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// a fresh value of its exact field type. `#[di(inject)]` explicitly selects
 /// the default behavior.
 ///
-/// This follows the `construct_registration` example:
+/// For example, a constructed service can use both field modes:
 ///
 /// ```rust
 /// use froodi::{instance, registry, Config as ProviderConfig, Container, DefaultScope::App};
@@ -107,7 +108,7 @@ pub fn injectable(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// container.close();
 /// ```
 ///
-/// Deriving the trait does not register the struct. Add `provide::<Type>()`
+/// Deriving `Construct` does not register the struct. Add `provide::<Type>()`
 /// inside a `registry!` scope block. Its options have these forms:
 ///
 /// ```text
@@ -121,7 +122,8 @@ pub fn injectable(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// `config` controls caching of the constructed `Type`; its dependencies keep
 /// their own cache settings. Constructed values are cached by default.
 /// `finalizer` receives an `Arc<Type>` in thread-safe mode or an `Rc<Type>`
-/// in local mode when the scope closes. A derived `Construct` makes a
+/// in local mode when the scope closes after `get` resolved the value.
+/// `get_transient` does not schedule it. A derived `Construct` makes a
 /// synchronous factory, so a supplied finalizer must also be synchronous.
 #[proc_macro_derive(Construct, attributes(di))]
 pub fn derive_construct(input: TokenStream) -> TokenStream {
@@ -137,8 +139,8 @@ pub fn derive_construct(input: TokenStream) -> TokenStream {
 /// factories can appear in the same registry; their Rust types select how
 /// they execute.
 ///
-/// This uses the same configuration and request pattern as the registration
-/// examples:
+/// For example, a request service can use configuration from another typed
+/// registry value:
 ///
 /// ```rust
 /// use froodi::{instance, registry, Container, DefaultScope::{App, Request}, Inject, InstantiateErrorKind};
@@ -176,8 +178,8 @@ pub fn derive_construct(input: TokenStream) -> TokenStream {
 /// ```
 ///
 /// A scope block applies one scope to every entry. `provide::<Type>()`
-/// registers a type with `#[derive(Construct)]`. Both entry kinds accept the
-/// same `config` and `finalizer` options shown above:
+/// registers a type implementing `Construct` (usually through the derive).
+/// Both entry kinds accept the same `config` and `finalizer` options:
 ///
 /// ```text
 /// scope(scope) [
@@ -210,14 +212,17 @@ pub fn derive_construct(input: TokenStream) -> TokenStream {
 /// `config` is a Froodi `Config`. Set `cache_provides: false` when a provider
 /// should make a new value on each resolution; it does not change how that
 /// provider's dependencies are cached. A `finalizer` receives the produced
-/// value when its scope closes. Use a synchronous finalizer with a synchronous
-/// factory, or an asynchronous finalizer with an asynchronous factory.
+/// value when its scope closes if it was resolved through `get`; `get_transient`
+/// does not schedule it. Use a synchronous finalizer with a synchronous factory,
+/// or an asynchronous finalizer with an asynchronous factory.
 ///
 /// `Inject<T>` and `InjectTransient<T>` link to registered providers.
-/// `InjectCustom<T>` is available for custom runtime resolution. Missing or
-/// ambiguous static providers are compilation errors. Closed graphs can also
-/// reject cycles and incompatible static scopes at build time; dynamic scopes
-/// and erased registries keep runtime validation. Call `.into_registry()` when
+/// `InjectCustom<T>` lets a custom resolver perform its own runtime lookups;
+/// those lookups are opaque to static linking. Missing or ambiguous typed
+/// dependencies are compilation errors. Closed graphs can also reject cycles
+/// and edges between incompatible `StaticScope` types when the constructor is
+/// instantiated during `cargo build` or `cargo test`. Dynamic scopes and
+/// erased registries keep runtime validation. Call `.into_registry()` when
 /// a first-class erased `Registry` value is needed. A synchronous `Container`
 /// cannot resolve an async-only provider; an async container can use both.
 #[proc_macro]
@@ -232,7 +237,7 @@ pub fn registry(input: TokenStream) -> TokenStream {
 /// linked together with the surrounding registrations. A fragment does not
 /// create a registry value or register anything until it is included.
 ///
-/// This is the pattern used by the `fragments` example:
+/// For example, a parameterized fragment can supply a value to the final registry:
 ///
 /// ```rust
 /// use froodi::{instance, registry, Container, DefaultScope::App, Inject, InstantiateErrorKind};

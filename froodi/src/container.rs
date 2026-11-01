@@ -99,12 +99,10 @@ impl Container {
         self.enter().build()
     }
 
-    /// Gets a scoped dependency from the container
+    /// Resolves a dependency and returns a shared handle.
     ///
-    /// # Notes
-    /// This method resolves a dependency from the container,
-    /// so it should be used for dependencies that are cached or shared,
-    /// and with optional finalizer.
+    /// The registration's cache setting controls reuse. If the resolved value
+    /// has a finalizer, it runs when the owning scope closes.
     #[allow(clippy::missing_errors_doc, clippy::missing_panics_doc)]
     pub fn get<Dep: SendSafety + SyncSafety + 'static>(&self) -> Result<RcThreadSafety<Dep>, ResolveErrorKind> {
         self.get_selected::<Dep>(Selection::ByType)
@@ -224,14 +222,12 @@ impl Container {
         }
     }
 
-    /// Gets a transient dependency from the container
+    /// Constructs a fresh dependency on every call.
     ///
-    /// # Notes
-    /// This method resolves a new instance of the dependency each time it is called,
-    /// so it should be used for dependencies that are not cached or shared, and without finalizer.
-    ///
-    /// # Warning
-    /// Context isn't used here. To get dependencies from the context, use [`Self::get`]
+    /// This bypasses the requested value's cache and does not schedule its
+    /// finalizer. It does not read values from [`Context`]; dependencies of the
+    /// constructed value still follow their own resolution policies. Use
+    /// [`Self::get`] to resolve a value supplied through `Context`.
     #[allow(clippy::missing_errors_doc, clippy::missing_panics_doc)]
     pub fn get_transient<Dep: 'static>(&self) -> Result<Dep, ResolveErrorKind> {
         self.get_transient_selected::<Dep>(Selection::ByType)

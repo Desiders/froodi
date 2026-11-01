@@ -2,7 +2,37 @@
 
 [![Crates.io][crates-badge]][crates-url]
 
-Froodi-auto is a crate that provides way to use auto registration for [froodi][froodi-crates-url]'s factories
+Froodi-auto collects constructors marked with `#[injectable]` into an erased
+[Froodi][froodi-crates-url] registry. Auto-registration is explicit: call
+`provide_auto_registries()` when building the registry.
+
+```rust
+use froodi::{registry, Container, DefaultScope::App, InstantiateErrorKind};
+use froodi_auto::{injectable, AutoRegistries as _};
+
+struct Settings;
+
+#[injectable]
+impl Settings {
+    #[provide(App)]
+    fn new() -> Result<Self, InstantiateErrorKind> {
+        Ok(Self)
+    }
+}
+
+fn main() {
+    let registry = registry! {}.into_registry().provide_auto_registries();
+    let container = Container::new(registry);
+    let _settings = container.get::<Settings>().unwrap();
+    container.close();
+}
+```
+
+The `.into_registry()` call is the explicit erasure boundary. These collected
+registrations use runtime validation; manual `registry!` registrations retain
+their typed checks until erased. With the `async` feature, import
+`AutoRegistriesWithSync` and call `.provide_auto_registries_with_sync()` to
+collect both sync and async constructors.
 
 ## Community
 ### Telegram
