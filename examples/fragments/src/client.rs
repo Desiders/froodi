@@ -9,7 +9,5 @@ registry! {
 
     use crate::client::APIClient;
 
-    scope(App) [
-        provide::<APIClient>()
-    ]
+    provide::<APIClient>(App),
 }

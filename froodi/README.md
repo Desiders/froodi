@@ -31,7 +31,7 @@ It focuses on a small set of DI problems:
 - **Sync and async support**. The crate supports both sync and async factories and containers.
 - **Reusable registrations**. Syntax fragments and typed registry values compose registrations; erased `Registry` values mark a runtime boundary.
 - **Registration checks**. Typed registration links known dependencies at compile time. Closed graphs can also reject cycles and incompatible static scopes when built.
-- **Struct construction**. `#[derive(froodi::Construct)]` wires struct fields as dependencies; `provide::<T>()` registers the type in a scope.
+- **Struct construction**. `#[derive(froodi::Construct)]` wires struct fields as dependencies; `provide::<T>(scope)` registers the type.
 - **Auto-registration**. `froodi-auto` can collect providers declared with macros.
 - **Framework integrations**. Optional features support `axum`, `dptree`, `telers`, and `ruststream`.
 
@@ -79,9 +79,7 @@ struct Service {
 
 fn main() {
     let registry = registry! {
-        scope(App) [
-            provide::<APIClient>()
-        ],
+        provide::<APIClient>(App),
         scope(Request) [
             provide::<Conn>(),
             provide(|Inject(conn)| Ok(boxed!(MemoryUserDao { conn }; UserDao))),
@@ -96,8 +94,8 @@ fn main() {
 }
 ```
 
-`provide::<T>()` registers a type implementing `Construct` in the chosen scope;
-the derive supplies that implementation in this example.
+`provide::<T>(scope)` registers a type implementing `Construct`; the derive
+supplies that implementation in this example. Inside a scope block, use `provide::<T>()`.
 `#[di(inject)]` uses a scoped, shared dependency; `#[di(inject_transient)]`
 creates a fresh value. The example starts directly in `Request` to stay small.
 In an application, you can start in `App` with `Container::new(registry)` and
@@ -109,8 +107,8 @@ modules; the [async example][examples/async_registration] mixes sync and async
 factories in one `registry!`.
 
 With the `async` feature, add `#[di(async)]` below `#[derive(Construct)]` to
-resolve a struct's fields asynchronously. Register it with the same `provide::<T>()`
-syntax; its dependencies can use sync or async factories.
+resolve a struct's fields asynchronously. The registration forms stay the same;
+its dependencies can use sync or async factories.
 
 ## Concepts
 
@@ -178,7 +176,7 @@ The registry defines how dependencies are constructed.
 The main registration forms are:
 
 - `provide(scope, factory)`
-- `provide::<T>()` for a type implementing `Construct` (usually with the derive)
+- `provide::<T>(scope)` for a type implementing `Construct` (usually with the derive)
 - `scope(ScopeName) [ provide(factory), provide::<T>(), ... ]`
 - `extend(other_registry)`
 - `extend_fragment(client::registrations!(), service::registrations!())` for reusable syntax
@@ -199,9 +197,7 @@ registry! {
     use froodi::DefaultScope::App;
     use crate::APIClient;
 
-    scope(App) [
-        provide::<APIClient>()
-    ]
+    provide::<APIClient>(App),
 }
 
 fn main() {

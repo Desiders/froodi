@@ -36,9 +36,7 @@ struct Service {
 #[tokio::main]
 async fn main() {
     let registry = registry! {
-        scope(App) [
-            provide::<APIClient>()
-        ],
+        provide::<APIClient>(App),
         scope(Request) [
             provide::<Conn>(),
             provide(async |Inject(conn)| Ok(boxed!(MemoryUserDao { conn }; UserDao))),

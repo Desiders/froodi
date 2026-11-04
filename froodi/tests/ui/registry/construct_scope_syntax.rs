@@ -1,8 +1,8 @@
-use froodi::{registry, DefaultScope::App};
+use froodi::registry;
 
 #[derive(froodi::Construct)]
 struct Service;
 
 fn main() {
-    let _ = registry! { provide::<Service>(App) };
+    let _ = registry! { provide::<Service>() };
 }

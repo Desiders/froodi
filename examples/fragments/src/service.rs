@@ -17,7 +17,5 @@ registry! {
 
     use crate::service::Service;
 
-    scope(Request) [
-        provide::<Service>()
-    ]
+    provide::<Service>(Request),
 }

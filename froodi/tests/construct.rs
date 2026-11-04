@@ -93,9 +93,9 @@ fn constructed_types_use_normal_registry_linking_and_cache() {
             provide::<Service>(),
             provide::<ExplicitService>(),
             provide::<Pair>(),
-            provide::<Unit>(),
-            provide::<Generic<Repository>>(),
-        ]
+        ],
+        provide::<Unit>(App,),
+        provide::<Generic<Repository>>(App),
     });
     let pair = container.get::<Pair>().unwrap();
     assert_eq!(pair.0.repository.0, 7);
@@ -182,7 +182,7 @@ fn boxed_trait_fields_support_both_dependency_modes() {
 fn construct_resolves_in_custom_scopes_and_retains_parent_dependencies() {
     let container = Container::new(registry! {
         provide(scopes::App, instance(Repository(7))),
-        scope(scopes::Request) [ provide::<ExplicitService>(), ],
+        provide::<ExplicitService>(scopes::Request),
     });
     assert!(container.get::<ExplicitService>().is_err());
     let request = container.clone().enter().with_scope(scopes::Request).build().unwrap();
@@ -225,6 +225,57 @@ fn construct_accepts_the_existing_registration_options() {
     ));
     container.close();
     assert_eq!(finalized.load(Ordering::SeqCst), 2);
+}
+
+#[test]
+fn top_level_construct_options_are_evaluated_once_in_source_order() {
+    let mut events = Vec::new();
+    let finalized = Shared::new(AtomicUsize::new(0));
+    let container = Container::new(registry! {
+        provide(App, instance(Repository(7))),
+        provide::<Service>({ events.push("scope"); App }, finalizer = {
+            events.push("finalizer");
+            let finalized = finalized.clone();
+            move |_: Shared<Service>| { finalized.fetch_add(1, Ordering::SeqCst); }
+        }, config = {
+            events.push("config");
+            Config { cache_provides: false }
+        }),
+        provide::<Generic<Repository>>(App, config = Config { cache_provides: false }, finalizer = {
+            let finalized = finalized.clone();
+            move |_: Shared<Generic<Repository>>| { finalized.fetch_add(1, Ordering::SeqCst); }
+        }),
+    });
+    assert_eq!(events, ["scope", "finalizer", "config"]);
+    assert!(!Shared::ptr_eq(
+        &container.get::<Service>().unwrap(),
+        &container.get::<Service>().unwrap(),
+    ));
+    assert!(!Shared::ptr_eq(
+        &container.get::<Generic<Repository>>().unwrap(),
+        &container.get::<Generic<Repository>>().unwrap(),
+    ));
+    container.close();
+    assert_eq!(finalized.load(Ordering::SeqCst), 4);
+}
+
+#[froodi::fragment(constructed)]
+registry! {
+    use froodi::DefaultScope::App;
+    use crate::Service;
+
+    provide::<Service>(App),
+}
+
+#[test]
+fn top_level_constructs_link_through_syntax_fragments() {
+    let container = Container::new(registry! {
+        provide::<Generic<Repository>>(App),
+        extend_fragment(constructed!()),
+        provide(App, instance(Repository(7))),
+    });
+    assert_eq!(container.get::<Service>().unwrap().repository.0, 7);
+    assert_eq!(container.get::<Generic<Repository>>().unwrap().value.0, 7);
 }
 
 #[cfg(feature = "async")]
@@ -294,11 +345,11 @@ mod asynchronous {
                         }
                     }
                 }),
-                provide::<Service>(),
                 provide::<Pair>(),
                 provide::<Generic<RequestId>>(),
                 provide::<Construct>(),
             ],
+            provide::<Service>(App),
         });
         let first = container.get::<Service>().await.unwrap();
         assert_eq!(first.repository.0, 7);
@@ -325,19 +376,17 @@ mod asynchronous {
     async fn erased_registrations_preserve_config_and_async_finalizers() {
         let finalized = Shared::new(AtomicUsize::new(0));
         let registry = registry! {
-            scope(App) [
-                provide(instance(Repository(7))),
-                provide::<Generic<Repository>>(config = Config { cache_provides: false }, finalizer = {
+            provide(App, instance(Repository(7))),
+            provide::<Generic<Repository>>(App, config = Config { cache_provides: false }, finalizer = {
+                let finalized = finalized.clone();
+                move |service: Shared<Generic<Repository>>| {
                     let finalized = finalized.clone();
-                    move |service: Shared<Generic<Repository>>| {
-                        let finalized = finalized.clone();
-                        async move {
-                            assert_eq!(service.value.0, 7);
-                            finalized.fetch_add(1, Ordering::SeqCst);
-                        }
+                    async move {
+                        assert_eq!(service.value.0, 7);
+                        finalized.fetch_add(1, Ordering::SeqCst);
                     }
-                }),
-            ],
+                }
+            }),
         }
         .into_registry();
         let container = Container::new(registry! { extend(registry), });

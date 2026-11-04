@@ -31,9 +31,7 @@ struct Service {
 
 fn main() {
     let registry = registry! {
-        scope(App) [
-            provide::<APIClient>()
-        ],
+        provide::<APIClient>(App),
         scope(Request) [
             provide::<Conn>(),
             provide(|Inject(conn)| Ok(boxed!(MemoryUserDao { conn }; UserDao))),

@@ -74,8 +74,8 @@ pub fn injectable(_attr: TokenStream, item: TokenStream) -> TokenStream {
 ///
 /// Construction is synchronous by default. With Froodi's `async` feature,
 /// add `#[di(async)]` to the struct to resolve its fields asynchronously.
-/// Those fields may depend on sync or async providers; registration still uses
-/// `provide::<Type>()`:
+/// Those fields may depend on sync or async providers. Register the type with
+/// `provide::<Type>(scope)`, or `provide::<Type>()` inside a scope block:
 ///
 /// ```text
 /// #[derive(froodi::Construct)]
@@ -110,11 +110,12 @@ pub fn injectable(_attr: TokenStream, item: TokenStream) -> TokenStream {
 ///     scope(App) [
 ///         provide(instance(Config("Hello"))),
 ///         provide(|| Ok(RequestId(7))),
-///         provide::<Service>(
-///             config = ProviderConfig { cache_provides: false },
-///             finalizer = |service: Arc<Service>| println!("Closing {}", service.config.0),
-///         ),
 ///     ],
+///     provide::<Service>(
+///         App,
+///         config = ProviderConfig { cache_provides: false },
+///         finalizer = |service: Arc<Service>| println!("Closing {}", service.config.0),
+///     ),
 /// });
 /// let first = container.get::<Service>().unwrap();
 /// let second = container.get::<Service>().unwrap();
@@ -124,8 +125,18 @@ pub fn injectable(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// container.close();
 /// ```
 ///
-/// Deriving `Construct` does not register the struct. Add `provide::<Type>()`
-/// inside a `registry!` scope block. Its options have these forms:
+/// Deriving `Construct` does not register the struct. At the top level of
+/// `registry!`, specify the scope as the first argument:
+///
+/// ```text
+/// provide::<Type>(scope)
+/// provide::<Type>(scope, config = configuration)
+/// provide::<Type>(scope, finalizer = cleanup)
+/// provide::<Type>(scope, config = configuration, finalizer = cleanup)
+/// provide::<Type>(scope, finalizer = cleanup, config = configuration)
+/// ```
+///
+/// Inside a `scope(...) [ ... ]` block, omit the scope argument:
 ///
 /// ```text
 /// provide::<Type>()
@@ -183,7 +194,8 @@ pub fn derive_construct(input: TokenStream) -> TokenStream {
 ///
 /// # Supported syntax
 ///
-/// At the top level, a `provide` clause includes its scope:
+/// At the top level, a `provide` clause includes its scope. `provide::<Type>`
+/// registers a type implementing `Construct` (usually through the derive):
 ///
 /// ```text
 /// provide(scope, factory)
@@ -191,11 +203,16 @@ pub fn derive_construct(input: TokenStream) -> TokenStream {
 /// provide(scope, factory, finalizer = cleanup)
 /// provide(scope, factory, config = configuration, finalizer = cleanup)
 /// provide(scope, factory, finalizer = cleanup, config = configuration)
+///
+/// provide::<Type>(scope)
+/// provide::<Type>(scope, config = configuration)
+/// provide::<Type>(scope, finalizer = cleanup)
+/// provide::<Type>(scope, config = configuration, finalizer = cleanup)
+/// provide::<Type>(scope, finalizer = cleanup, config = configuration)
 /// ```
 ///
-/// A scope block applies one scope to every entry. `provide::<Type>()`
-/// registers a type implementing `Construct` (usually through the derive).
-/// Both entry kinds accept the same `config` and `finalizer` options:
+/// A scope block supplies the scope for every entry. Omit the scope argument
+/// there; both entry kinds accept the same `config` and `finalizer` options:
 ///
 /// ```text
 /// scope(scope) [
@@ -310,7 +327,7 @@ pub fn registry(input: TokenStream) -> TokenStream {
 /// Parameters are untyped names. Each supplied expression is evaluated once,
 /// in order, at the inclusion point; ordinary Rust rules handle moves and
 /// borrows. Types are inferred when the final registry is compiled. The body
-/// may use `provide`, `provide::<Type>()`, `scope`, `extend`, local `use`
+/// may use `provide`, `provide::<Type>(scope)`, `scope`, `extend`, local `use`
 /// statements, and nested `extend_fragment` calls. Recursive inclusion is
 /// rejected. Use `extend(...)` for registry *values* and `.into_registry()`
 /// when the final composition must become an erased `Registry` value.

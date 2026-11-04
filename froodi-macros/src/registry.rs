@@ -106,7 +106,7 @@ fn parse_scoped_provide(input: ParseStream) -> syn::Result<Registration> {
 enum Clause {
     /// `scope(S) [ provide(entry), ... ]`
     Scope { scope: Expr, entries: Vec<Registration> },
-    /// `provide(S, entry)`
+    /// `provide(S, entry)` or `provide::<T>(S, ...)`
     Provide { scope: Expr, entry: Box<Registration> },
     /// `extend(registry, ...)`
     Extend(Vec<Expr>),
@@ -128,10 +128,22 @@ impl Parse for Clause {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let keyword: Ident = input.parse()?;
         if keyword == "provide" && input.peek(Token![::]) {
-            return Err(syn::Error::new(
-                keyword.span(),
-                "put `provide::<T>(...)` inside `scope(...) [ ... ]`",
-            ));
+            let ty = provide_type(input)?;
+            let args;
+            parenthesized!(args in input);
+            if args.is_empty() {
+                return Err(syn::Error::new(
+                    keyword.span(),
+                    "top-level `provide::<T>(...)` requires a scope, for example `provide::<T>(App)`",
+                ));
+            }
+            return Ok(Self::Provide {
+                scope: args.parse()?,
+                entry: Box::new(Registration {
+                    kind: RegistrationKind::Construct(ty),
+                    options: parse_options(&args, true)?,
+                }),
+            });
         }
         let args;
         parenthesized!(args in input);
@@ -186,7 +198,7 @@ impl Parse for Clause {
         } else {
             Err(syn::Error::new(
                 keyword.span(),
-                "expected `scope(...) [ ... ]`, `provide(...)`, `extend(...)` or `extend_fragment(...)`",
+                "expected `scope(...) [ ... ]`, `provide(...)`, `provide::<T>(scope, ...)`, `extend(...)` or `extend_fragment(...)`",
             ))
         }
     }
@@ -562,11 +574,11 @@ impl ToTokens for Clause {
         output.extend(match self {
             Clause::Scope { scope, entries } => quote!(scope(#scope) [#(#entries,)*]),
             Clause::Provide { scope, entry } => {
-                let RegistrationKind::Provide(inst) = &entry.kind else {
-                    unreachable!()
-                };
                 let options = &entry.options;
-                quote!(provide(#scope, #inst, #(#options,)*))
+                match &entry.kind {
+                    RegistrationKind::Provide(inst) => quote!(provide(#scope, #inst, #(#options,)*)),
+                    RegistrationKind::Construct(ty) => quote!(provide::<#ty>(#scope, #(#options,)*)),
+                }
             }
             Clause::Extend(registries) => quote!(extend(#(#registries,)*)),
             Clause::Fragment(fragments) => quote!(extend_fragment(#(#fragments,)*)),

@@ -47,7 +47,8 @@ impl<T: ?Sized> ConstructField<RcThreadSafety<T>> for RcThreadSafety<T> {
 /// Fields use [`Inject`] by default; `#[di(inject)]` selects it explicitly.
 /// Use `#[di(inject_transient)]` for [`InjectTransient`](crate::InjectTransient).
 ///
-/// Register the type with `provide::<T>()` in a `registry!` scope block.
+/// Register the type with `provide::<T>(scope)` in `registry!`, or
+/// `provide::<T>()` inside a scope block.
 /// Scope, `config`, and `finalizer` are set in the registry.
 ///
 /// `Execution` selects how dependencies are resolved before the factory assembles the fields.
