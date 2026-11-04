@@ -57,6 +57,8 @@ fn registration_errors() {
         "sync_async_finalizer",
         "construct_async_dependency",
         "construct_transient_async_dependency",
+        "async_construct_missing",
+        "async_construct_sync_consumer",
     ] {
         cases.compile_fail(format!("tests/ui/registry/{case}.rs"));
     }

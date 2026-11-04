@@ -35,4 +35,19 @@ struct FieldPolicy {
     value: RcThreadSafety<u32>,
 }
 
+#[derive(froodi::Construct)]
+#[di(async, async)]
+struct RepeatedAsync;
+
+#[derive(froodi::Construct)]
+#[di(async)]
+#[di(async)]
+struct RepeatedAsyncAttribute;
+
+#[derive(froodi::Construct)]
+struct AsyncField {
+    #[di(async)]
+    value: RcThreadSafety<u32>,
+}
+
 fn main() {}

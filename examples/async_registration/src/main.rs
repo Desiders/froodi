@@ -3,7 +3,7 @@
 use froodi::{
     Construct,
     DefaultScope::{App, Request},
-    Inject, InjectTransient,
+    Inject,
     async_impl::Container,
     boxed, registry,
 };
@@ -12,6 +12,8 @@ use std::sync::Arc;
 #[derive(Construct)]
 struct APIClient;
 
+#[derive(Construct)]
+#[di(async)]
 struct Conn;
 
 trait UserDao: Send + Sync {}
@@ -22,8 +24,12 @@ struct MemoryUserDao {
 
 impl UserDao for MemoryUserDao {}
 
+#[derive(Construct)]
+#[di(async)]
 struct Service {
+    #[di(inject)]
     client: Arc<APIClient>,
+    #[di(inject_transient)]
     dao: Box<dyn UserDao>,
 }
 
@@ -34,9 +40,9 @@ async fn main() {
             provide::<APIClient>()
         ],
         scope(Request) [
-            provide(async || Ok(Conn)),
+            provide::<Conn>(),
             provide(async |Inject(conn)| Ok(boxed!(MemoryUserDao { conn }; UserDao))),
-            provide(async |Inject(client), InjectTransient(dao)| Ok(Service { client, dao })),
+            provide::<Service>(),
         ]
     };
     let container = Container::new_with_start_scope(registry, Request);

@@ -241,3 +241,129 @@ async fn synchronous_construct_works_in_a_mixed_async_registry() {
     assert_eq!(container.get::<TransientGeneric<RequestId>>().await.unwrap().value.0, 11);
     assert_eq!(*container.get::<usize>().await.unwrap(), 7);
 }
+
+#[cfg(feature = "async")]
+mod asynchronous {
+    use super::*;
+    use froodi::{async_impl::Container, InstantiateErrorKind};
+
+    #[derive(froodi::Construct)]
+    #[di(async)]
+    struct Service {
+        repository: Shared<Repository>,
+        cached: Shared<RequestId>,
+        #[di(inject_transient)]
+        first: RequestId,
+        #[di(inject_transient)]
+        second: RequestId,
+    }
+
+    #[derive(froodi::Construct)]
+    #[di(async)]
+    struct Pair(Shared<Service>, #[di(inject_transient)] RequestId);
+
+    #[derive(froodi::Construct)]
+    #[di(async)]
+    struct Generic<T> {
+        value: Shared<T>,
+    }
+
+    #[derive(froodi::Construct)]
+    #[di(async)]
+    struct Construct;
+
+    impl Construct {
+        fn instantiator() -> &'static str {
+            "inherent method"
+        }
+    }
+
+    #[tokio::test]
+    async fn mixed_dependencies_keep_cache_and_transient_field_semantics() {
+        let calls = Shared::new(AtomicUsize::new(0));
+        let container = Container::new(registry! {
+            scope(App) [
+                provide(instance(Repository(7))),
+                provide({
+                    let calls = calls.clone();
+                    move || {
+                        let calls = calls.clone();
+                        async move {
+                            tokio::task::yield_now().await;
+                            Ok::<_, InstantiateErrorKind>(RequestId(calls.fetch_add(1, Ordering::SeqCst) + 1))
+                        }
+                    }
+                }),
+                provide::<Service>(),
+                provide::<Pair>(),
+                provide::<Generic<RequestId>>(),
+                provide::<Construct>(),
+            ],
+        });
+        let first = container.get::<Service>().await.unwrap();
+        assert_eq!(first.repository.0, 7);
+        assert_eq!((first.cached.0, first.first.0, first.second.0), (1, 2, 3));
+        assert!(Shared::ptr_eq(&first, &container.get::<Service>().await.unwrap()));
+
+        let fresh = container.get_transient::<Service>().await.unwrap();
+        assert!(Shared::ptr_eq(&first.cached, &fresh.cached));
+        assert_eq!((fresh.first.0, fresh.second.0), (4, 5));
+        let pair = container.get::<Pair>().await.unwrap();
+        assert!(Shared::ptr_eq(&first, &pair.0));
+        assert_eq!(pair.1 .0, 6);
+        assert!(Shared::ptr_eq(
+            &first.cached,
+            &container.get::<Generic<RequestId>>().await.unwrap().value,
+        ));
+        assert_eq!(Construct::instantiator(), "inherent method");
+        container.get::<Construct>().await.unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), 6);
+        container.close().await;
+    }
+
+    #[tokio::test]
+    async fn erased_registrations_preserve_config_and_async_finalizers() {
+        let finalized = Shared::new(AtomicUsize::new(0));
+        let registry = registry! {
+            scope(App) [
+                provide(instance(Repository(7))),
+                provide::<Generic<Repository>>(config = Config { cache_provides: false }, finalizer = {
+                    let finalized = finalized.clone();
+                    move |service: Shared<Generic<Repository>>| {
+                        let finalized = finalized.clone();
+                        async move {
+                            assert_eq!(service.value.0, 7);
+                            finalized.fetch_add(1, Ordering::SeqCst);
+                        }
+                    }
+                }),
+            ],
+        }
+        .into_registry();
+        let container = Container::new(registry! { extend(registry), });
+        assert!(!Shared::ptr_eq(
+            &container.get::<Generic<Repository>>().await.unwrap(),
+            &container.get::<Generic<Repository>>().await.unwrap(),
+        ));
+        container.get_transient::<Generic<Repository>>().await.unwrap();
+        assert_eq!(finalized.load(Ordering::SeqCst), 0);
+        container.close().await;
+        assert_eq!(finalized.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn failed_async_dependencies_use_the_normal_resolution_error() {
+        let container = Container::new(registry! {
+            scope(App) [
+                provide(async || Err::<Repository, _>(InstantiateErrorKind::Custom(anyhow::anyhow!("repository unavailable")))),
+                provide::<Generic<Repository>>(),
+            ],
+        });
+        let error = match container.get::<Generic<Repository>>().await {
+            Ok(_) => panic!("a failed dependency unexpectedly constructed a service"),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("repository unavailable"));
+        container.close().await;
+    }
+}

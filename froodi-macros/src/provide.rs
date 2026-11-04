@@ -9,6 +9,32 @@ use syn::{
 
 use crate::attr_parsing::{parse_attrs, Combine};
 
+struct ConstructMode {
+    asyncness: Token![async],
+}
+
+impl Combine for ConstructMode {
+    fn combine(self, other: Self) -> syn::Result<Self> {
+        Err(syn::Error::new(other.asyncness.span(), "`async` specified more than once"))
+    }
+}
+
+impl Parse for ConstructMode {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        if !input.peek(Token![async]) {
+            return Err(input.error("expected `async`; field modes belong on fields and registration options belong in `registry!`"));
+        }
+        let mut result = Self { asyncness: input.parse()? };
+        if input.peek(Token![,]) {
+            input.parse::<Token![,]>()?;
+            if !input.is_empty() {
+                result = result.combine(input.parse()?)?;
+            }
+        }
+        Ok(result)
+    }
+}
+
 #[derive(Clone, Copy)]
 enum Mode {
     Inject,
@@ -31,6 +57,9 @@ impl Combine for FieldMode {
 
 impl Parse for FieldMode {
     fn parse(input: ParseStream) -> syn::Result<Self> {
+        if input.peek(Token![async]) {
+            return Err(input.error("`#[di(async)]` belongs on the struct; fields use `inject` or `inject_transient`"));
+        }
         let name: Ident = input.parse()?;
         let mode = if name == "inject" {
             Mode::Inject
@@ -91,12 +120,11 @@ pub(crate) fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
         Err(_) => return Err(syn::Error::new(input.ident.span(), "cannot find the `froodi` dependency")),
     };
     let name = &input.ident;
-    if let Some(attr) = input.attrs.iter().find(|attr| attr.path().is_ident("di")) {
-        return Err(syn::Error::new(
-            attr.span(),
-            "Construct accepts `#[di(inject)]` and `#[di(inject_transient)]` on fields only; registration options belong in `registry!`",
-        ));
-    }
+    let asyncness = match parse_attrs::<ConstructMode>("di", &input.attrs) {
+        Some(Ok(mode)) => Some(mode.asyncness),
+        Some(Err((err, _))) => return Err(err),
+        None => None,
+    };
     let fields = match &input.data {
         Data::Struct(data) => &data.fields,
         _ => return Err(syn::Error::new(input.span(), "Construct can only be derived for structs")),
@@ -163,9 +191,15 @@ pub(crate) fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
         }
     }
     let (impl_generics, type_generics, where_clause) = generics.split_for_impl();
+    let execution = if asyncness.is_some() {
+        quote!(#crate_path::macros_utils::typed::AsyncExecution)
+    } else {
+        quote!(#crate_path::macros_utils::typed::SyncExecution)
+    };
     Ok(quote! {
         impl #impl_generics #crate_path::macros_utils::typed::Construct for #name #type_generics #where_clause {
             type Deps = (#(#resolvers,)*);
+            type Execution = #execution;
 
             fn instantiator() -> impl #crate_path::Instantiator<Self::Deps, Provides = Self, Error = #crate_path::InstantiateErrorKind>
                 + #crate_path::macros_utils::typed::SendSafety + #crate_path::macros_utils::typed::SyncSafety

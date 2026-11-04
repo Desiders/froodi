@@ -1,7 +1,17 @@
+#[cfg(feature = "async")]
+use crate::async_impl::Instantiator as AsyncInstantiator;
+#[cfg(feature = "async")]
+use crate::registry::linking::AsyncExecution;
 use crate::{
+    errors::InstantiatorErrorKind,
+    registry::{linking::SyncExecution, RegistrationId},
     utils::thread_safety::{RcThreadSafety, SendSafety, SyncSafety},
-    DependencyResolver, Inject, InstantiateErrorKind, Instantiator,
+    Container, Dependency, DependencyResolver, Inject, InstantiateErrorKind, Instantiator, ResolveErrorKind,
 };
+use alloc::collections::BTreeSet;
+#[cfg(feature = "async")]
+use core::future::Future;
+use core::marker::PhantomData;
 
 mod sealed {
     use crate::utils::thread_safety::RcThreadSafety;
@@ -39,14 +49,75 @@ impl<T: ?Sized> ConstructField<RcThreadSafety<T>> for RcThreadSafety<T> {
 ///
 /// Register the type with `provide::<T>()` in a `registry!` scope block.
 /// Scope, `config`, and `finalizer` are set in the registry.
+///
+/// `Execution` selects how dependencies are resolved before the factory assembles the fields.
 pub trait Construct: Sized + 'static {
     type Deps: DependencyResolver;
+    type Execution;
 
     fn instantiator() -> impl Instantiator<Self::Deps, Provides = Self, Error = InstantiateErrorKind> + SendSafety + SyncSafety;
 }
 
-/// Adapts a [`Construct`] implementation to an ordinary synchronous registration.
+pub struct ConstructInstantiator<Inst, Execution> {
+    inst: Inst,
+    marker: PhantomData<fn() -> Execution>,
+}
+
+impl<Inst: Clone, Execution> Clone for ConstructInstantiator<Inst, Execution> {
+    fn clone(&self) -> Self {
+        Self {
+            inst: self.inst.clone(),
+            marker: PhantomData,
+        }
+    }
+}
+
+impl<Inst: Instantiator<Deps>, Deps: DependencyResolver> Instantiator<Deps> for ConstructInstantiator<Inst, SyncExecution> {
+    type Provides = Inst::Provides;
+    type Error = Inst::Error;
+
+    #[inline]
+    fn instantiate(&mut self, dependencies: Deps) -> Result<Self::Provides, Self::Error> {
+        self.inst.instantiate(dependencies)
+    }
+
+    fn dependencies() -> BTreeSet<Dependency> {
+        Inst::dependencies()
+    }
+
+    #[inline]
+    fn instantiate_linked(
+        &self,
+        container: &Container,
+        edges: &[RegistrationId],
+    ) -> Result<Self::Provides, InstantiatorErrorKind<ResolveErrorKind, InstantiateErrorKind>> {
+        self.inst.instantiate_linked(container, edges)
+    }
+}
+
+#[cfg(feature = "async")]
+impl<Inst: Instantiator<Deps> + SendSafety, Deps: DependencyResolver + SendSafety> AsyncInstantiator<Deps>
+    for ConstructInstantiator<Inst, AsyncExecution>
+{
+    type Provides = Inst::Provides;
+    type Error = Inst::Error;
+
+    #[inline]
+    fn instantiate(&mut self, dependencies: Deps) -> impl Future<Output = Result<Self::Provides, Self::Error>> + SendSafety {
+        async move { self.inst.instantiate(dependencies) }
+    }
+
+    fn dependencies() -> BTreeSet<Dependency> {
+        Inst::dependencies()
+    }
+}
+
 #[must_use]
-pub fn provide<T: Construct>() -> impl Instantiator<T::Deps, Provides = T, Error = InstantiateErrorKind> + SendSafety + SyncSafety {
-    T::instantiator()
+#[inline]
+pub fn provide<T: Construct>() -> ConstructInstantiator<impl Instantiator<T::Deps, Provides = T, Error = InstantiateErrorKind>, T::Execution>
+{
+    ConstructInstantiator {
+        inst: T::instantiator(),
+        marker: PhantomData,
+    }
 }

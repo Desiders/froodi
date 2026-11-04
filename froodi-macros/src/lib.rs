@@ -72,6 +72,22 @@ pub fn injectable(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// a fresh value of its exact field type. `#[di(inject)]` explicitly selects
 /// the default behavior.
 ///
+/// Construction is synchronous by default. With Froodi's `async` feature,
+/// add `#[di(async)]` to the struct to resolve its fields asynchronously.
+/// Those fields may depend on sync or async providers; registration still uses
+/// `provide::<Type>()`:
+///
+/// ```text
+/// #[derive(froodi::Construct)]
+/// #[di(async)]
+/// struct Service {
+///     #[di(inject)]
+///     client: Arc<APIClient>,
+///     #[di(inject_transient)]
+///     dao: Box<dyn UserDao>,
+/// }
+/// ```
+///
 /// For example, a constructed service can use both field modes:
 ///
 /// ```rust
@@ -123,8 +139,8 @@ pub fn injectable(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// their own cache settings. Constructed values are cached by default.
 /// `finalizer` receives an `Arc<Type>` in thread-safe mode or an `Rc<Type>`
 /// in local mode when the scope closes after `get` resolved the value.
-/// `get_transient` does not schedule it. A derived `Construct` makes a
-/// synchronous factory, so a supplied finalizer must also be synchronous.
+/// `get_transient` does not schedule it. Use a synchronous finalizer by default,
+/// or an asynchronous finalizer for a struct marked with `#[di(async)]`.
 #[proc_macro_derive(Construct, attributes(di))]
 pub fn derive_construct(input: TokenStream) -> TokenStream {
     expand_with(input, provide::expand)

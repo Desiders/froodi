@@ -22,14 +22,32 @@ error: Construct field `Arguments.value`: dependency modes take no arguments; us
 24 |     #[di(inject = true)]
    |                 ^
 
-error: Construct accepts `#[di(inject)]` and `#[di(inject_transient)]` on fields only; registration options belong in `registry!`
-  --> tests/ui/registry/construct_attributes.rs:29:1
+error: expected `async`; field modes belong on fields and registration options belong in `registry!`
+  --> tests/ui/registry/construct_attributes.rs:29:6
    |
 29 | #[di(scope = App)]
-   | ^
+   |      ^^^^^
 
 error: Construct field `FieldPolicy.value`: expected `inject` or `inject_transient`; registration options belong in `registry!`
   --> tests/ui/registry/construct_attributes.rs:34:10
    |
 34 |     #[di(config = ())]
    |          ^^^^^^
+
+error: `async` specified more than once
+  --> tests/ui/registry/construct_attributes.rs:39:13
+   |
+39 | #[di(async, async)]
+   |             ^^^^^
+
+error: `async` specified more than once
+  --> tests/ui/registry/construct_attributes.rs:44:6
+   |
+44 | #[di(async)]
+   |      ^^^^^
+
+error: Construct field `AsyncField.value`: `#[di(async)]` belongs on the struct; fields use `inject` or `inject_transient`
+  --> tests/ui/registry/construct_attributes.rs:49:10
+   |
+49 |     #[di(async)]
+   |          ^^^^^

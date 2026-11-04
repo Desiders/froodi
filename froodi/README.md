@@ -108,6 +108,10 @@ See the runnable [registration example][examples/registration]. The
 modules; the [async example][examples/async_registration] mixes sync and async
 factories in one `registry!`.
 
+With the `async` feature, add `#[di(async)]` below `#[derive(Construct)]` to
+resolve a struct's fields asynchronously. Register it with the same `provide::<T>()`
+syntax; its dependencies can use sync or async factories.
+
 ## Concepts
 
 ### Dependency
