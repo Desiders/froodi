@@ -1,7 +1,5 @@
 use core::fmt::{self, Display, Formatter};
 
-use alloc::vec::Vec;
-
 pub trait Scope: Ord + Into<ScopeData> {
     #[must_use]
     fn name(&self) -> &'static str;
@@ -127,15 +125,15 @@ impl Display for ScopeData {
     }
 }
 
-pub(crate) struct ScopeDataWithChildScopesData {
+pub(crate) struct ScopeDataWithChildScopesData<'a> {
     pub scope_data: Option<ScopeData>,
-    pub child_scopes_data: Vec<ScopeData>,
+    pub child_scopes_data: &'a [ScopeData],
 }
 
-impl ScopeDataWithChildScopesData {
+impl<'a> ScopeDataWithChildScopesData<'a> {
     #[inline]
     #[must_use]
-    pub(crate) const fn new(scope_data: ScopeData, child_scopes_data: Vec<ScopeData>) -> Self {
+    pub(crate) const fn new(scope_data: ScopeData, child_scopes_data: &'a [ScopeData]) -> Self {
         Self {
             scope_data: Some(scope_data),
             child_scopes_data,
@@ -143,42 +141,23 @@ impl ScopeDataWithChildScopesData {
     }
 
     #[must_use]
-    pub(crate) fn new_with_sort(mut scopes: Vec<ScopeData>) -> Self {
-        scopes.sort_by_key(|scope| scope.priority);
-        Self::from_sorted(scopes)
-    }
-
-    #[must_use]
-    pub(crate) fn from_sorted(mut scopes: Vec<ScopeData>) -> Self {
-        if scopes.is_empty() {
-            Self {
+    pub(crate) fn from_sorted(scopes: &'a [ScopeData]) -> Self {
+        match scopes.split_first() {
+            Some((scope, children)) => Self {
+                scope_data: Some(*scope),
+                child_scopes_data: children,
+            },
+            None => Self {
                 scope_data: None,
-                child_scopes_data: Vec::new(),
-            }
-        } else {
-            let scope_data = scopes.remove(0);
-            Self {
-                scope_data: Some(scope_data),
-                child_scopes_data: scopes,
-            }
+                child_scopes_data: &[],
+            },
         }
     }
 
     #[inline]
     #[must_use]
-    pub(crate) fn child(mut self) -> Self {
-        if self.child_scopes_data.is_empty() {
-            Self {
-                scope_data: None,
-                child_scopes_data: Vec::new(),
-            }
-        } else {
-            let scope_data = self.child_scopes_data.remove(0);
-            Self {
-                scope_data: Some(scope_data),
-                child_scopes_data: self.child_scopes_data,
-            }
-        }
+    pub(crate) fn child(self) -> Self {
+        Self::from_sorted(self.child_scopes_data)
     }
 }
 
@@ -286,9 +265,9 @@ mod tests {
     }
 
     #[test]
-    fn test_new_with_sort() {
+    fn test_from_sorted() {
         // Deliberately unsorted input so the sort is actually exercised.
-        let shuffled: Vec<ScopeData> = vec![
+        let mut shuffled: Vec<ScopeData> = vec![
             ScopeData::from(Action),  // 4
             ScopeData::from(Runtime), // 0
             ScopeData::from(Step),    // 5
@@ -296,7 +275,8 @@ mod tests {
             ScopeData::from(Request), // 3
             ScopeData::from(Session), // 2
         ];
-        let result = ScopeDataWithChildScopesData::new_with_sort(shuffled);
+        shuffled.sort_by_key(|scope| scope.priority);
+        let result = ScopeDataWithChildScopesData::from_sorted(&shuffled);
 
         assert_eq!(result.scope_data, Some(ScopeData::from(Runtime)));
 
@@ -313,7 +293,7 @@ mod tests {
             ]
         );
 
-        let empty = ScopeDataWithChildScopesData::new_with_sort(Vec::new());
+        let empty = ScopeDataWithChildScopesData::from_sorted(&[]);
         assert_eq!(empty.scope_data, None);
         assert!(empty.child_scopes_data.is_empty());
     }
@@ -321,7 +301,7 @@ mod tests {
     #[test]
     fn test_child() {
         let scopes: Vec<ScopeData> = vec![ScopeData::from(App), ScopeData::from(Request), ScopeData::from(Step)];
-        let root = ScopeDataWithChildScopesData::new_with_sort(scopes);
+        let root = ScopeDataWithChildScopesData::from_sorted(&scopes);
         assert_eq!(root.scope_data, Some(ScopeData::from(App)));
         assert_eq!(root.child_scopes_data.len(), 2);
 
@@ -348,7 +328,7 @@ mod tests {
     fn test_new() {
         let app = ScopeData::from(App);
         let children = vec![ScopeData::from(Request), ScopeData::from(Step)];
-        let built = ScopeDataWithChildScopesData::new(app, children.clone());
+        let built = ScopeDataWithChildScopesData::new(app, &children);
         assert_eq!(built.scope_data, Some(app));
         assert_eq!(built.child_scopes_data, children);
     }

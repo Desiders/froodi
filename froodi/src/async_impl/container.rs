@@ -1,5 +1,12 @@
-use alloc::{boxed::Box, vec::Vec};
-use core::future::Future;
+#[cfg(all(test, feature = "thread_safe"))]
+mod snapshot_tests;
+
+use alloc::boxed::Box;
+use core::{
+    future::{poll_fn, Future},
+    pin::Pin,
+    task::Poll,
+};
 use tracing::{debug, error, trace, warn};
 
 use super::service::Service as _;
@@ -53,34 +60,43 @@ impl Container {
     ///
     /// # Panics
     /// Panics if the scopes are exhausted before `is_target` accepts one.
-    fn build_root(registry: Registry, is_target: impl Fn(&ScopeData) -> bool) -> Self {
-        let mut scopes = registry.get_scope_with_child_scopes();
+    fn build_root(mut registry: Registry, is_target: impl Fn(&ScopeData) -> bool) -> Self {
+        registry.scopes_data.sort_by_key(|scope| scope.priority);
+        let scope_data = registry
+            .get_scope_with_child_scopes()
+            .scope_data
+            .expect("scopes len (is 0) should be > 0");
         let registry = RcThreadSafety::new(registry);
+        let mut child_scopes_start = 1;
         let mut sync_container = BoxedSyncContainerInner {
             cache: Cache::new(),
             context: Context::new(),
             registry: registry.clone(),
-            scope_data: scopes.scope_data.expect("scopes len (is 0) should be > 0"),
-            child_scopes_data: scopes.child_scopes_data.clone(),
+            scope_data,
+            child_scopes_start,
             parent: None,
             close_parent: false,
             #[cfg(feature = "thread_safe")]
-            per_type_locks: PerTypeSyncLocks::default(),
+            per_type_locks: PerTypeSyncLocks::from_registry(&registry),
         };
         let mut container = BoxedContainerInner {
             cache: Cache::new(),
             context: Context::new(),
             registry: registry.clone(),
-            scope_data: scopes.scope_data.expect("scopes len (is 0) should be > 0"),
-            child_scopes_data: scopes.child_scopes_data.clone(),
+            scope_data,
+            child_scopes_start,
             parent: None,
             close_parent: false,
         };
         while !is_target(&container.scope_data) {
-            scopes = scopes.child();
-            let scope_data = scopes.scope_data.expect("scope chain ended before reaching a target scope");
-            sync_container = sync_container.init_child(registry.clone(), scope_data, scopes.child_scopes_data.clone(), true);
-            container = container.init_child(registry.clone(), scope_data, scopes.child_scopes_data.clone(), true);
+            let scope_data = registry
+                .scopes_data
+                .get(child_scopes_start)
+                .copied()
+                .expect("scope chain ended before reaching a target scope");
+            child_scopes_start += 1;
+            sync_container = sync_container.init_child(registry.clone(), scope_data, child_scopes_start, true);
+            container = container.init_child(registry.clone(), scope_data, child_scopes_start, true);
         }
         (container, sync_container).into()
     }
@@ -123,14 +139,30 @@ impl Container {
         &'a self,
         selected: Selection<'a, InstantiatorData>,
     ) -> impl Future<Output = Result<RcThreadSafety<Dep>, ResolveErrorKind>> + SendSafety + 'a {
+        let mut selected = Some(selected);
+        let mut cold: Option<Pin<Box<_>>> = None;
+        // Check the cache on first poll; box only the cold path to keep this future Unpin.
+        poll_fn(move |cx| {
+            if cold.is_none() {
+                let type_info = TypeInfo::of::<Dep>();
+                if let Some(dependency) = { self.inner.cache.read().get(&type_info) } {
+                    debug!("Found in cache");
+                    return Poll::Ready(Ok(dependency));
+                }
+                cold = Some(self.get_selected_cold(selected.take().expect("cold resolver initialized only once")));
+            }
+            cold.as_mut().expect("cold resolver initialized above").as_mut().poll(cx)
+        })
+    }
+
+    fn get_selected_cold<'a, Dep: SendSafety + SyncSafety + 'static>(
+        &'a self,
+        selected: Selection<'a, InstantiatorData>,
+    ) -> Pin<Box<impl Future<Output = Result<RcThreadSafety<Dep>, ResolveErrorKind>> + SendSafety + 'a>> {
         let type_info = TypeInfo::of::<Dep>();
         let dep_name = type_info.name;
         let scope_name = self.inner.scope_data.name;
         let fut = async move {
-            if let Some(dependency) = { self.inner.cache.read().get(&type_info) } {
-                debug!("Found in cache");
-                return Ok(dependency);
-            }
             debug!("Not found in cache");
 
             let by_type = matches!(selected, Selection::ByType);
@@ -190,7 +222,7 @@ impl Container {
             }
 
             trace!("Lock instantiator call");
-            let inst_call_lock = self.per_type_locks.get(type_info.id);
+            let inst_call_lock = self.per_type_locks.get_for(type_info.id, &data.metadata);
             let _guard = inst_call_lock.lock().await;
 
             if let Some(dependency) = { self.inner.cache.read().get(&type_info) } {
@@ -375,13 +407,13 @@ impl Container {
         context: Context,
         registry: RcThreadSafety<Registry>,
         scope_data: ScopeData,
-        child_scopes_data: Vec<ScopeData>,
+        child_scopes_start: usize,
         close_parent: bool,
     ) -> Self {
-        let mut cache = self.inner.cache.write().child();
+        let mut cache = self.inner.child_cache();
         cache.extend_context(&context);
 
-        let mut sync_cache = self.sync.inner.cache.write().child();
+        let mut sync_cache = self.sync.inner.child_cache();
         let sync_context = context.clone();
         sync_cache.extend_context(&sync_context);
 
@@ -391,9 +423,11 @@ impl Container {
                 context,
                 registry: registry.clone(),
                 scope_data,
-                child_scopes_data: child_scopes_data.clone(),
+                child_scopes_start,
                 parent: Some(self.inner),
                 close_parent,
+                #[cfg(feature = "thread_safe")]
+                snapshot_gate: LocalLock::new(()),
             }),
             sync: SyncContainer {
                 #[cfg(feature = "thread_safe")]
@@ -403,9 +437,11 @@ impl Container {
                     context: sync_context,
                     registry,
                     scope_data,
-                    child_scopes_data,
+                    child_scopes_start,
                     parent: Some(sync_container),
                     close_parent,
+                    #[cfg(feature = "thread_safe")]
+                    snapshot_gate: LocalLock::new(()),
                 }),
             },
             per_type_locks: self.per_type_locks.clone(),
@@ -418,13 +454,13 @@ impl Container {
         sync_container: SyncContainer,
         registry: RcThreadSafety<Registry>,
         scope_data: ScopeData,
-        child_scopes_data: Vec<ScopeData>,
+        child_scopes_start: usize,
         close_parent: bool,
     ) -> Self {
-        let cache = self.inner.cache.write().child();
+        let cache = self.inner.child_cache();
         let context = self.inner.context.clone();
 
-        let sync_cache = self.sync.inner.cache.write().child();
+        let sync_cache = self.sync.inner.child_cache();
         let sync_context = self.sync.inner.context.clone();
 
         Self {
@@ -433,9 +469,11 @@ impl Container {
                 context,
                 registry: registry.clone(),
                 scope_data,
-                child_scopes_data: child_scopes_data.clone(),
+                child_scopes_start,
                 parent: Some(self.inner),
                 close_parent,
+                #[cfg(feature = "thread_safe")]
+                snapshot_gate: LocalLock::new(()),
             }),
             sync: SyncContainer {
                 #[cfg(feature = "thread_safe")]
@@ -445,9 +483,11 @@ impl Container {
                     context: sync_context,
                     registry,
                     scope_data,
-                    child_scopes_data,
+                    child_scopes_start,
                     parent: Some(sync_container),
                     close_parent,
+                    #[cfg(feature = "thread_safe")]
+                    snapshot_gate: LocalLock::new(()),
                 }),
             },
             per_type_locks: self.per_type_locks.clone(),
@@ -466,31 +506,25 @@ impl Container {
         no_target: impl Fn() -> E,
     ) -> Result<Container, E> {
         let scopes = self.inner.get_scope_with_child_scopes().child();
-        let mut child = self.init_descendant(context.clone(), scopes.scope_data.ok_or(no_child)?, scopes.child_scopes_data, false);
+        let scope_data = scopes.scope_data;
+        let child_scopes_start = self.inner.child_scopes_start + 1;
+        // Preserve Context clone/drop order on failed scope builds.
+        let mut child = self.init_descendant(context.clone(), scope_data.ok_or(no_child)?, child_scopes_start, false);
         while !is_target(&child.inner.scope_data) {
             let scopes = child.inner.get_scope_with_child_scopes().child();
-            child = child.init_descendant(
-                context.clone(),
-                scopes.scope_data.ok_or_else(&no_target)?,
-                scopes.child_scopes_data,
-                true,
-            );
+            let scope_data = scopes.scope_data;
+            let child_scopes_start = child.inner.child_scopes_start + 1;
+            child = child.init_descendant(context.clone(), scope_data.ok_or_else(&no_target)?, child_scopes_start, true);
         }
         Ok(child)
     }
 
-    fn init_descendant(
-        self,
-        context: Option<Context>,
-        scope_data: ScopeData,
-        child_scopes_data: Vec<ScopeData>,
-        close_parent: bool,
-    ) -> Container {
+    fn init_descendant(self, context: Option<Context>, scope_data: ScopeData, child_scopes_start: usize, close_parent: bool) -> Container {
         let registry = self.inner.registry.clone();
         let sync_container = self.sync.clone();
         match context {
-            Some(context) => self.init_child_with_context(sync_container, context, registry, scope_data, child_scopes_data, close_parent),
-            None => self.init_child(sync_container, registry, scope_data, child_scopes_data, close_parent),
+            Some(context) => self.init_child_with_context(sync_container, context, registry, scope_data, child_scopes_start, close_parent),
+            None => self.init_child(sync_container, registry, scope_data, child_scopes_start, close_parent),
         }
     }
 }
@@ -654,20 +688,14 @@ struct BoxedContainerInner {
     context: Context,
     registry: RcThreadSafety<Registry>,
     scope_data: ScopeData,
-    child_scopes_data: Vec<ScopeData>,
+    child_scopes_start: usize,
     parent: Option<Box<BoxedContainerInner>>,
     close_parent: bool,
 }
 
 impl BoxedContainerInner {
     #[must_use]
-    fn init_child(
-        self,
-        registry: RcThreadSafety<Registry>,
-        scope_data: ScopeData,
-        child_scopes_data: Vec<ScopeData>,
-        close_parent: bool,
-    ) -> Self {
+    fn init_child(self, registry: RcThreadSafety<Registry>, scope_data: ScopeData, child_scopes_start: usize, close_parent: bool) -> Self {
         let cache = self.cache.child();
         let context = self.context.clone();
 
@@ -677,7 +705,7 @@ impl BoxedContainerInner {
             context,
             registry,
             scope_data,
-            child_scopes_data,
+            child_scopes_start,
             close_parent,
         }
     }
@@ -690,7 +718,7 @@ impl From<BoxedContainerInner> for ContainerInner {
             context,
             registry,
             scope_data,
-            child_scopes_data,
+            child_scopes_start,
             parent,
             close_parent,
         }: BoxedContainerInner,
@@ -701,18 +729,21 @@ impl From<BoxedContainerInner> for ContainerInner {
             context,
             registry,
             scope_data,
-            child_scopes_data,
+            child_scopes_start,
             close_parent,
+            #[cfg(feature = "thread_safe")]
+            snapshot_gate: LocalLock::new(()),
         }
     }
 }
 
 impl From<(BoxedContainerInner, BoxedSyncContainerInner)> for Container {
     fn from((inner, sync): (BoxedContainerInner, BoxedSyncContainerInner)) -> Self {
+        let per_type_locks = PerTypeAsyncLocks::from_registry(&inner.registry);
         Self {
             inner: RcThreadSafety::new(inner.into()),
             sync: sync.into(),
-            per_type_locks: PerTypeAsyncLocks::default(),
+            per_type_locks,
         }
     }
 }
@@ -722,15 +753,32 @@ pub(crate) struct ContainerInner {
     context: Context,
     pub(crate) registry: RcThreadSafety<Registry>,
     scope_data: ScopeData,
-    child_scopes_data: Vec<ScopeData>,
+    child_scopes_start: usize,
     parent: Option<RcThreadSafety<ContainerInner>>,
     close_parent: bool,
+    #[cfg(feature = "thread_safe")]
+    snapshot_gate: LocalLock<()>,
 }
 
 impl ContainerInner {
     #[inline]
-    pub(crate) fn get_scope_with_child_scopes(&self) -> ScopeDataWithChildScopesData {
-        ScopeDataWithChildScopesData::new(self.scope_data, self.child_scopes_data.clone())
+    fn child_cache(&self) -> Cache {
+        // Take the gate first so queued snapshots do not hold cache readers.
+        #[cfg(feature = "thread_safe")]
+        let _snapshot_guard = self.snapshot_gate.write();
+        // Cache::child copies handles; user callbacks run after these guards drop.
+        let cache = self.cache.read();
+        cache.child()
+    }
+
+    #[inline]
+    pub(crate) fn get_scope_with_child_scopes(&self) -> ScopeDataWithChildScopesData<'_> {
+        ScopeDataWithChildScopesData::new(self.scope_data, &self.registry.scopes_data[self.child_scopes_start..])
+    }
+
+    #[cfg(test)]
+    fn child_scopes_data(&self) -> &[ScopeData] {
+        &self.registry.scopes_data[self.child_scopes_start..]
     }
 
     #[allow(clippy::missing_panics_doc)]
@@ -1010,7 +1058,7 @@ mod tests {
 
         // Runtime scope is skipped by default, but it is still present in the parent
         assert_eq!(app_container_inner.parent.as_ref().unwrap().scope_data.priority, Runtime.priority());
-        assert_eq!(app_container_inner.child_scopes_data.len(), 4);
+        assert_eq!(app_container_inner.child_scopes_data().len(), 4);
         assert_eq!(app_container_inner.scope_data.priority, App.priority());
 
         // Session scope is skipped by default, but it is still present in the child registries
@@ -1018,26 +1066,26 @@ mod tests {
             request_container_inner.parent.as_ref().unwrap().scope_data.priority,
             Session.priority()
         );
-        assert_eq!(request_container_inner.child_scopes_data.len(), 2);
+        assert_eq!(request_container_inner.child_scopes_data().len(), 2);
         assert_eq!(request_container_inner.scope_data.priority, Request.priority());
         // Session scope is skipped by default, so it is not the first child registry
         assert_eq!(
             request_container_inner.scope_data.priority,
-            app_container_inner.child_scopes_data[1].priority
+            app_container_inner.child_scopes_data()[1].priority
         );
         assert_eq!(
             action_container_inner.scope_data.priority,
-            request_container_inner.child_scopes_data[0].priority
+            request_container_inner.child_scopes_data()[0].priority
         );
 
-        assert_eq!(action_container_inner.child_scopes_data.len(), 1);
+        assert_eq!(action_container_inner.child_scopes_data().len(), 1);
         assert_eq!(action_container_inner.scope_data.priority, Action.priority());
 
-        assert_eq!(step_container_inner.child_scopes_data.len(), 0);
+        assert_eq!(step_container_inner.child_scopes_data().len(), 0);
         assert_eq!(step_container_inner.scope_data.priority, Step.priority());
         assert_eq!(
             step_container_inner.scope_data.priority,
-            action_container_inner.child_scopes_data[0].priority
+            action_container_inner.child_scopes_data()[0].priority
         );
     }
 
@@ -1082,42 +1130,42 @@ mod tests {
         let step_container_inner = step_container.inner;
 
         assert!(runtime_container_inner.parent.is_none());
-        assert_eq!(runtime_container_inner.child_scopes_data.len(), 5);
+        assert_eq!(runtime_container_inner.child_scopes_data().len(), 5);
         assert_eq!(runtime_container_inner.scope_data.priority, Runtime.priority());
         assert_eq!(
             app_container_inner.scope_data.priority,
-            runtime_container_inner.child_scopes_data[0].priority
+            runtime_container_inner.child_scopes_data()[0].priority
         );
 
-        assert_eq!(app_container_inner.child_scopes_data.len(), 4);
+        assert_eq!(app_container_inner.child_scopes_data().len(), 4);
         assert_eq!(app_container_inner.scope_data.priority, App.priority());
         assert_eq!(
             session_container_inner.scope_data.priority,
-            app_container_inner.child_scopes_data[0].priority
+            app_container_inner.child_scopes_data()[0].priority
         );
 
-        assert_eq!(session_container_inner.child_scopes_data.len(), 3);
+        assert_eq!(session_container_inner.child_scopes_data().len(), 3);
         assert_eq!(session_container_inner.scope_data.priority, Session.priority());
         assert_eq!(
             request_container_inner.scope_data.priority,
-            session_container_inner.child_scopes_data[0].priority
+            session_container_inner.child_scopes_data()[0].priority
         );
 
-        assert_eq!(request_container_inner.child_scopes_data.len(), 2);
+        assert_eq!(request_container_inner.child_scopes_data().len(), 2);
         assert_eq!(request_container_inner.scope_data.priority, Request.priority());
         assert_eq!(
             action_container_inner.scope_data.priority,
-            request_container_inner.child_scopes_data[0].priority
+            request_container_inner.child_scopes_data()[0].priority
         );
 
-        assert_eq!(action_container_inner.child_scopes_data.len(), 1);
+        assert_eq!(action_container_inner.child_scopes_data().len(), 1);
         assert_eq!(action_container_inner.scope_data.priority, Action.priority());
         assert_eq!(
             step_container_inner.scope_data.priority,
-            action_container_inner.child_scopes_data[0].priority
+            action_container_inner.child_scopes_data()[0].priority
         );
 
-        assert_eq!(step_container_inner.child_scopes_data.len(), 0);
+        assert_eq!(step_container_inner.child_scopes_data().len(), 0);
         assert_eq!(step_container_inner.scope_data.priority, Step.priority());
     }
 

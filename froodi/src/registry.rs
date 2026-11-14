@@ -16,8 +16,31 @@ pub use boundary::declare;
 pub(crate) use frontend::{finish, IntoRegistry, RegistrationId};
 
 use alloc::{
-    collections::{btree_map::BTreeMap, btree_set::BTreeSet},
+    collections::{btree_map::Entry as BTreeMapEntry, btree_set::Iter as BTreeSetIter, BTreeMap, BTreeSet},
     vec::Vec,
+};
+
+#[cfg(feature = "async")]
+use alloc::boxed::Box;
+#[cfg(all(
+    feature = "std",
+    feature = "thread_safe",
+    not(feature = "lock-parking-lot"),
+    not(feature = "lock-spin")
+))]
+use core::any::TypeId;
+#[cfg(test)]
+use core::cell::Cell;
+#[cfg(feature = "async")]
+use core::mem::replace;
+
+#[cfg(feature = "async")]
+use crate::async_impl::{
+    finalizer::BoxedCloneFinalizer as AsyncBoxedCloneFinalizer,
+    instantiator::{
+        boxed_container_instantiator as boxed_async_container_instantiator, RegistrationInstantiator as AsyncRegistrationInstantiator,
+    },
+    Container as AsyncContainer,
 };
 
 #[cfg(test)]
@@ -25,13 +48,13 @@ extern crate std;
 
 #[cfg(test)]
 std::thread_local! {
-    pub(crate) static CYCLE_CHECKS: core::cell::Cell<usize> = const { core::cell::Cell::new(0) };
+    pub(crate) static CYCLE_CHECKS: Cell<usize> = const { Cell::new(0) };
 }
 
 use crate::{
     any::TypeInfo,
     dependency::{Dependency, EMPTY_DEPENDENCIES},
-    errors::ValidationErrorKind,
+    errors::{ResolveErrorKind, ValidationErrorKind},
     finalizer::BoxedCloneFinalizer,
     instantiator::{boxed_container_instantiator, RegistrationInstantiator},
     scope::{ScopeData, ScopeDataWithChildScopesData},
@@ -40,9 +63,34 @@ use crate::{
 
 #[derive(Clone)]
 pub(crate) struct RegistrationMetadata {
+    #[cfg(all(
+        feature = "std",
+        feature = "thread_safe",
+        not(feature = "lock-parking-lot"),
+        not(feature = "lock-spin")
+    ))]
+    pub(crate) lock_id: RegistrationId,
     pub(crate) dependencies: BTreeSet<Dependency>,
     pub(crate) config: Config,
     pub(crate) scope_data: ScopeData,
+}
+
+impl RegistrationMetadata {
+    #[inline]
+    pub(crate) fn new(dependencies: BTreeSet<Dependency>, config: Config, scope_data: ScopeData) -> Self {
+        Self {
+            #[cfg(all(
+                feature = "std",
+                feature = "thread_safe",
+                not(feature = "lock-parking-lot"),
+                not(feature = "lock-spin")
+            ))]
+            lock_id: RegistrationId::UNINDEXED_LOCK,
+            dependencies,
+            config,
+            scope_data,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -55,8 +103,8 @@ pub struct InstantiatorData {
 #[cfg(feature = "async")]
 #[derive(Clone)]
 pub struct AsyncInstantiatorData {
-    pub(crate) instantiator: crate::async_impl::instantiator::RegistrationInstantiator,
-    pub(crate) finalizer: Option<crate::async_impl::finalizer::BoxedCloneFinalizer>,
+    pub(crate) instantiator: AsyncRegistrationInstantiator,
+    pub(crate) finalizer: Option<AsyncBoxedCloneFinalizer>,
     pub(crate) metadata: RegistrationMetadata,
 }
 
@@ -83,7 +131,7 @@ impl Selected {
             Selected::Sync(data) => link_sync_keys(data, keys),
             #[cfg(feature = "async")]
             Selected::Async(data) => {
-                if let crate::async_impl::instantiator::RegistrationInstantiator::Linked(executor) = &mut data.instantiator {
+                if let AsyncRegistrationInstantiator::Linked(executor) = &mut data.instantiator {
                     executor.keys = executor.edges.iter().map(|id| keys[id.index()].clone()).collect::<Vec<_>>().into();
                     data.metadata.dependencies = executor.keys.iter().cloned().map(|type_info| Dependency { type_info }).collect();
                 }
@@ -107,10 +155,37 @@ pub(crate) struct Entry {
     // Erased composition can supply both execution kinds for one output type.
     // Async lookup prefers its async provider; sync lookup retains its own provider.
     #[cfg(feature = "async")]
-    sync: Option<alloc::boxed::Box<InstantiatorData>>,
+    sync: Option<Box<InstantiatorData>>,
 }
 
 impl Entry {
+    fn metadata(&self, is_async: bool) -> Option<(&BTreeSet<Dependency>, ScopeData)> {
+        if is_async {
+            self.selected.metadata()
+        } else {
+            self.sync().map(|data| (&data.metadata.dependencies, data.metadata.scope_data))
+        }
+    }
+
+    #[cfg(all(
+        feature = "std",
+        feature = "thread_safe",
+        not(feature = "lock-parking-lot"),
+        not(feature = "lock-spin")
+    ))]
+    pub(crate) fn set_lock_id(&mut self, id: RegistrationId) {
+        match &mut self.selected {
+            Selected::Sync(data) => data.metadata.lock_id = id,
+            #[cfg(feature = "async")]
+            Selected::Async(data) => data.metadata.lock_id = id,
+            Selected::Missing => (),
+        }
+        #[cfg(feature = "async")]
+        if let Some(data) = &mut self.sync {
+            data.metadata.lock_id = id;
+        }
+    }
+
     pub(crate) fn sync(&self) -> Option<&InstantiatorData> {
         match &self.selected {
             Selected::Sync(data) => Some(data),
@@ -134,12 +209,12 @@ impl Entry {
         #[cfg(feature = "async")]
         match selected {
             Selected::Sync(data) if self.selected.is_async() => {
-                self.sync = Some(alloc::boxed::Box::new(data));
+                self.sync = Some(Box::new(data));
                 return;
             }
             Selected::Async(data) => {
-                if let Selected::Sync(sync) = core::mem::replace(&mut self.selected, Selected::Async(data)) {
-                    self.sync = Some(alloc::boxed::Box::new(sync));
+                if let Selected::Sync(sync) = replace(&mut self.selected, Selected::Async(data)) {
+                    self.sync = Some(Box::new(sync));
                 }
                 return;
             }
@@ -164,7 +239,7 @@ impl Entry {
             Selected::Sync(data) => remap_sync(data, ids),
             #[cfg(feature = "async")]
             Selected::Async(data) => {
-                if let crate::async_impl::instantiator::RegistrationInstantiator::Linked(executor) = &mut data.instantiator {
+                if let AsyncRegistrationInstantiator::Linked(executor) = &mut data.instantiator {
                     executor.remap(ids);
                 }
                 if let Some(sync) = &mut self.sync {
@@ -184,7 +259,7 @@ impl Entry {
             }
             #[cfg(feature = "async")]
             Selected::Async(data) => {
-                if let crate::async_impl::instantiator::RegistrationInstantiator::Linked(executor) = &data.instantiator {
+                if let AsyncRegistrationInstantiator::Linked(executor) = &data.instantiator {
                     return &executor.keys;
                 }
             }
@@ -211,10 +286,7 @@ impl Entry {
         }
         #[cfg(feature = "async")]
         if let Selected::Async(data) = &self.selected {
-            return matches!(
-                data.instantiator,
-                crate::async_impl::instantiator::RegistrationInstantiator::Linked(_)
-            );
+            return matches!(data.instantiator, AsyncRegistrationInstantiator::Linked(_));
         }
         false
     }
@@ -248,7 +320,25 @@ pub struct Registry {
     pub(crate) indexed: Vec<(TypeInfo, Entry)>,
 }
 
+struct CycleFrame<'a> {
+    key: TypeInfo,
+    is_async: bool,
+    dependencies: BTreeSetIter<'a, Dependency>,
+}
+
 impl Registry {
+    #[cfg(all(
+        feature = "std",
+        feature = "thread_safe",
+        not(feature = "lock-parking-lot"),
+        not(feature = "lock-spin")
+    ))]
+    pub(crate) fn dense_lock_keys(&self) -> impl Iterator<Item = TypeId> + '_ {
+        // No linked executors means the old lazy map path, with no dense allocation.
+        let len = if self.indexed.is_empty() { 0 } else { self.entries.len() };
+        self.entries.keys().take(len).map(|key| key.id)
+    }
+
     #[allow(clippy::similar_names)]
     pub(crate) fn new<T, S, const N: usize>(entries: BTreeMap<TypeInfo, InstantiatorData>) -> Self
     where
@@ -266,24 +356,16 @@ impl Registry {
             Selected::Sync(InstantiatorData {
                 instantiator: boxed_container_instantiator().into(),
                 finalizer: None,
-                metadata: RegistrationMetadata {
-                    dependencies: EMPTY_DEPENDENCIES,
-                    config: Config { cache_provides: false },
-                    scope_data,
-                },
+                metadata: RegistrationMetadata::new(EMPTY_DEPENDENCIES, Config { cache_provides: false }, scope_data),
             }),
         );
         #[cfg(feature = "async")]
         registry.insert(
-            TypeInfo::new::<crate::async_impl::Container>("async_impl::Container"),
+            TypeInfo::new::<AsyncContainer>("async_impl::Container"),
             Selected::Async(AsyncInstantiatorData {
-                instantiator: crate::async_impl::instantiator::boxed_container_instantiator().into(),
+                instantiator: boxed_async_container_instantiator().into(),
                 finalizer: None,
-                metadata: RegistrationMetadata {
-                    dependencies: EMPTY_DEPENDENCIES,
-                    config: Config { cache_provides: false },
-                    scope_data,
-                },
+                metadata: RegistrationMetadata::new(EMPTY_DEPENDENCIES, Config { cache_provides: false }, scope_data),
             }),
         );
         registry.scopes_data.push(scope_data);
@@ -299,10 +381,10 @@ impl Registry {
 
     pub(crate) fn insert(&mut self, key: TypeInfo, selected: Selected) {
         match self.entries.entry(key) {
-            alloc::collections::btree_map::Entry::Vacant(entry) => {
+            BTreeMapEntry::Vacant(entry) => {
                 entry.insert(Entry::from_selected(selected));
             }
-            alloc::collections::btree_map::Entry::Occupied(mut entry) => entry.get_mut().replace(selected),
+            BTreeMapEntry::Occupied(mut entry) => entry.get_mut().replace(selected),
         }
     }
 
@@ -321,12 +403,12 @@ impl Registry {
         self.entries.get(type_info).and_then(Entry::sync)
     }
 
-    pub(crate) fn unavailable(&self, type_info: TypeInfo) -> crate::ResolveErrorKind {
+    pub(crate) fn unavailable(&self, type_info: TypeInfo) -> ResolveErrorKind {
         #[cfg(feature = "async")]
         if self.get_async(&type_info).is_some() {
-            return crate::ResolveErrorKind::AsyncRequired { type_info };
+            return ResolveErrorKind::AsyncRequired { type_info };
         }
-        crate::ResolveErrorKind::NoInstantiator { type_info }
+        ResolveErrorKind::NoInstantiator { type_info }
     }
 
     #[cfg(feature = "async")]
@@ -340,8 +422,8 @@ impl Registry {
 
     #[inline]
     #[must_use]
-    pub(crate) fn get_scope_with_child_scopes(&self) -> ScopeDataWithChildScopesData {
-        ScopeDataWithChildScopesData::new_with_sort(self.scopes_data.clone())
+    pub(crate) fn get_scope_with_child_scopes(&self) -> ScopeDataWithChildScopesData<'_> {
+        ScopeDataWithChildScopesData::from_sorted(&self.scopes_data)
     }
 
     pub fn validate(&self) -> Result<(), ValidationErrorKind> {
@@ -352,15 +434,18 @@ impl Registry {
     pub(crate) fn detect_cyclic_dependencies(&self) -> Result<(), ValidationErrorKind> {
         #[cfg(test)]
         CYCLE_CHECKS.with(|checks| checks.set(checks.get() + 1));
-        let mut visited = BTreeSet::new();
+        // true: active path; false: fully visited.
+        let mut visited = BTreeMap::new();
         let mut stack = Vec::new();
         for (key, entry) in &self.entries {
             for is_async in [false, true] {
-                if self.metadata(key, is_async).is_some() && self.dfs_visit(key, is_async, &mut visited, &mut stack) {
-                    let mut graph = stack.into_iter().map(|(key, _)| key).collect::<Vec<_>>();
-                    return Err(ValidationErrorKind::CyclicDependency {
-                        graph: (graph.remove(0), graph.into_boxed_slice()),
-                    });
+                if let Some((dependencies, _)) = entry.metadata(is_async) {
+                    if self.dfs_visit(key, is_async, dependencies, &mut visited, &mut stack) {
+                        let mut graph = stack.into_iter().map(|frame| frame.key).collect::<Vec<_>>();
+                        return Err(ValidationErrorKind::CyclicDependency {
+                            graph: (graph.remove(0), graph.into_boxed_slice()),
+                        });
+                    }
                 }
                 if !entry.selected.is_async() {
                     break;
@@ -373,16 +458,10 @@ impl Registry {
     pub(crate) fn detect_unreachable_scopes(&self) -> Result<(), ValidationErrorKind> {
         for (key, entry) in &self.entries {
             for is_async in [false, true] {
-                if let Some((dependencies, scope)) = self.metadata(key, is_async) {
+                if let Some((dependencies, scope)) = entry.metadata(is_async) {
                     for dependency in dependencies {
                         let target = self.entries.get(&dependency.type_info);
-                        let target_metadata = if is_async {
-                            target.and_then(|entry| entry.selected.metadata())
-                        } else {
-                            target
-                                .and_then(Entry::sync)
-                                .map(|data| (&data.metadata.dependencies, data.metadata.scope_data))
-                        };
+                        let target_metadata = target.and_then(|entry| entry.metadata(is_async));
                         if let Some((_, dependency_scope)) = target_metadata {
                             if !scope.can_access(&dependency_scope) {
                                 return Err(ValidationErrorKind::UnreachableDependency {
@@ -408,44 +487,58 @@ impl Registry {
         Ok(())
     }
 
-    fn metadata(&self, key: &TypeInfo, is_async: bool) -> Option<(&BTreeSet<Dependency>, ScopeData)> {
-        let entry = self.entries.get(key)?;
-        if is_async {
-            entry.selected.metadata()
-        } else {
-            entry.sync().map(|data| (&data.metadata.dependencies, data.metadata.scope_data))
-        }
-    }
-
-    fn dfs_visit(
-        &self,
+    fn dfs_visit<'a>(
+        &'a self,
         key: &TypeInfo,
         is_async: bool,
-        visited: &mut BTreeSet<(TypeInfo, bool)>,
-        stack: &mut Vec<(TypeInfo, bool)>,
+        dependencies: &'a BTreeSet<Dependency>,
+        visited: &mut BTreeMap<(TypeInfo, bool), bool>,
+        stack: &mut Vec<CycleFrame<'a>>,
     ) -> bool {
-        let node = (key.clone(), is_async);
-        if visited.contains(&node) {
-            return false;
-        }
-        if stack.contains(&node) {
-            return true;
-        }
-        stack.push(node.clone());
-        if let Some((dependencies, _)) = self.metadata(key, is_async) {
-            for dependency in dependencies {
-                if let Some(target) = self.entries.get(&dependency.type_info) {
-                    let target_async = is_async && target.selected.is_async();
-                    if self.metadata(&dependency.type_info, target_async).is_some()
-                        && self.dfs_visit(&dependency.type_info, target_async, visited, stack)
-                    {
-                        return true;
-                    }
-                }
+        match visited.entry((key.clone(), is_async)) {
+            BTreeMapEntry::Occupied(state) => return *state.get(),
+            BTreeMapEntry::Vacant(state) => {
+                state.insert(true);
             }
         }
-        stack.pop();
-        visited.insert(node);
+        stack.push(CycleFrame {
+            key: key.clone(),
+            is_async,
+            dependencies: dependencies.iter(),
+        });
+        // Preserve recursive dependency order.
+        while !stack.is_empty() {
+            let next = {
+                let frame = stack.last_mut().expect("active DFS frame exists");
+                frame.dependencies.next().map(|dependency| (frame.is_async, &dependency.type_info))
+            };
+            if let Some((current_async, dependency)) = next {
+                if let Some(target) = self.entries.get(dependency) {
+                    let target_async = current_async && target.selected.is_async();
+                    if let Some((target_dependencies, _)) = target.metadata(target_async) {
+                        match visited.entry((dependency.clone(), target_async)) {
+                            BTreeMapEntry::Occupied(state) => {
+                                if *state.get() {
+                                    // Preserve the full diagnostic path, including any non-cyclic prefix.
+                                    return true;
+                                }
+                            }
+                            BTreeMapEntry::Vacant(state) => {
+                                state.insert(true);
+                                stack.push(CycleFrame {
+                                    key: dependency.clone(),
+                                    is_async: target_async,
+                                    dependencies: target_dependencies.iter(),
+                                });
+                            }
+                        }
+                    }
+                }
+            } else {
+                let frame = stack.pop().expect("completed DFS frame exists");
+                *visited.get_mut(&(frame.key, frame.is_async)).expect("DFS node remains recorded") = false;
+            }
+        }
         false
     }
 }
