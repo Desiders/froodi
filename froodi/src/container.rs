@@ -758,12 +758,13 @@ mod tests {
         registry,
         scope::DefaultScope::*,
         utils::thread_safety::{RcThreadSafety, SendSafety, SyncSafety},
-        Config, InstantiateErrorKind, ResolveErrorKind, Scope,
+        Config, InstantiateErrorKind, Registry, ResolveErrorKind, Scope, ScopeData, ScopeErrorKind,
     };
 
     use alloc::{
         format,
         string::{String, ToString as _},
+        vec,
     };
     #[cfg(not(feature = "thread_safe"))]
     use core::marker::PhantomData;
@@ -1365,23 +1366,23 @@ mod tests {
 
     #[test]
     fn index_scope_traversal_keeps_equal_priority_order_and_skipped_parent() {
-        let mut native = crate::Registry::new_with_default_entries();
-        let first = crate::ScopeData {
+        let mut native = Registry::new_with_default_entries();
+        let first = ScopeData {
             priority: 7,
             name: "first",
             is_skipped_by_default: true,
         };
-        let second = crate::ScopeData {
+        let second = ScopeData {
             priority: 7,
             name: "second",
             is_skipped_by_default: false,
         };
-        let root = crate::ScopeData {
+        let root = ScopeData {
             priority: 0,
             name: "root",
             is_skipped_by_default: false,
         };
-        native.scopes_data = alloc::vec![first, second, root];
+        native.scopes_data = vec![first, second, root];
         let root_container = Container::new_with_start_scope(native, Runtime);
         assert_eq!(root_container.inner.scope_data, root);
         let child = root_container.clone().enter_build().unwrap();
@@ -1390,6 +1391,6 @@ mod tests {
         assert_eq!(child.inner.child_scopes_start, 3);
         assert!(child.inner.child_scopes_data().is_empty());
         assert_eq!(root_container.inner.child_scopes_data(), &[first, second]);
-        assert!(matches!(child.enter_build(), Err(crate::ScopeErrorKind::NoChildRegistries)));
+        assert!(matches!(child.enter_build(), Err(ScopeErrorKind::NoChildRegistries)));
     }
 }

@@ -108,7 +108,7 @@ where
                         not(feature = "lock-parking-lot"),
                         not(feature = "lock-spin")
                     ))]
-                    lock_id: crate::registry::RegistrationId::UNINDEXED_LOCK,
+                    lock_id: RegistrationId::UNINDEXED_LOCK,
                     dependencies: BTreeSet::new(),
                     scope_data: scope,
                     config,

@@ -5,6 +5,7 @@ use alloc::format;
 use alloc::{
     collections::BTreeSet,
     string::{String, ToString as _},
+    vec,
     vec::Vec,
 };
 
@@ -23,7 +24,7 @@ use crate::{
     DefaultScope::{App, Request},
     Dependency, DependencyResolver, Inject, InjectCustom, InjectTransient, InstantiateErrorKind, Instantiator, ResolveErrorKind, TypeInfo,
 };
-use core::cell::Cell;
+use core::{cell::Cell, iter::once};
 use std::sync::Mutex;
 
 #[cfg(feature = "async")]
@@ -1170,7 +1171,7 @@ fn invalid_edge_is_checked_instead_of_reinterpreting_a_value() {
     let RegistrationInstantiator::Linked(inst) = &mut data.instantiator else {
         panic!("expected a linked instantiator");
     };
-    inst.keys = alloc::vec![TypeInfo::of::<String>()].into();
+    inst.keys = vec![TypeInfo::of::<String>()].into();
     data.metadata.dependencies = BTreeSet::from([Dependency {
         type_info: TypeInfo::of::<String>(),
     }]);
@@ -1515,10 +1516,7 @@ fn runtime_validation_preserves_cycle_path_and_dependency_alias_names() {
     let ValidationErrorKind::CyclicDependency { graph: (first, rest) } = error else {
         panic!("expected a cycle diagnostic");
     };
-    let actual = core::iter::once(first)
-        .chain(rest.into_vec())
-        .map(|key| (key.id, key.name))
-        .collect::<Vec<_>>();
+    let actual = once(first).chain(rest.into_vec()).map(|key| (key.id, key.name)).collect::<Vec<_>>();
     let expected = [keys[0].clone(), aliases[1].clone(), aliases[2].clone()].map(|key| (key.id, key.name));
     assert_eq!(actual, expected);
 }
@@ -1606,10 +1604,7 @@ fn runtime_cycle_diagnostic_preserves_the_prefix_and_first_incoming_alias() {
     let ValidationErrorKind::CyclicDependency { graph: (first, rest) } = error else {
         panic!("expected a cycle diagnostic");
     };
-    let actual = core::iter::once(first)
-        .chain(rest.into_vec())
-        .map(|key| (key.id, key.name))
-        .collect::<Vec<_>>();
+    let actual = once(first).chain(rest.into_vec()).map(|key| (key.id, key.name)).collect::<Vec<_>>();
     let expected = [keys[0].clone(), aliases[1].clone(), aliases[2].clone(), aliases[3].clone()].map(|key| (key.id, key.name));
     assert_eq!(actual, expected);
 }

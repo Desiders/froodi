@@ -47,6 +47,7 @@ mod asynchronous {
         async_impl::{Container as AsyncContainer, Instantiator},
         Config,
         DefaultScope::Request,
+        Dependency, InstantiateErrorKind,
     };
     use std::{
         collections::BTreeSet,
@@ -90,11 +91,11 @@ mod asynchronous {
     }
     impl Instantiator<()> for CountingFactory {
         type Provides = usize;
-        type Error = froodi::InstantiateErrorKind;
+        type Error = InstantiateErrorKind;
         async fn instantiate(&mut self, _: ()) -> Result<Self::Provides, Self::Error> {
             Ok(self.calls.fetch_add(1, Ordering::SeqCst))
         }
-        fn dependencies() -> BTreeSet<froodi::Dependency> {
+        fn dependencies() -> BTreeSet<Dependency> {
             BTreeSet::new()
         }
     }
@@ -130,7 +131,11 @@ mod asynchronous {
     #[cfg(feature = "thread_safe")]
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn async_concurrent_cached_get_constructs_one_shared_value() {
-        use tokio::sync::{Barrier, Notify};
+        use tokio::{
+            spawn,
+            sync::{Barrier, Notify},
+            task::yield_now,
+        };
         let calls = Arc::new(AtomicUsize::new(0));
         let permits = Arc::new(Semaphore::new(0));
         let entered = Arc::new(Notify::new());
@@ -151,7 +156,7 @@ mod asynchronous {
             .map(|_| {
                 let container = container.clone();
                 let start = start.clone();
-                tokio::spawn(async move {
+                spawn(async move {
                     start.wait().await;
                     container.get::<Payload>().await.unwrap()
                 })
@@ -160,7 +165,7 @@ mod asynchronous {
         start.wait().await;
         entered.notified().await;
         for _ in 0..4 {
-            tokio::task::yield_now().await;
+            yield_now().await;
         }
         permits.add_permits(8);
         let mut values = Vec::new();

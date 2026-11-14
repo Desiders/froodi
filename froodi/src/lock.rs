@@ -215,7 +215,7 @@ mod generic_per_type {
 ))]
 mod dense_per_type {
     use alloc::{boxed::Box, collections::BTreeMap};
-    use core::{any::TypeId, ops::Deref};
+    use core::{any::TypeId, iter::empty, ops::Deref};
     use std::sync::OnceLock;
 
     use super::generic::LocalLock;
@@ -261,7 +261,7 @@ mod dense_per_type {
 
     impl<M> Default for TypeKeyedLocks<M> {
         fn default() -> Self {
-            Self::with_indexed_keys(core::iter::empty())
+            Self::with_indexed_keys(empty())
         }
     }
 
@@ -310,7 +310,7 @@ mod dense_per_type {
     mod tests {
         use super::TypeKeyedLocks;
         use crate::registry::RegistrationId;
-        use core::any::TypeId;
+        use core::{any::TypeId, ptr};
 
         struct First;
         struct Second;
@@ -323,10 +323,10 @@ mod dense_per_type {
             let shared = locks.clone();
             let first = locks.get(TypeId::of::<First>(), RegistrationId(0));
             let again = shared.get(TypeId::of::<First>(), RegistrationId(0));
-            assert!(core::ptr::eq(&*first, &*again));
+            assert!(ptr::eq(&*first, &*again));
             assert!(locks.locks.indexed[1].value.get().is_none());
             let second = locks.get(TypeId::of::<Second>(), RegistrationId(1));
-            assert!(!core::ptr::eq(&*first, &*second));
+            assert!(!ptr::eq(&*first, &*second));
             assert!(locks.locks.fallback.read().is_empty());
         }
 
@@ -334,14 +334,11 @@ mod dense_per_type {
         fn absent_and_mismatched_hints_bridge_to_the_same_type_lock() {
             let locks = TypeKeyedLocks::<usize>::with_indexed_keys([TypeId::of::<First>(), TypeId::of::<Second>()].into_iter());
             let first = locks.get(TypeId::of::<First>(), RegistrationId(0));
-            assert!(core::ptr::eq(&*first, &*locks.get(TypeId::of::<First>(), RegistrationId(1))));
-            assert!(core::ptr::eq(
-                &*first,
-                &*locks.get(TypeId::of::<First>(), RegistrationId::UNINDEXED_LOCK)
-            ));
+            assert!(ptr::eq(&*first, &*locks.get(TypeId::of::<First>(), RegistrationId(1))));
+            assert!(ptr::eq(&*first, &*locks.get(TypeId::of::<First>(), RegistrationId::UNINDEXED_LOCK)));
             assert!(locks.locks.fallback.read().is_empty());
             let fallback = locks.get(TypeId::of::<Unknown>(), RegistrationId(0));
-            assert!(core::ptr::eq(
+            assert!(ptr::eq(
                 &*fallback,
                 &*locks.get(TypeId::of::<Unknown>(), RegistrationId::UNINDEXED_LOCK)
             ));
@@ -353,7 +350,7 @@ mod dense_per_type {
             let locks = TypeKeyedLocks::<usize>::default();
             let shared = locks.clone();
             let first = locks.get(TypeId::of::<First>(), RegistrationId::UNINDEXED_LOCK);
-            assert!(core::ptr::eq(
+            assert!(ptr::eq(
                 &*first,
                 &*shared.get(TypeId::of::<First>(), RegistrationId::UNINDEXED_LOCK)
             ));
@@ -363,33 +360,20 @@ mod dense_per_type {
     }
 }
 
-pub(crate) use generic::LocalLock;
+#[cfg(feature = "thread_safe")]
+use backend::Mutex as SyncMutex;
+#[cfg(feature = "async")]
+use tokio::sync::Mutex as AsyncMutex;
 
-/// Synchronous per-type instantiation locks using the selected synchronization backend.
-///
-/// This deliberately uses the same backend as [`LocalLock`], so choosing an override replaces all
-/// synchronous locking primitives rather than only the container-state lock.
-#[cfg(all(
-    feature = "thread_safe",
-    not(all(
-        feature = "std",
-        feature = "thread_safe",
-        not(feature = "lock-parking-lot"),
-        not(feature = "lock-spin")
-    ))
-))]
-pub(crate) type PerTypeSyncLocks = generic_per_type::TypeKeyedLocks<backend::Mutex<()>>;
 #[cfg(all(
     feature = "std",
     feature = "thread_safe",
     not(feature = "lock-parking-lot"),
     not(feature = "lock-spin")
 ))]
-pub(crate) type PerTypeSyncLocks = dense_per_type::TypeKeyedLocks<backend::Mutex<()>>;
-
-/// Async per-type instantiation locks (`tokio::sync::Mutex`).
+use dense_per_type::TypeKeyedLocks;
 #[cfg(all(
-    feature = "async",
+    any(feature = "thread_safe", feature = "async"),
     not(all(
         feature = "std",
         feature = "thread_safe",
@@ -397,14 +381,17 @@ pub(crate) type PerTypeSyncLocks = dense_per_type::TypeKeyedLocks<backend::Mutex
         not(feature = "lock-spin")
     ))
 ))]
-pub(crate) type PerTypeAsyncLocks = generic_per_type::TypeKeyedLocks<tokio::sync::Mutex<()>>;
-#[cfg(all(
-    feature = "async",
-    all(
-        feature = "std",
-        feature = "thread_safe",
-        not(feature = "lock-parking-lot"),
-        not(feature = "lock-spin")
-    )
-))]
-pub(crate) type PerTypeAsyncLocks = dense_per_type::TypeKeyedLocks<tokio::sync::Mutex<()>>;
+use generic_per_type::TypeKeyedLocks;
+
+pub(crate) use generic::LocalLock;
+
+/// Synchronous per-type instantiation locks using the selected synchronization backend.
+///
+/// This deliberately uses the same backend as [`LocalLock`], so choosing an override replaces all
+/// synchronous locking primitives rather than only the container-state lock.
+#[cfg(feature = "thread_safe")]
+pub(crate) type PerTypeSyncLocks = TypeKeyedLocks<SyncMutex<()>>;
+
+/// Async per-type instantiation locks.
+#[cfg(feature = "async")]
+pub(crate) type PerTypeAsyncLocks = TypeKeyedLocks<AsyncMutex<()>>;

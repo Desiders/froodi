@@ -10,6 +10,7 @@ use std::{
     sync::{mpsc, Arc, Barrier},
     thread,
     time::Duration,
+    vec::Vec,
 };
 
 struct Value(u64);
@@ -93,7 +94,7 @@ fn concurrent_snapshots_keep_identity_while_a_writer_replaces_the_parent_value()
     let (parent, original) = parent();
     let replacement = Arc::new(Value(9));
     let start = Arc::new(Barrier::new(5));
-    let mut workers = std::vec::Vec::new();
+    let mut workers = Vec::new();
     for _ in 0..3 {
         let (parent, original, replacement, start) = (parent.clone(), original.clone(), replacement.clone(), start.clone());
         workers.push(thread::spawn(move || {

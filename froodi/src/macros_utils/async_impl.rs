@@ -1,6 +1,13 @@
 use alloc::boxed::Box;
 use core::{future::Future, pin::Pin};
 
+#[cfg(all(
+    feature = "std",
+    feature = "thread_safe",
+    not(feature = "lock-parking-lot"),
+    not(feature = "lock-spin")
+))]
+use crate::registry::RegistrationId;
 use crate::{
     any::TypeInfo,
     async_impl::{
@@ -36,7 +43,7 @@ where
                     not(feature = "lock-parking-lot"),
                     not(feature = "lock-spin")
                 ))]
-                lock_id: crate::registry::RegistrationId::UNINDEXED_LOCK,
+                lock_id: RegistrationId::UNINDEXED_LOCK,
                 dependencies: Inst::dependencies(),
                 config: config.unwrap_or_default(),
                 scope_data: scope.into(),

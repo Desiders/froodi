@@ -16,8 +16,31 @@ pub use boundary::declare;
 pub(crate) use frontend::{finish, IntoRegistry, RegistrationId};
 
 use alloc::{
-    collections::{btree_map::BTreeMap, btree_set::BTreeSet},
+    collections::{btree_map::Entry as BTreeMapEntry, btree_set::Iter as BTreeSetIter, BTreeMap, BTreeSet},
     vec::Vec,
+};
+
+#[cfg(feature = "async")]
+use alloc::boxed::Box;
+#[cfg(all(
+    feature = "std",
+    feature = "thread_safe",
+    not(feature = "lock-parking-lot"),
+    not(feature = "lock-spin")
+))]
+use core::any::TypeId;
+#[cfg(test)]
+use core::cell::Cell;
+#[cfg(feature = "async")]
+use core::mem::replace;
+
+#[cfg(feature = "async")]
+use crate::async_impl::{
+    finalizer::BoxedCloneFinalizer as AsyncBoxedCloneFinalizer,
+    instantiator::{
+        boxed_container_instantiator as boxed_async_container_instantiator, RegistrationInstantiator as AsyncRegistrationInstantiator,
+    },
+    Container as AsyncContainer,
 };
 
 #[cfg(test)]
@@ -25,13 +48,13 @@ extern crate std;
 
 #[cfg(test)]
 std::thread_local! {
-    pub(crate) static CYCLE_CHECKS: core::cell::Cell<usize> = const { core::cell::Cell::new(0) };
+    pub(crate) static CYCLE_CHECKS: Cell<usize> = const { Cell::new(0) };
 }
 
 use crate::{
     any::TypeInfo,
     dependency::{Dependency, EMPTY_DEPENDENCIES},
-    errors::ValidationErrorKind,
+    errors::{ResolveErrorKind, ValidationErrorKind},
     finalizer::BoxedCloneFinalizer,
     instantiator::{boxed_container_instantiator, RegistrationInstantiator},
     scope::{ScopeData, ScopeDataWithChildScopesData},
@@ -62,8 +85,8 @@ pub struct InstantiatorData {
 #[cfg(feature = "async")]
 #[derive(Clone)]
 pub struct AsyncInstantiatorData {
-    pub(crate) instantiator: crate::async_impl::instantiator::RegistrationInstantiator,
-    pub(crate) finalizer: Option<crate::async_impl::finalizer::BoxedCloneFinalizer>,
+    pub(crate) instantiator: AsyncRegistrationInstantiator,
+    pub(crate) finalizer: Option<AsyncBoxedCloneFinalizer>,
     pub(crate) metadata: RegistrationMetadata,
 }
 
@@ -90,7 +113,7 @@ impl Selected {
             Selected::Sync(data) => link_sync_keys(data, keys),
             #[cfg(feature = "async")]
             Selected::Async(data) => {
-                if let crate::async_impl::instantiator::RegistrationInstantiator::Linked(executor) = &mut data.instantiator {
+                if let AsyncRegistrationInstantiator::Linked(executor) = &mut data.instantiator {
                     executor.keys = executor.edges.iter().map(|id| keys[id.index()].clone()).collect::<Vec<_>>().into();
                     data.metadata.dependencies = executor.keys.iter().cloned().map(|type_info| Dependency { type_info }).collect();
                 }
@@ -114,7 +137,7 @@ pub(crate) struct Entry {
     // Erased composition can supply both execution kinds for one output type.
     // Async lookup prefers its async provider; sync lookup retains its own provider.
     #[cfg(feature = "async")]
-    sync: Option<alloc::boxed::Box<InstantiatorData>>,
+    sync: Option<Box<InstantiatorData>>,
 }
 
 impl Entry {
@@ -168,12 +191,12 @@ impl Entry {
         #[cfg(feature = "async")]
         match selected {
             Selected::Sync(data) if self.selected.is_async() => {
-                self.sync = Some(alloc::boxed::Box::new(data));
+                self.sync = Some(Box::new(data));
                 return;
             }
             Selected::Async(data) => {
-                if let Selected::Sync(sync) = core::mem::replace(&mut self.selected, Selected::Async(data)) {
-                    self.sync = Some(alloc::boxed::Box::new(sync));
+                if let Selected::Sync(sync) = replace(&mut self.selected, Selected::Async(data)) {
+                    self.sync = Some(Box::new(sync));
                 }
                 return;
             }
@@ -198,7 +221,7 @@ impl Entry {
             Selected::Sync(data) => remap_sync(data, ids),
             #[cfg(feature = "async")]
             Selected::Async(data) => {
-                if let crate::async_impl::instantiator::RegistrationInstantiator::Linked(executor) = &mut data.instantiator {
+                if let AsyncRegistrationInstantiator::Linked(executor) = &mut data.instantiator {
                     executor.remap(ids);
                 }
                 if let Some(sync) = &mut self.sync {
@@ -218,7 +241,7 @@ impl Entry {
             }
             #[cfg(feature = "async")]
             Selected::Async(data) => {
-                if let crate::async_impl::instantiator::RegistrationInstantiator::Linked(executor) = &data.instantiator {
+                if let AsyncRegistrationInstantiator::Linked(executor) = &data.instantiator {
                     return &executor.keys;
                 }
             }
@@ -245,10 +268,7 @@ impl Entry {
         }
         #[cfg(feature = "async")]
         if let Selected::Async(data) = &self.selected {
-            return matches!(
-                data.instantiator,
-                crate::async_impl::instantiator::RegistrationInstantiator::Linked(_)
-            );
+            return matches!(data.instantiator, AsyncRegistrationInstantiator::Linked(_));
         }
         false
     }
@@ -285,7 +305,7 @@ pub struct Registry {
 struct CycleFrame<'a> {
     key: TypeInfo,
     is_async: bool,
-    dependencies: alloc::collections::btree_set::Iter<'a, Dependency>,
+    dependencies: BTreeSetIter<'a, Dependency>,
 }
 
 impl Registry {
@@ -295,7 +315,7 @@ impl Registry {
         not(feature = "lock-parking-lot"),
         not(feature = "lock-spin")
     ))]
-    pub(crate) fn dense_lock_keys(&self) -> impl Iterator<Item = core::any::TypeId> + '_ {
+    pub(crate) fn dense_lock_keys(&self) -> impl Iterator<Item = TypeId> + '_ {
         // No linked executors means the old lazy map path, with no dense allocation.
         let len = if self.indexed.is_empty() { 0 } else { self.entries.len() };
         self.entries.keys().take(len).map(|key| key.id)
@@ -325,7 +345,7 @@ impl Registry {
                         not(feature = "lock-parking-lot"),
                         not(feature = "lock-spin")
                     ))]
-                    lock_id: crate::registry::RegistrationId::UNINDEXED_LOCK,
+                    lock_id: RegistrationId::UNINDEXED_LOCK,
                     dependencies: EMPTY_DEPENDENCIES,
                     config: Config { cache_provides: false },
                     scope_data,
@@ -334,9 +354,9 @@ impl Registry {
         );
         #[cfg(feature = "async")]
         registry.insert(
-            TypeInfo::new::<crate::async_impl::Container>("async_impl::Container"),
+            TypeInfo::new::<AsyncContainer>("async_impl::Container"),
             Selected::Async(AsyncInstantiatorData {
-                instantiator: crate::async_impl::instantiator::boxed_container_instantiator().into(),
+                instantiator: boxed_async_container_instantiator().into(),
                 finalizer: None,
                 metadata: RegistrationMetadata {
                     #[cfg(all(
@@ -345,7 +365,7 @@ impl Registry {
                         not(feature = "lock-parking-lot"),
                         not(feature = "lock-spin")
                     ))]
-                    lock_id: crate::registry::RegistrationId::UNINDEXED_LOCK,
+                    lock_id: RegistrationId::UNINDEXED_LOCK,
                     dependencies: EMPTY_DEPENDENCIES,
                     config: Config { cache_provides: false },
                     scope_data,
@@ -365,10 +385,10 @@ impl Registry {
 
     pub(crate) fn insert(&mut self, key: TypeInfo, selected: Selected) {
         match self.entries.entry(key) {
-            alloc::collections::btree_map::Entry::Vacant(entry) => {
+            BTreeMapEntry::Vacant(entry) => {
                 entry.insert(Entry::from_selected(selected));
             }
-            alloc::collections::btree_map::Entry::Occupied(mut entry) => entry.get_mut().replace(selected),
+            BTreeMapEntry::Occupied(mut entry) => entry.get_mut().replace(selected),
         }
     }
 
@@ -387,12 +407,12 @@ impl Registry {
         self.entries.get(type_info).and_then(Entry::sync)
     }
 
-    pub(crate) fn unavailable(&self, type_info: TypeInfo) -> crate::ResolveErrorKind {
+    pub(crate) fn unavailable(&self, type_info: TypeInfo) -> ResolveErrorKind {
         #[cfg(feature = "async")]
         if self.get_async(&type_info).is_some() {
-            return crate::ResolveErrorKind::AsyncRequired { type_info };
+            return ResolveErrorKind::AsyncRequired { type_info };
         }
-        crate::ResolveErrorKind::NoInstantiator { type_info }
+        ResolveErrorKind::NoInstantiator { type_info }
     }
 
     #[cfg(feature = "async")]
@@ -480,8 +500,8 @@ impl Registry {
         stack: &mut Vec<CycleFrame<'a>>,
     ) -> bool {
         match visited.entry((key.clone(), is_async)) {
-            alloc::collections::btree_map::Entry::Occupied(state) => return *state.get(),
-            alloc::collections::btree_map::Entry::Vacant(state) => {
+            BTreeMapEntry::Occupied(state) => return *state.get(),
+            BTreeMapEntry::Vacant(state) => {
                 state.insert(true);
             }
         }
@@ -502,14 +522,14 @@ impl Registry {
                     let target_async = current_async && target.selected.is_async();
                     if let Some((target_dependencies, _)) = target.metadata(target_async) {
                         match visited.entry((dependency.clone(), target_async)) {
-                            alloc::collections::btree_map::Entry::Occupied(state) => {
+                            BTreeMapEntry::Occupied(state) => {
                                 if *state.get() {
                                     // Do not append the repeated target or trim a
                                     // leading path: both would change the error graph.
                                     return true;
                                 }
                             }
-                            alloc::collections::btree_map::Entry::Vacant(state) => {
+                            BTreeMapEntry::Vacant(state) => {
                                 state.insert(true);
                                 stack.push(CycleFrame {
                                     key: dependency.clone(),
