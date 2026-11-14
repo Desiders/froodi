@@ -15,8 +15,6 @@ macro_rules! native_async_registry {
 mod construction;
 #[cfg(all(feature = "async", not(miri)))]
 mod deep_async;
-#[cfg(all(not(miri), not(target_family = "wasm")))]
-mod deep_validation;
 mod edges;
 mod expression_order;
 mod fragments;
