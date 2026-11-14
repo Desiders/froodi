@@ -1,10 +1,3 @@
-#[cfg(all(
-    feature = "std",
-    feature = "thread_safe",
-    not(feature = "lock-parking-lot"),
-    not(feature = "lock-spin")
-))]
-use crate::registry::RegistrationId;
 use crate::{
     any::TypeInfo,
     dependency_resolver::DependencyResolver,
@@ -29,18 +22,7 @@ where
         InstantiatorData {
             instantiator: boxed_instantiator(inst).into(),
             finalizer: fin.map(boxed_finalizer_factory),
-            metadata: RegistrationMetadata {
-                #[cfg(all(
-                    feature = "std",
-                    feature = "thread_safe",
-                    not(feature = "lock-parking-lot"),
-                    not(feature = "lock-spin")
-                ))]
-                lock_id: RegistrationId::UNINDEXED_LOCK,
-                dependencies: Inst::dependencies(),
-                config: config.unwrap_or_default(),
-                scope_data: scope.into(),
-            },
+            metadata: RegistrationMetadata::new(Inst::dependencies(), config.unwrap_or_default(), scope.into()),
         },
     )
 }

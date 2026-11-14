@@ -165,18 +165,7 @@ where
             data: Selected::Sync(InstantiatorData {
                 instantiator: RegistrationInstantiator::linked::<Inst, Deps>(inst, self.targets),
                 finalizer: fin.map(boxed_finalizer_factory),
-                metadata: RegistrationMetadata {
-                    #[cfg(all(
-                        feature = "std",
-                        feature = "thread_safe",
-                        not(feature = "lock-parking-lot"),
-                        not(feature = "lock-spin")
-                    ))]
-                    lock_id: RegistrationId::UNINDEXED_LOCK,
-                    dependencies: BTreeSet::new(),
-                    scope_data: scope,
-                    config,
-                },
+                metadata: RegistrationMetadata::new(BTreeSet::new(), config, scope),
             }),
         });
     }
@@ -209,18 +198,7 @@ impl Collect for ContainerLeaf {
             data: Selected::Sync(InstantiatorData {
                 instantiator: boxed_container_instantiator().into(),
                 finalizer: None,
-                metadata: RegistrationMetadata {
-                    #[cfg(all(
-                        feature = "std",
-                        feature = "thread_safe",
-                        not(feature = "lock-parking-lot"),
-                        not(feature = "lock-spin")
-                    ))]
-                    lock_id: RegistrationId::UNINDEXED_LOCK,
-                    dependencies: BTreeSet::new(),
-                    config: Config { cache_provides: false },
-                    scope_data: self.scope,
-                },
+                metadata: RegistrationMetadata::new(BTreeSet::new(), Config { cache_provides: false }, self.scope),
             }),
         });
     }
@@ -261,18 +239,7 @@ impl Collect for AsyncContainerLeaf {
             data: Selected::Async(AsyncInstantiatorData {
                 instantiator: boxed_async_container_instantiator().into(),
                 finalizer: None,
-                metadata: RegistrationMetadata {
-                    #[cfg(all(
-                        feature = "std",
-                        feature = "thread_safe",
-                        not(feature = "lock-parking-lot"),
-                        not(feature = "lock-spin")
-                    ))]
-                    lock_id: RegistrationId::UNINDEXED_LOCK,
-                    dependencies: BTreeSet::new(),
-                    config: Config { cache_provides: false },
-                    scope_data: self.scope,
-                },
+                metadata: RegistrationMetadata::new(BTreeSet::new(), Config { cache_provides: false }, self.scope),
             }),
         });
     }

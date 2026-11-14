@@ -165,7 +165,10 @@ mod generic_per_type {
     use core::any::TypeId;
 
     use super::generic::LocalLock;
-    use crate::utils::thread_safety::RcThreadSafety;
+    use crate::{
+        registry::{RegistrationMetadata, Registry},
+        utils::thread_safety::RcThreadSafety,
+    };
 
     /// A `TypeId`-keyed registry of lazily-created locks of type `M`.
     ///
@@ -190,7 +193,19 @@ mod generic_per_type {
         }
     }
 
+    impl<M> TypeKeyedLocks<M> {
+        #[inline]
+        pub(crate) fn from_registry(_registry: &Registry) -> Self {
+            Self::default()
+        }
+    }
+
     impl<M: Default> TypeKeyedLocks<M> {
+        #[inline]
+        pub(crate) fn get_for(&self, type_id: TypeId, _metadata: &RegistrationMetadata) -> RcThreadSafety<M> {
+            self.get(type_id)
+        }
+
         #[inline]
         #[must_use]
         pub(crate) fn get(&self, type_id: TypeId) -> RcThreadSafety<M> {
@@ -219,7 +234,10 @@ mod dense_per_type {
     use std::sync::OnceLock;
 
     use super::generic::LocalLock;
-    use crate::{registry::RegistrationId, utils::thread_safety::RcThreadSafety};
+    use crate::{
+        registry::{RegistrationId, RegistrationMetadata, Registry},
+        utils::thread_safety::RcThreadSafety,
+    };
 
     struct IndexedLock<M> {
         type_id: TypeId,
@@ -266,6 +284,11 @@ mod dense_per_type {
     }
 
     impl<M> TypeKeyedLocks<M> {
+        #[inline]
+        pub(crate) fn from_registry(registry: &Registry) -> Self {
+            Self::with_indexed_keys(registry.dense_lock_keys())
+        }
+
         /// Callers supply the unique, frozen registry.entries key order.
         pub(crate) fn with_indexed_keys(keys: impl Iterator<Item = TypeId>) -> Self {
             Self {
@@ -283,6 +306,11 @@ mod dense_per_type {
     }
 
     impl<M: Default> TypeKeyedLocks<M> {
+        #[inline]
+        pub(crate) fn get_for(&self, type_id: TypeId, metadata: &RegistrationMetadata) -> LockRef<'_, M> {
+            self.get(type_id, metadata.lock_id)
+        }
+
         #[inline]
         pub(crate) fn get(&self, type_id: TypeId, id: RegistrationId) -> LockRef<'_, M> {
             if let Some(slot) = self.locks.indexed.get(id.index()).filter(|slot| slot.type_id == type_id) {

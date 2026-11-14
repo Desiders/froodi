@@ -101,18 +101,7 @@ where
             data: Selected::Async(AsyncInstantiatorData {
                 instantiator,
                 finalizer: fin.map(boxed_finalizer_factory),
-                metadata: RegistrationMetadata {
-                    #[cfg(all(
-                        feature = "std",
-                        feature = "thread_safe",
-                        not(feature = "lock-parking-lot"),
-                        not(feature = "lock-spin")
-                    ))]
-                    lock_id: RegistrationId::UNINDEXED_LOCK,
-                    dependencies: BTreeSet::new(),
-                    scope_data: scope,
-                    config,
-                },
+                metadata: RegistrationMetadata::new(BTreeSet::new(), config, scope),
             }),
         });
     }

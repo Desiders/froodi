@@ -75,6 +75,24 @@ pub(crate) struct RegistrationMetadata {
     pub(crate) scope_data: ScopeData,
 }
 
+impl RegistrationMetadata {
+    #[inline]
+    pub(crate) fn new(dependencies: BTreeSet<Dependency>, config: Config, scope_data: ScopeData) -> Self {
+        Self {
+            #[cfg(all(
+                feature = "std",
+                feature = "thread_safe",
+                not(feature = "lock-parking-lot"),
+                not(feature = "lock-spin")
+            ))]
+            lock_id: RegistrationId::UNINDEXED_LOCK,
+            dependencies,
+            config,
+            scope_data,
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct InstantiatorData {
     pub(crate) instantiator: RegistrationInstantiator,
@@ -338,18 +356,7 @@ impl Registry {
             Selected::Sync(InstantiatorData {
                 instantiator: boxed_container_instantiator().into(),
                 finalizer: None,
-                metadata: RegistrationMetadata {
-                    #[cfg(all(
-                        feature = "std",
-                        feature = "thread_safe",
-                        not(feature = "lock-parking-lot"),
-                        not(feature = "lock-spin")
-                    ))]
-                    lock_id: RegistrationId::UNINDEXED_LOCK,
-                    dependencies: EMPTY_DEPENDENCIES,
-                    config: Config { cache_provides: false },
-                    scope_data,
-                },
+                metadata: RegistrationMetadata::new(EMPTY_DEPENDENCIES, Config { cache_provides: false }, scope_data),
             }),
         );
         #[cfg(feature = "async")]
@@ -358,18 +365,7 @@ impl Registry {
             Selected::Async(AsyncInstantiatorData {
                 instantiator: boxed_async_container_instantiator().into(),
                 finalizer: None,
-                metadata: RegistrationMetadata {
-                    #[cfg(all(
-                        feature = "std",
-                        feature = "thread_safe",
-                        not(feature = "lock-parking-lot"),
-                        not(feature = "lock-spin")
-                    ))]
-                    lock_id: RegistrationId::UNINDEXED_LOCK,
-                    dependencies: EMPTY_DEPENDENCIES,
-                    config: Config { cache_provides: false },
-                    scope_data,
-                },
+                metadata: RegistrationMetadata::new(EMPTY_DEPENDENCIES, Config { cache_provides: false }, scope_data),
             }),
         );
         registry.scopes_data.push(scope_data);

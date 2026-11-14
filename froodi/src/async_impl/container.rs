@@ -78,23 +78,7 @@ impl Container {
             parent: None,
             close_parent: false,
             #[cfg(feature = "thread_safe")]
-            per_type_locks: {
-                #[cfg(all(
-                    feature = "std",
-                    feature = "thread_safe",
-                    not(feature = "lock-parking-lot"),
-                    not(feature = "lock-spin")
-                ))]
-                let locks = PerTypeSyncLocks::with_indexed_keys(registry.dense_lock_keys());
-                #[cfg(not(all(
-                    feature = "std",
-                    feature = "thread_safe",
-                    not(feature = "lock-parking-lot"),
-                    not(feature = "lock-spin")
-                )))]
-                let locks = PerTypeSyncLocks::default();
-                locks
-            },
+            per_type_locks: PerTypeSyncLocks::from_registry(&registry),
         };
         let mut container = BoxedContainerInner {
             cache: Cache::new(),
@@ -241,20 +225,7 @@ impl Container {
             }
 
             trace!("Lock instantiator call");
-            #[cfg(all(
-                feature = "std",
-                feature = "thread_safe",
-                not(feature = "lock-parking-lot"),
-                not(feature = "lock-spin")
-            ))]
-            let inst_call_lock = self.per_type_locks.get(type_info.id, data.metadata.lock_id);
-            #[cfg(not(all(
-                feature = "std",
-                feature = "thread_safe",
-                not(feature = "lock-parking-lot"),
-                not(feature = "lock-spin")
-            )))]
-            let inst_call_lock = self.per_type_locks.get(type_info.id);
+            let inst_call_lock = self.per_type_locks.get_for(type_info.id, &data.metadata);
             let _guard = inst_call_lock.lock().await;
 
             if let Some(dependency) = { self.inner.cache.read().get(&type_info) } {
@@ -771,20 +742,7 @@ impl From<BoxedContainerInner> for ContainerInner {
 
 impl From<(BoxedContainerInner, BoxedSyncContainerInner)> for Container {
     fn from((inner, sync): (BoxedContainerInner, BoxedSyncContainerInner)) -> Self {
-        #[cfg(all(
-            feature = "std",
-            feature = "thread_safe",
-            not(feature = "lock-parking-lot"),
-            not(feature = "lock-spin")
-        ))]
-        let per_type_locks = PerTypeAsyncLocks::with_indexed_keys(inner.registry.dense_lock_keys());
-        #[cfg(not(all(
-            feature = "std",
-            feature = "thread_safe",
-            not(feature = "lock-parking-lot"),
-            not(feature = "lock-spin")
-        )))]
-        let per_type_locks = PerTypeAsyncLocks::default();
+        let per_type_locks = PerTypeAsyncLocks::from_registry(&inner.registry);
         Self {
             inner: RcThreadSafety::new(inner.into()),
             sync: sync.into(),
