@@ -15,6 +15,7 @@ pub struct TypeInfo {
 }
 
 impl PartialEq for TypeInfo {
+    #[inline]
     fn eq(&self, other: &Self) -> bool {
         self.id == other.id
     }
@@ -23,18 +24,21 @@ impl PartialEq for TypeInfo {
 impl Eq for TypeInfo {}
 
 impl PartialOrd for TypeInfo {
+    #[inline]
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
 impl Ord for TypeInfo {
+    #[inline]
     fn cmp(&self, other: &Self) -> Ordering {
         self.id.cmp(&other.id)
     }
 }
 
 impl Hash for TypeInfo {
+    #[inline]
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.id.hash(state);
     }
