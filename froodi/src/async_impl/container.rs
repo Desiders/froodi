@@ -1,3 +1,6 @@
+#[cfg(all(test, feature = "thread_safe"))]
+mod snapshot_tests;
+
 use alloc::boxed::Box;
 use core::{
     future::{poll_fn, Future},
@@ -410,10 +413,10 @@ impl Container {
         child_scopes_start: usize,
         close_parent: bool,
     ) -> Self {
-        let mut cache = self.inner.cache.write().child();
+        let mut cache = self.inner.child_cache();
         cache.extend_context(&context);
 
-        let mut sync_cache = self.sync.inner.cache.write().child();
+        let mut sync_cache = self.sync.inner.child_cache();
         let sync_context = context.clone();
         sync_cache.extend_context(&sync_context);
 
@@ -426,6 +429,8 @@ impl Container {
                 child_scopes_start,
                 parent: Some(self.inner),
                 close_parent,
+                #[cfg(feature = "thread_safe")]
+                snapshot_gate: LocalLock::new(()),
             }),
             sync: SyncContainer {
                 #[cfg(feature = "thread_safe")]
@@ -438,6 +443,8 @@ impl Container {
                     child_scopes_start,
                     parent: Some(sync_container),
                     close_parent,
+                    #[cfg(feature = "thread_safe")]
+                    snapshot_gate: LocalLock::new(()),
                 }),
             },
             per_type_locks: self.per_type_locks.clone(),
@@ -453,10 +460,10 @@ impl Container {
         child_scopes_start: usize,
         close_parent: bool,
     ) -> Self {
-        let cache = self.inner.cache.write().child();
+        let cache = self.inner.child_cache();
         let context = self.inner.context.clone();
 
-        let sync_cache = self.sync.inner.cache.write().child();
+        let sync_cache = self.sync.inner.child_cache();
         let sync_context = self.sync.inner.context.clone();
 
         Self {
@@ -468,6 +475,8 @@ impl Container {
                 child_scopes_start,
                 parent: Some(self.inner),
                 close_parent,
+                #[cfg(feature = "thread_safe")]
+                snapshot_gate: LocalLock::new(()),
             }),
             sync: SyncContainer {
                 #[cfg(feature = "thread_safe")]
@@ -480,6 +489,8 @@ impl Container {
                     child_scopes_start,
                     parent: Some(sync_container),
                     close_parent,
+                    #[cfg(feature = "thread_safe")]
+                    snapshot_gate: LocalLock::new(()),
                 }),
             },
             per_type_locks: self.per_type_locks.clone(),
@@ -723,6 +734,8 @@ impl From<BoxedContainerInner> for ContainerInner {
             scope_data,
             child_scopes_start,
             close_parent,
+            #[cfg(feature = "thread_safe")]
+            snapshot_gate: LocalLock::new(()),
         }
     }
 }
@@ -745,9 +758,24 @@ pub(crate) struct ContainerInner {
     child_scopes_start: usize,
     parent: Option<RcThreadSafety<ContainerInner>>,
     close_parent: bool,
+    #[cfg(feature = "thread_safe")]
+    snapshot_gate: LocalLock<()>,
 }
 
 impl ContainerInner {
+    /// Snapshot clones are serialized per parent cache, while ordinary readers may proceed.
+    #[inline]
+    fn child_cache(&self) -> Cache {
+        // Lock order is gate -> cache read. A queued clone must not hold a cache reader,
+        // otherwise it could delay a writer while waiting for the active clone.
+        #[cfg(feature = "thread_safe")]
+        let _snapshot_guard = self.snapshot_gate.write();
+        // Cache::child clones TypeInfo and Arc/Rc handles, never user Clone/Drop callbacks.
+        // A local read guard drops before the earlier gate guard.
+        let cache = self.cache.read();
+        cache.child()
+    }
+
     #[inline]
     pub(crate) fn get_scope_with_child_scopes(&self) -> ScopeDataWithChildScopesData<'_> {
         ScopeDataWithChildScopesData::new(self.scope_data, &self.registry.scopes_data[self.child_scopes_start..])

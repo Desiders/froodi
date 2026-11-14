@@ -1,3 +1,6 @@
+#[cfg(all(test, feature = "thread_safe"))]
+mod snapshot_tests;
+
 use alloc::boxed::Box;
 #[cfg(feature = "thread_safe")]
 use tracing::trace;
@@ -327,7 +330,7 @@ impl Container {
         child_scopes_start: usize,
         close_parent: bool,
     ) -> Container {
-        let mut cache = self.inner.cache.write().child();
+        let mut cache = self.inner.child_cache();
         cache.extend_context(&context);
 
         Container {
@@ -341,6 +344,8 @@ impl Container {
                 child_scopes_start,
                 parent: Some(self),
                 close_parent,
+                #[cfg(feature = "thread_safe")]
+                snapshot_gate: LocalLock::new(()),
             }),
         }
     }
@@ -353,7 +358,7 @@ impl Container {
         child_scopes_start: usize,
         close_parent: bool,
     ) -> Container {
-        let cache = self.inner.cache.write().child();
+        let cache = self.inner.child_cache();
         let context = self.inner.context.clone();
 
         Container {
@@ -367,6 +372,8 @@ impl Container {
                 child_scopes_start,
                 parent: Some(self),
                 close_parent,
+                #[cfg(feature = "thread_safe")]
+                snapshot_gate: LocalLock::new(()),
             }),
         }
     }
@@ -621,6 +628,8 @@ impl From<BoxedContainerInner> for Container {
                 child_scopes_start,
                 parent: parent.map(|parent| (*parent).into()),
                 close_parent,
+                #[cfg(feature = "thread_safe")]
+                snapshot_gate: LocalLock::new(()),
             }),
             #[cfg(feature = "thread_safe")]
             per_type_locks,
@@ -636,9 +645,24 @@ pub(crate) struct ContainerInner {
     pub(crate) child_scopes_start: usize,
     pub(crate) parent: Option<Container>,
     pub(crate) close_parent: bool,
+    #[cfg(feature = "thread_safe")]
+    pub(crate) snapshot_gate: LocalLock<()>,
 }
 
 impl ContainerInner {
+    /// Snapshot clones are serialized per parent cache, while ordinary readers may proceed.
+    #[inline]
+    pub(crate) fn child_cache(&self) -> Cache {
+        // Lock order is gate -> cache read. A queued clone must not hold a cache reader,
+        // otherwise it could delay a writer while waiting for the active clone.
+        #[cfg(feature = "thread_safe")]
+        let _snapshot_guard = self.snapshot_gate.write();
+        // Cache::child clones TypeInfo and Arc/Rc handles, never user Clone/Drop callbacks.
+        // A local read guard drops before the earlier gate guard.
+        let cache = self.cache.read();
+        cache.child()
+    }
+
     #[inline]
     pub(crate) fn get_scope_with_child_scopes(&self) -> ScopeDataWithChildScopesData<'_> {
         ScopeDataWithChildScopesData::new(self.scope_data, &self.registry.scopes_data[self.child_scopes_start..])
