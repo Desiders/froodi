@@ -151,7 +151,15 @@ mod generic {
     }
 }
 
-#[cfg(any(feature = "thread_safe", feature = "async"))]
+#[cfg(all(
+    any(feature = "thread_safe", feature = "async"),
+    not(all(
+        feature = "std",
+        feature = "thread_safe",
+        not(feature = "lock-parking-lot"),
+        not(feature = "lock-spin")
+    ))
+))]
 mod generic_per_type {
     use alloc::collections::BTreeMap;
     use core::any::TypeId;
@@ -199,15 +207,204 @@ mod generic_per_type {
     }
 }
 
+#[cfg(all(
+    feature = "std",
+    feature = "thread_safe",
+    not(feature = "lock-parking-lot"),
+    not(feature = "lock-spin")
+))]
+mod dense_per_type {
+    use alloc::{boxed::Box, collections::BTreeMap};
+    use core::{any::TypeId, ops::Deref};
+    use std::sync::OnceLock;
+
+    use super::generic::LocalLock;
+    use crate::{registry::RegistrationId, utils::thread_safety::RcThreadSafety};
+
+    struct IndexedLock<M> {
+        type_id: TypeId,
+        value: OnceLock<M>,
+    }
+
+    struct LockRegistry<M> {
+        indexed: Box<[IndexedLock<M>]>,
+        fallback: LocalLock<BTreeMap<TypeId, RcThreadSafety<M>>>,
+    }
+
+    /// One immutable slot per final TypeId, shared by the complete root scope tree.
+    pub(crate) struct TypeKeyedLocks<M> {
+        locks: RcThreadSafety<LockRegistry<M>>,
+    }
+
+    /// Dense locks borrow their stable owner; legacy locks retain an owning handle.
+    pub(crate) enum LockRef<'a, M> {
+        Indexed(&'a M),
+        Fallback(RcThreadSafety<M>),
+    }
+
+    impl<M> Deref for LockRef<'_, M> {
+        type Target = M;
+        fn deref(&self) -> &Self::Target {
+            match self {
+                Self::Indexed(lock) => lock,
+                Self::Fallback(lock) => lock,
+            }
+        }
+    }
+
+    impl<M> Clone for TypeKeyedLocks<M> {
+        #[inline]
+        fn clone(&self) -> Self {
+            Self { locks: self.locks.clone() }
+        }
+    }
+
+    impl<M> Default for TypeKeyedLocks<M> {
+        fn default() -> Self {
+            Self::with_indexed_keys(core::iter::empty())
+        }
+    }
+
+    impl<M> TypeKeyedLocks<M> {
+        /// Callers supply the unique, frozen registry.entries key order.
+        pub(crate) fn with_indexed_keys(keys: impl Iterator<Item = TypeId>) -> Self {
+            Self {
+                locks: RcThreadSafety::new(LockRegistry {
+                    indexed: keys
+                        .map(|type_id| IndexedLock {
+                            type_id,
+                            value: OnceLock::new(),
+                        })
+                        .collect(),
+                    fallback: LocalLock::new(BTreeMap::new()),
+                }),
+            }
+        }
+    }
+
+    impl<M: Default> TypeKeyedLocks<M> {
+        #[inline]
+        pub(crate) fn get(&self, type_id: TypeId, id: RegistrationId) -> LockRef<'_, M> {
+            if let Some(slot) = self.locks.indexed.get(id.index()).filter(|slot| slot.type_id == type_id) {
+                return LockRef::Indexed(slot.value.get_or_init(M::default));
+            }
+            // Preserve TypeId aliasing even for an absent or mismatched hint. Never
+            // create a fallback lock when that TypeId already has a dense owner.
+            if let Some(slot) = self.locks.indexed.iter().find(|slot| slot.type_id == type_id) {
+                return LockRef::Indexed(slot.value.get_or_init(M::default));
+            }
+            if let Some(lock) = self.locks.fallback.read().get(&type_id) {
+                return LockRef::Fallback(lock.clone());
+            }
+            LockRef::Fallback(
+                self.locks
+                    .fallback
+                    .write()
+                    .entry(type_id)
+                    .or_insert_with(|| RcThreadSafety::new(M::default()))
+                    .clone(),
+            )
+        }
+    }
+    #[cfg(test)]
+    mod tests {
+        use super::TypeKeyedLocks;
+        use crate::registry::RegistrationId;
+        use core::any::TypeId;
+
+        struct First;
+        struct Second;
+        struct Unknown;
+
+        #[test]
+        fn dense_locks_remain_lazy_and_shared_without_per_get_arc() {
+            let locks = TypeKeyedLocks::<usize>::with_indexed_keys([TypeId::of::<First>(), TypeId::of::<Second>()].into_iter());
+            assert!(locks.locks.indexed.iter().all(|slot| slot.value.get().is_none()));
+            let shared = locks.clone();
+            let first = locks.get(TypeId::of::<First>(), RegistrationId(0));
+            let again = shared.get(TypeId::of::<First>(), RegistrationId(0));
+            assert!(core::ptr::eq(&*first, &*again));
+            assert!(locks.locks.indexed[1].value.get().is_none());
+            let second = locks.get(TypeId::of::<Second>(), RegistrationId(1));
+            assert!(!core::ptr::eq(&*first, &*second));
+            assert!(locks.locks.fallback.read().is_empty());
+        }
+
+        #[test]
+        fn absent_and_mismatched_hints_bridge_to_the_same_type_lock() {
+            let locks = TypeKeyedLocks::<usize>::with_indexed_keys([TypeId::of::<First>(), TypeId::of::<Second>()].into_iter());
+            let first = locks.get(TypeId::of::<First>(), RegistrationId(0));
+            assert!(core::ptr::eq(&*first, &*locks.get(TypeId::of::<First>(), RegistrationId(1))));
+            assert!(core::ptr::eq(
+                &*first,
+                &*locks.get(TypeId::of::<First>(), RegistrationId::UNINDEXED_LOCK)
+            ));
+            assert!(locks.locks.fallback.read().is_empty());
+            let fallback = locks.get(TypeId::of::<Unknown>(), RegistrationId(0));
+            assert!(core::ptr::eq(
+                &*fallback,
+                &*locks.get(TypeId::of::<Unknown>(), RegistrationId::UNINDEXED_LOCK)
+            ));
+            assert_eq!(locks.locks.fallback.read().len(), 1);
+        }
+
+        #[test]
+        fn empty_dense_table_preserves_legacy_clone_sharing() {
+            let locks = TypeKeyedLocks::<usize>::default();
+            let shared = locks.clone();
+            let first = locks.get(TypeId::of::<First>(), RegistrationId::UNINDEXED_LOCK);
+            assert!(core::ptr::eq(
+                &*first,
+                &*shared.get(TypeId::of::<First>(), RegistrationId::UNINDEXED_LOCK)
+            ));
+            assert!(locks.locks.indexed.is_empty());
+            assert_eq!(locks.locks.fallback.read().len(), 1);
+        }
+    }
+}
+
 pub(crate) use generic::LocalLock;
 
 /// Synchronous per-type instantiation locks using the selected synchronization backend.
 ///
 /// This deliberately uses the same backend as [`LocalLock`], so choosing an override replaces all
 /// synchronous locking primitives rather than only the container-state lock.
-#[cfg(feature = "thread_safe")]
+#[cfg(all(
+    feature = "thread_safe",
+    not(all(
+        feature = "std",
+        feature = "thread_safe",
+        not(feature = "lock-parking-lot"),
+        not(feature = "lock-spin")
+    ))
+))]
 pub(crate) type PerTypeSyncLocks = generic_per_type::TypeKeyedLocks<backend::Mutex<()>>;
+#[cfg(all(
+    feature = "std",
+    feature = "thread_safe",
+    not(feature = "lock-parking-lot"),
+    not(feature = "lock-spin")
+))]
+pub(crate) type PerTypeSyncLocks = dense_per_type::TypeKeyedLocks<backend::Mutex<()>>;
 
 /// Async per-type instantiation locks (`tokio::sync::Mutex`).
-#[cfg(feature = "async")]
+#[cfg(all(
+    feature = "async",
+    not(all(
+        feature = "std",
+        feature = "thread_safe",
+        not(feature = "lock-parking-lot"),
+        not(feature = "lock-spin")
+    ))
+))]
 pub(crate) type PerTypeAsyncLocks = generic_per_type::TypeKeyedLocks<tokio::sync::Mutex<()>>;
+#[cfg(all(
+    feature = "async",
+    all(
+        feature = "std",
+        feature = "thread_safe",
+        not(feature = "lock-parking-lot"),
+        not(feature = "lock-spin")
+    )
+))]
+pub(crate) type PerTypeAsyncLocks = dense_per_type::TypeKeyedLocks<tokio::sync::Mutex<()>>;

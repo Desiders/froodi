@@ -30,6 +30,13 @@ where
             instantiator: boxed_instantiator(inst).into(),
             finalizer: fin.map(boxed_finalizer_factory),
             metadata: RegistrationMetadata {
+                #[cfg(all(
+                    feature = "std",
+                    feature = "thread_safe",
+                    not(feature = "lock-parking-lot"),
+                    not(feature = "lock-spin")
+                ))]
+                lock_id: crate::registry::RegistrationId::UNINDEXED_LOCK,
                 dependencies: Inst::dependencies(),
                 config: config.unwrap_or_default(),
                 scope_data: scope.into(),

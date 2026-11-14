@@ -76,7 +76,23 @@ impl Container {
             parent: None,
             close_parent: false,
             #[cfg(feature = "thread_safe")]
-            per_type_locks: PerTypeSyncLocks::default(),
+            per_type_locks: {
+                #[cfg(all(
+                    feature = "std",
+                    feature = "thread_safe",
+                    not(feature = "lock-parking-lot"),
+                    not(feature = "lock-spin")
+                ))]
+                let locks = PerTypeSyncLocks::with_indexed_keys(registry.dense_lock_keys());
+                #[cfg(not(all(
+                    feature = "std",
+                    feature = "thread_safe",
+                    not(feature = "lock-parking-lot"),
+                    not(feature = "lock-spin")
+                )))]
+                let locks = PerTypeSyncLocks::default();
+                locks
+            },
         };
         while !is_target(&container.scope_data) {
             let scope_data = registry
@@ -182,7 +198,22 @@ impl Container {
 
         #[cfg(feature = "thread_safe")]
         trace!("Lock instantiator call");
-        #[cfg(feature = "thread_safe")]
+        #[cfg(all(
+            feature = "std",
+            feature = "thread_safe",
+            not(feature = "lock-parking-lot"),
+            not(feature = "lock-spin")
+        ))]
+        let inst_call_lock = self.per_type_locks.get(type_info.id, data.metadata.lock_id);
+        #[cfg(all(
+            feature = "thread_safe",
+            not(all(
+                feature = "std",
+                feature = "thread_safe",
+                not(feature = "lock-parking-lot"),
+                not(feature = "lock-spin")
+            ))
+        ))]
         let inst_call_lock = self.per_type_locks.get(type_info.id);
         #[cfg(feature = "thread_safe")]
         let _guard = inst_call_lock.lock();

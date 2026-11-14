@@ -40,6 +40,13 @@ use crate::{
 
 #[derive(Clone)]
 pub(crate) struct RegistrationMetadata {
+    #[cfg(all(
+        feature = "std",
+        feature = "thread_safe",
+        not(feature = "lock-parking-lot"),
+        not(feature = "lock-spin")
+    ))]
+    pub(crate) lock_id: RegistrationId,
     pub(crate) dependencies: BTreeSet<Dependency>,
     pub(crate) config: Config,
     pub(crate) scope_data: ScopeData,
@@ -116,6 +123,25 @@ impl Entry {
             self.selected.metadata()
         } else {
             self.sync().map(|data| (&data.metadata.dependencies, data.metadata.scope_data))
+        }
+    }
+
+    #[cfg(all(
+        feature = "std",
+        feature = "thread_safe",
+        not(feature = "lock-parking-lot"),
+        not(feature = "lock-spin")
+    ))]
+    pub(crate) fn set_lock_id(&mut self, id: RegistrationId) {
+        match &mut self.selected {
+            Selected::Sync(data) => data.metadata.lock_id = id,
+            #[cfg(feature = "async")]
+            Selected::Async(data) => data.metadata.lock_id = id,
+            Selected::Missing => (),
+        }
+        #[cfg(feature = "async")]
+        if let Some(data) = &mut self.sync {
+            data.metadata.lock_id = id;
         }
     }
 
@@ -263,6 +289,18 @@ struct CycleFrame<'a> {
 }
 
 impl Registry {
+    #[cfg(all(
+        feature = "std",
+        feature = "thread_safe",
+        not(feature = "lock-parking-lot"),
+        not(feature = "lock-spin")
+    ))]
+    pub(crate) fn dense_lock_keys(&self) -> impl Iterator<Item = core::any::TypeId> + '_ {
+        // No linked executors means the old lazy map path, with no dense allocation.
+        let len = if self.indexed.is_empty() { 0 } else { self.entries.len() };
+        self.entries.keys().take(len).map(|key| key.id)
+    }
+
     #[allow(clippy::similar_names)]
     pub(crate) fn new<T, S, const N: usize>(entries: BTreeMap<TypeInfo, InstantiatorData>) -> Self
     where
@@ -281,6 +319,13 @@ impl Registry {
                 instantiator: boxed_container_instantiator().into(),
                 finalizer: None,
                 metadata: RegistrationMetadata {
+                    #[cfg(all(
+                        feature = "std",
+                        feature = "thread_safe",
+                        not(feature = "lock-parking-lot"),
+                        not(feature = "lock-spin")
+                    ))]
+                    lock_id: crate::registry::RegistrationId::UNINDEXED_LOCK,
                     dependencies: EMPTY_DEPENDENCIES,
                     config: Config { cache_provides: false },
                     scope_data,
@@ -294,6 +339,13 @@ impl Registry {
                 instantiator: crate::async_impl::instantiator::boxed_container_instantiator().into(),
                 finalizer: None,
                 metadata: RegistrationMetadata {
+                    #[cfg(all(
+                        feature = "std",
+                        feature = "thread_safe",
+                        not(feature = "lock-parking-lot"),
+                        not(feature = "lock-spin")
+                    ))]
+                    lock_id: crate::registry::RegistrationId::UNINDEXED_LOCK,
                     dependencies: EMPTY_DEPENDENCIES,
                     config: Config { cache_provides: false },
                     scope_data,

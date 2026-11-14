@@ -23,6 +23,14 @@ use core::marker::PhantomData;
 pub struct RegistrationId(pub(crate) u32);
 
 impl RegistrationId {
+    #[cfg(all(
+        feature = "std",
+        feature = "thread_safe",
+        not(feature = "lock-parking-lot"),
+        not(feature = "lock-spin")
+    ))]
+    pub(crate) const UNINDEXED_LOCK: Self = Self(u32::MAX);
+
     pub(crate) const fn index(self) -> usize {
         self.0 as usize
     }
@@ -149,6 +157,13 @@ where
                 instantiator: RegistrationInstantiator::linked::<Inst, Deps>(inst, self.targets),
                 finalizer: fin.map(boxed_finalizer_factory),
                 metadata: RegistrationMetadata {
+                    #[cfg(all(
+                        feature = "std",
+                        feature = "thread_safe",
+                        not(feature = "lock-parking-lot"),
+                        not(feature = "lock-spin")
+                    ))]
+                    lock_id: crate::registry::RegistrationId::UNINDEXED_LOCK,
                     dependencies: BTreeSet::new(),
                     scope_data: scope,
                     config,
@@ -186,6 +201,13 @@ impl Collect for ContainerLeaf {
                 instantiator: boxed_container_instantiator().into(),
                 finalizer: None,
                 metadata: RegistrationMetadata {
+                    #[cfg(all(
+                        feature = "std",
+                        feature = "thread_safe",
+                        not(feature = "lock-parking-lot"),
+                        not(feature = "lock-spin")
+                    ))]
+                    lock_id: crate::registry::RegistrationId::UNINDEXED_LOCK,
                     dependencies: BTreeSet::new(),
                     config: Config { cache_provides: false },
                     scope_data: self.scope,
@@ -231,6 +253,13 @@ impl Collect for AsyncContainerLeaf {
                 instantiator: crate::async_impl::instantiator::boxed_container_instantiator().into(),
                 finalizer: None,
                 metadata: RegistrationMetadata {
+                    #[cfg(all(
+                        feature = "std",
+                        feature = "thread_safe",
+                        not(feature = "lock-parking-lot"),
+                        not(feature = "lock-spin")
+                    ))]
+                    lock_id: crate::registry::RegistrationId::UNINDEXED_LOCK,
                     dependencies: BTreeSet::new(),
                     config: Config { cache_provides: false },
                     scope_data: self.scope,
@@ -350,6 +379,17 @@ pub(crate) fn prepare(mut registry: RuntimeRegistry, cycles_checked: bool, plan:
         }
         ids.into_keys().collect()
     };
+    // Lock IDs occupy a separate index domain from graph edges: one per final TypeId.
+    // Entries are unique by TypeId; sync fallback receives the same ID before cloning.
+    #[cfg(all(
+        feature = "std",
+        feature = "thread_safe",
+        not(feature = "lock-parking-lot"),
+        not(feature = "lock-spin")
+    ))]
+    for (index, entry) in registry.entries.values_mut().enumerate() {
+        entry.set_lock_id(RegistrationId(u32::try_from(index).expect("too many registrations")));
+    }
     registry.indexed = keys
         .into_iter()
         .map(|key| {
@@ -373,4 +413,70 @@ pub(crate) fn finish<Links, Reg: IntoRegistry<Links>>(registry: Reg) -> RuntimeR
 
 pub(crate) fn has_linked_instantiators(registry: &RuntimeRegistry) -> bool {
     registry.entries.values().any(Entry::is_linked)
+}
+
+#[cfg(all(
+    test,
+    feature = "std",
+    feature = "thread_safe",
+    not(feature = "lock-parking-lot"),
+    not(feature = "lock-spin")
+))]
+mod once_lock_metadata_tests {
+    use super::prepare;
+    use crate::{registry, Container, DefaultScope::App, TypeInfo};
+
+    #[test]
+    fn duplicate_graph_ids_and_type_lookup_share_a_unique_type_lock() {
+        let registry = registry! { provide(App, || Ok(7_u32)) }.into_registry();
+        #[allow(unused_mut)]
+        let mut keys = alloc::vec![TypeInfo::of::<u32>(), TypeInfo::of::<u32>(), TypeInfo::of::<Container>()];
+        #[cfg(feature = "async")]
+        keys.push(TypeInfo::of::<crate::async_impl::Container>());
+        let registry = prepare(registry, false, Some(keys));
+        let by_type = registry.get(&TypeInfo::of::<u32>()).unwrap().metadata.lock_id;
+        let first_graph = registry.indexed[0].1.sync().unwrap().metadata.lock_id;
+        let duplicate_graph = registry.indexed[1].1.sync().unwrap().metadata.lock_id;
+        let canonical = registry.entries.keys().position(|key| key.id == TypeInfo::of::<u32>().id).unwrap();
+        assert_eq!(by_type.index(), canonical);
+        assert_eq!(first_graph.index(), canonical);
+        assert_eq!(duplicate_graph.index(), canonical);
+        let locks = crate::lock::PerTypeSyncLocks::with_indexed_keys(registry.dense_lock_keys());
+        let ordinary = locks.get(TypeInfo::of::<u32>().id, by_type);
+        let linked = locks.get(TypeInfo::of::<u32>().id, duplicate_graph);
+        assert!(core::ptr::eq(&*ordinary, &*linked));
+    }
+
+    #[test]
+    fn descendants_share_the_same_root_mutex_and_legacy_stays_unindexed() {
+        let app = Container::new(registry! { provide(App, || Ok(7_u32)) });
+        let request = app.clone().enter_build().unwrap();
+        let id = app.inner.registry.get(&TypeInfo::of::<u32>()).unwrap().metadata.lock_id;
+        let parent = app.per_type_locks.get(TypeInfo::of::<u32>().id, id);
+        let child = request.per_type_locks.get(TypeInfo::of::<u32>().id, id);
+        assert!(core::ptr::eq(&*parent, &*child));
+        let legacy = Container::new(crate::Registry::new_with_default_entries());
+        assert!(legacy.inner.registry.indexed.is_empty());
+        assert_eq!(legacy.inner.registry.dense_lock_keys().count(), 0);
+        let implicit = legacy.get::<Container>().unwrap();
+        let id = super::RegistrationId::UNINDEXED_LOCK;
+        let outer = legacy.per_type_locks.get(TypeInfo::of::<Container>().id, id);
+        let inner = implicit.per_type_locks.get(TypeInfo::of::<Container>().id, id);
+        assert!(core::ptr::eq(&*outer, &*inner));
+    }
+
+    #[cfg(feature = "async")]
+    #[test]
+    fn erased_mixed_sync_fallback_matches_async_and_indexed_metadata() {
+        let synchronous = registry! { provide(App, || Ok(7_u32)) }.into_registry();
+        let asynchronous = registry! { provide(App, async || Ok(9_u32)) }.into_registry();
+        let registry = prepare(registry! { extend(synchronous, asynchronous) }.into_registry(), false, None);
+        let sync_id = registry.get(&TypeInfo::of::<u32>()).unwrap().metadata.lock_id.index();
+        let async_id = registry.get_async(&TypeInfo::of::<u32>()).unwrap().metadata.lock_id.index();
+        assert_eq!(sync_id, async_id);
+        let dense_keys: alloc::vec::Vec<_> = registry.dense_lock_keys().collect();
+        assert_eq!(dense_keys[sync_id], TypeInfo::of::<u32>().id);
+        let indexed = registry.indexed.iter().find(|(key, _)| key.id == TypeInfo::of::<u32>().id).unwrap();
+        assert_eq!(indexed.1.sync().unwrap().metadata.lock_id.index(), sync_id);
+    }
 }
