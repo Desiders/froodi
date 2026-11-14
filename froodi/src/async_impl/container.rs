@@ -1,5 +1,9 @@
 use alloc::{boxed::Box, vec::Vec};
-use core::future::Future;
+use core::{
+    future::{poll_fn, Future},
+    pin::Pin,
+    task::Poll,
+};
 use tracing::{debug, error, trace, warn};
 
 use super::service::Service as _;
@@ -123,14 +127,32 @@ impl Container {
         &'a self,
         selected: Selection<'a, InstantiatorData>,
     ) -> impl Future<Output = Result<RcThreadSafety<Dep>, ResolveErrorKind>> + SendSafety + 'a {
+        let mut selected = Some(selected);
+        let mut cold: Option<Pin<Box<_>>> = None;
+        // Keep get lazy and Unpin: inspect cache only when first polled, and retain
+        // the original boxed resolution future only when the cache does not hit.
+        poll_fn(move |cx| {
+            if cold.is_none() {
+                let type_info = TypeInfo::of::<Dep>();
+                if let Some(dependency) = { self.inner.cache.read().get(&type_info) } {
+                    debug!("Found in cache");
+                    return Poll::Ready(Ok(dependency));
+                }
+                cold = Some(self.get_selected_cold(selected.take().expect("cold resolver initialized only once")));
+            }
+            cold.as_mut().expect("cold resolver initialized above").as_mut().poll(cx)
+        })
+    }
+
+    fn get_selected_cold<'a, Dep: SendSafety + SyncSafety + 'static>(
+        &'a self,
+        selected: Selection<'a, InstantiatorData>,
+    ) -> Pin<Box<impl Future<Output = Result<RcThreadSafety<Dep>, ResolveErrorKind>> + SendSafety + 'a>> {
         let type_info = TypeInfo::of::<Dep>();
         let dep_name = type_info.name;
         let scope_name = self.inner.scope_data.name;
         let fut = async move {
-            if let Some(dependency) = { self.inner.cache.read().get(&type_info) } {
-                debug!("Found in cache");
-                return Ok(dependency);
-            }
+            // The first cache check was performed by get_selected in this poll.
             debug!("Not found in cache");
 
             let by_type = matches!(selected, Selection::ByType);
