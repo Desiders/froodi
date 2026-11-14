@@ -55,8 +55,8 @@ impl RegistrationInstantiator {
 
 impl ErasedInstantiator {
     #[inline]
-    pub(super) fn call(&self, container: Container) -> Result<Box<dyn Any>, InstError> {
-        self.inst.call(&container, &self.edges)
+    pub(super) fn call(&self, container: &Container) -> Result<Box<dyn Any>, InstError> {
+        self.inst.call(container, &self.edges)
     }
 
     pub(crate) fn remap(&mut self, ids: &BTreeMap<TypeInfo, RegistrationId>) {

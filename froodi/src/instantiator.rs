@@ -162,9 +162,15 @@ impl From<BoxedCloneInstantiator<ResolveErrorKind, InstantiateErrorKind>> for Re
 }
 
 impl RegistrationInstantiator {
-    pub(crate) fn call(&self, container: Container) -> Result<Box<dyn Any>, InstantiatorErrorKind<ResolveErrorKind, InstantiateErrorKind>> {
+    pub(crate) fn call(
+        &self,
+        container: &Container,
+    ) -> Result<Box<dyn Any>, InstantiatorErrorKind<ResolveErrorKind, InstantiateErrorKind>> {
         match self {
-            Self::Runtime(inst) => Service::call(&mut inst.clone(), container),
+            Self::Runtime(inst) => {
+                let container = container.clone();
+                Service::call(&mut inst.clone(), container)
+            }
             Self::Linked(inst) => inst.call(container),
         }
     }

@@ -180,7 +180,7 @@ impl Container {
             return Ok(dependency);
         }
 
-        match instantiator.call(self.clone()) {
+        match instantiator.call(self) {
             Ok(dependency) => match dependency.downcast::<Dep>() {
                 Ok(dependency) => {
                     let dependency = RcThreadSafety::new(*dependency);
@@ -274,7 +274,7 @@ impl Container {
             return Err(err);
         }
 
-        match instantiator.call(self.clone()) {
+        match instantiator.call(self) {
             Ok(dependency) => match dependency.downcast::<Dep>() {
                 Ok(dependency) => Ok(*dependency),
                 Err(incorrect_type) => {
