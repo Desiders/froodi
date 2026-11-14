@@ -89,6 +89,8 @@ where
     Deps: DependencyResolver + SendSafety + 'static,
     Fin: Finalizer<Out> + SendSafety + SyncSafety,
 {
+    const ENTRY_COUNT: usize = 1;
+
     fn collect(self, entries: &mut Vec<CollectedRegistration>, _: &mut Vec<RuntimeRegistry>) {
         let Registration {
             inst, fin, scope, config, ..

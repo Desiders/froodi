@@ -109,6 +109,10 @@ pub struct CollectedRegistration {
 }
 
 pub trait Collect {
+    // Reservations only: an uncounted implementation may still grow the vectors.
+    const ENTRY_COUNT: usize = 0;
+    const RUNTIME_COUNT: usize = 0;
+
     fn collect(self, entries: &mut Vec<CollectedRegistration>, runtime: &mut Vec<RuntimeRegistry>);
 }
 
@@ -117,6 +121,9 @@ impl Collect for Empty {
 }
 
 impl<Left: Collect, Right: Collect> Collect for Node<Left, Right> {
+    const ENTRY_COUNT: usize = Left::ENTRY_COUNT + Right::ENTRY_COUNT;
+    const RUNTIME_COUNT: usize = Left::RUNTIME_COUNT + Right::RUNTIME_COUNT;
+
     fn collect(self, entries: &mut Vec<CollectedRegistration>, runtime: &mut Vec<RuntimeRegistry>) {
         self.0.collect(entries, runtime);
         self.1.collect(entries, runtime);
@@ -130,6 +137,8 @@ where
     Deps: DependencyResolver + 'static,
     Fin: Finalizer<Out> + SendSafety + SyncSafety,
 {
+    const ENTRY_COUNT: usize = 1;
+
     fn collect(self, entries: &mut Vec<CollectedRegistration>, _runtime: &mut Vec<RuntimeRegistry>) {
         let Registration {
             inst, fin, scope, config, ..
@@ -168,6 +177,8 @@ impl<Root> Link<Root, ()> for ContainerLeaf {
 }
 
 impl Collect for ContainerLeaf {
+    const ENTRY_COUNT: usize = 1;
+
     fn collect(self, entries: &mut Vec<CollectedRegistration>, _runtime: &mut Vec<RuntimeRegistry>) {
         entries.push(CollectedRegistration {
             key: TypeInfo::of::<Container>(),
@@ -211,6 +222,8 @@ impl<Root> Link<Root, ()> for AsyncContainerLeaf {
 
 #[cfg(feature = "async")]
 impl Collect for AsyncContainerLeaf {
+    const ENTRY_COUNT: usize = 1;
+
     fn collect(self, entries: &mut Vec<CollectedRegistration>, _: &mut Vec<RuntimeRegistry>) {
         entries.push(CollectedRegistration {
             key: TypeInfo::of::<crate::async_impl::Container>(),
@@ -272,8 +285,8 @@ where
             self.tree,
             Node(ContainerLeaf { scope: scopes[0] }, AsyncContainerLeaf { scope: scopes[0] }),
         );
-        let mut entries = Vec::new();
-        let mut runtime = Vec::new();
+        let mut entries = Vec::with_capacity(<<Root<Tree> as Link<Index<Tree>, Links>>::Linked as Collect>::ENTRY_COUNT);
+        let mut runtime = Vec::with_capacity(<<Root<Tree> as Link<Index<Tree>, Links>>::Linked as Collect>::RUNTIME_COUNT);
         root.link().collect(&mut entries, &mut runtime);
         assemble(
             entries,
