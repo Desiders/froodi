@@ -1,4 +1,3 @@
-//! Error exits must preserve cleanup order while consuming the parent and Context.
 use froodi::{
     registry,
     utils::thread_safety::RcThreadSafety,
@@ -49,7 +48,6 @@ async fn failed_async_scope_build_keeps_sync_finalizer_before_context_drop() {
         let events = RcThreadSafety::new(Mutex::new(Vec::new()));
         let finalized = events.clone();
         let scope = if no_children { Step } else { App };
-        // An async container still owns synchronous providers and their cleanup.
         let parent = AsyncContainer::new_with_start_scope(
             registry! {
                 provide(scope, || Ok(Resource), finalizer = move |_| finalized.lock().unwrap().push("finalizer")),

@@ -1,4 +1,3 @@
-//! A shared scope cursor must preserve sibling isolation and skipped-parent cleanup.
 use froodi::{
     declare, registry,
     utils::thread_safety::RcThreadSafety,
@@ -34,7 +33,6 @@ fn sibling_requests_keep_context_and_skipped_parent_cleanup_independent() {
     assert_eq!(right.get::<RequestValue>().unwrap().0, "right");
     left.close();
     assert_eq!(*events.lock().unwrap(), ["left", "session"]);
-    // Closing one request leaves its sibling and the app scope alive.
     assert_eq!(right.get::<RequestValue>().unwrap().0, "right");
     right.close();
     assert_eq!(*events.lock().unwrap(), ["left", "session", "right", "session"]);

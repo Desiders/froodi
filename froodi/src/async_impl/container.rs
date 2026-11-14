@@ -61,7 +61,6 @@ impl Container {
     /// # Panics
     /// Panics if the scopes are exhausted before `is_target` accepts one.
     fn build_root(mut registry: Registry, is_target: impl Fn(&ScopeData) -> bool) -> Self {
-        // Both halves borrow the same stably sorted sequence through their existing registry Arc/Rc.
         registry.scopes_data.sort_by_key(|scope| scope.priority);
         let scope_data = registry
             .get_scope_with_child_scopes()
@@ -142,8 +141,7 @@ impl Container {
     ) -> impl Future<Output = Result<RcThreadSafety<Dep>, ResolveErrorKind>> + SendSafety + 'a {
         let mut selected = Some(selected);
         let mut cold: Option<Pin<Box<_>>> = None;
-        // Keep get lazy and Unpin: inspect cache only when first polled, and retain
-        // the original boxed resolution future only when the cache does not hit.
+        // Check the cache on first poll; box only the cold path to keep this future Unpin.
         poll_fn(move |cx| {
             if cold.is_none() {
                 let type_info = TypeInfo::of::<Dep>();
@@ -165,7 +163,6 @@ impl Container {
         let dep_name = type_info.name;
         let scope_name = self.inner.scope_data.name;
         let fut = async move {
-            // The first cache check was performed by get_selected in this poll.
             debug!("Not found in cache");
 
             let by_type = matches!(selected, Selection::ByType);
@@ -511,7 +508,7 @@ impl Container {
         let scopes = self.inner.get_scope_with_child_scopes().child();
         let scope_data = scopes.scope_data;
         let child_scopes_start = self.inner.child_scopes_start + 1;
-        // Keep the original receiver/context evaluation order on failed scope builds.
+        // Preserve Context clone/drop order on failed scope builds.
         let mut child = self.init_descendant(context.clone(), scope_data.ok_or(no_child)?, child_scopes_start, false);
         while !is_target(&child.inner.scope_data) {
             let scopes = child.inner.get_scope_with_child_scopes().child();
@@ -764,15 +761,12 @@ pub(crate) struct ContainerInner {
 }
 
 impl ContainerInner {
-    /// Snapshot clones are serialized per parent cache, while ordinary readers may proceed.
     #[inline]
     fn child_cache(&self) -> Cache {
-        // Lock order is gate -> cache read. A queued clone must not hold a cache reader,
-        // otherwise it could delay a writer while waiting for the active clone.
+        // Take the gate first so queued snapshots do not hold cache readers.
         #[cfg(feature = "thread_safe")]
         let _snapshot_guard = self.snapshot_gate.write();
-        // Cache::child clones TypeInfo and Arc/Rc handles, never user Clone/Drop callbacks.
-        // A local read guard drops before the earlier gate guard.
+        // Cache::child copies handles; user callbacks run after these guards drop.
         let cache = self.cache.read();
         cache.child()
     }

@@ -1,4 +1,3 @@
-//! Resolution lock ownership, serialization, and future contracts.
 use froodi::{registry, utils::thread_safety::RcThreadSafety, Container, DefaultScope::App};
 use std::sync::{
     atomic::{AtomicUsize, Ordering},

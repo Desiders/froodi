@@ -1,4 +1,3 @@
-//! Both synchronous caches inside an async container follow the same snapshot protocol.
 extern crate std;
 use super::Container;
 use crate::{

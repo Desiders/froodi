@@ -126,7 +126,6 @@ pub struct CollectedRegistration {
 }
 
 pub trait Collect {
-    // Reservations only: an uncounted implementation may still grow the vectors.
     const ENTRY_COUNT: usize = 0;
     const RUNTIME_COUNT: usize = 0;
 
@@ -355,8 +354,7 @@ pub(crate) fn prepare(mut registry: RuntimeRegistry, cycles_checked: bool, plan:
         }
         ids.into_keys().collect()
     };
-    // Lock IDs occupy a separate index domain from graph edges: one per final TypeId.
-    // Entries are unique by TypeId; sync fallback receives the same ID before cloning.
+    // Lock IDs are per TypeId, independent of sync/async graph indices.
     #[cfg(all(
         feature = "std",
         feature = "thread_safe",

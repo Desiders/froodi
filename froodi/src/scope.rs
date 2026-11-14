@@ -125,7 +125,6 @@ impl Display for ScopeData {
     }
 }
 
-/// A borrowed view into the scope sequence owned by the frozen registry.
 pub(crate) struct ScopeDataWithChildScopesData<'a> {
     pub scope_data: Option<ScopeData>,
     pub child_scopes_data: &'a [ScopeData],

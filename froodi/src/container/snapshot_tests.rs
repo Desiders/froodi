@@ -1,4 +1,4 @@
-//! Synchronization protocol checks. Timeouts are deadlock watchdogs, never performance assertions.
+// Timeouts detect deadlocks; they do not assert performance.
 extern crate std;
 use super::Container;
 use crate::{
@@ -39,7 +39,7 @@ fn snapshot_can_complete_while_an_existing_cache_reader_is_held() {
         send.send((actual.0, Arc::ptr_eq(&actual, &expected))).unwrap();
     });
     let completed = receive.recv_timeout(Duration::from_secs(10));
-    // Always release the held guard before joining, including a failed/deadlocked protocol.
+    // Release the guard before joining even when the timeout fires.
     drop(existing_reader);
     worker.join().unwrap();
     assert_eq!(completed.expect("snapshot blocked an existing reader"), (7, true));
@@ -67,7 +67,6 @@ fn ordinary_cache_read_and_write_do_not_wait_for_the_snapshot_gate() {
     drop(gate);
     worker.join().unwrap();
     assert_eq!(completed.expect("ordinary cache operations took the snapshot gate"), (7, 7, true));
-    // A normal close still restores the original Context map after the controlled write.
     parent.close();
     assert!(Arc::ptr_eq(&expected, &parent.get::<Value>().unwrap()));
 }

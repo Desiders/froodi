@@ -1,4 +1,3 @@
-//! Regression checks for observable properties of the opaque resolution futures.
 #![cfg(feature = "async")]
 
 use froodi::{async_impl::Container, registry, DefaultScope::App};

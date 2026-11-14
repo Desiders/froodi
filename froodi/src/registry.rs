@@ -434,7 +434,7 @@ impl Registry {
     pub(crate) fn detect_cyclic_dependencies(&self) -> Result<(), ValidationErrorKind> {
         #[cfg(test)]
         CYCLE_CHECKS.with(|checks| checks.set(checks.get() + 1));
-        // true is on the current path; false is fully visited.
+        // true: active path; false: fully visited.
         let mut visited = BTreeMap::new();
         let mut stack = Vec::new();
         for (key, entry) in &self.entries {
@@ -506,8 +506,7 @@ impl Registry {
             is_async,
             dependencies: dependencies.iter(),
         });
-        // Retain one iterator per active node so entering and returning from a
-        // child follows exactly the recursive BTree dependency order.
+        // Preserve recursive dependency order.
         while !stack.is_empty() {
             let next = {
                 let frame = stack.last_mut().expect("active DFS frame exists");
@@ -520,8 +519,7 @@ impl Registry {
                         match visited.entry((dependency.clone(), target_async)) {
                             BTreeMapEntry::Occupied(state) => {
                                 if *state.get() {
-                                    // Do not append the repeated target or trim a
-                                    // leading path: both would change the error graph.
+                                    // Preserve the full diagnostic path, including any non-cyclic prefix.
                                     return true;
                                 }
                             }

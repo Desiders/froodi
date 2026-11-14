@@ -249,12 +249,10 @@ mod dense_per_type {
         fallback: LocalLock<BTreeMap<TypeId, RcThreadSafety<M>>>,
     }
 
-    /// One immutable slot per final TypeId, shared by the complete root scope tree.
     pub(crate) struct TypeKeyedLocks<M> {
         locks: RcThreadSafety<LockRegistry<M>>,
     }
 
-    /// Dense locks borrow their stable owner; legacy locks retain an owning handle.
     pub(crate) enum LockRef<'a, M> {
         Indexed(&'a M),
         Fallback(RcThreadSafety<M>),
@@ -289,7 +287,7 @@ mod dense_per_type {
             Self::with_indexed_keys(registry.dense_lock_keys())
         }
 
-        /// Callers supply the unique, frozen registry.entries key order.
+        // Keys are unique TypeIds in frozen registry order.
         pub(crate) fn with_indexed_keys(keys: impl Iterator<Item = TypeId>) -> Self {
             Self {
                 locks: RcThreadSafety::new(LockRegistry {
@@ -316,8 +314,7 @@ mod dense_per_type {
             if let Some(slot) = self.locks.indexed.get(id.index()).filter(|slot| slot.type_id == type_id) {
                 return LockRef::Indexed(slot.value.get_or_init(M::default));
             }
-            // Preserve TypeId aliasing even for an absent or mismatched hint. Never
-            // create a fallback lock when that TypeId already has a dense owner.
+            // An absent or stale hint must not create a second lock for a known TypeId.
             if let Some(slot) = self.locks.indexed.iter().find(|slot| slot.type_id == type_id) {
                 return LockRef::Indexed(slot.value.get_or_init(M::default));
             }
