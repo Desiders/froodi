@@ -111,6 +111,14 @@ pub(crate) struct Entry {
 }
 
 impl Entry {
+    fn metadata(&self, is_async: bool) -> Option<(&BTreeSet<Dependency>, ScopeData)> {
+        if is_async {
+            self.selected.metadata()
+        } else {
+            self.sync().map(|data| (&data.metadata.dependencies, data.metadata.scope_data))
+        }
+    }
+
     pub(crate) fn sync(&self) -> Option<&InstantiatorData> {
         match &self.selected {
             Selected::Sync(data) => Some(data),
@@ -248,6 +256,12 @@ pub struct Registry {
     pub(crate) indexed: Vec<(TypeInfo, Entry)>,
 }
 
+struct CycleFrame<'a> {
+    key: TypeInfo,
+    is_async: bool,
+    dependencies: alloc::collections::btree_set::Iter<'a, Dependency>,
+}
+
 impl Registry {
     #[allow(clippy::similar_names)]
     pub(crate) fn new<T, S, const N: usize>(entries: BTreeMap<TypeInfo, InstantiatorData>) -> Self
@@ -352,15 +366,18 @@ impl Registry {
     pub(crate) fn detect_cyclic_dependencies(&self) -> Result<(), ValidationErrorKind> {
         #[cfg(test)]
         CYCLE_CHECKS.with(|checks| checks.set(checks.get() + 1));
-        let mut visited = BTreeSet::new();
+        // true is on the current path; false is fully visited.
+        let mut visited = BTreeMap::new();
         let mut stack = Vec::new();
         for (key, entry) in &self.entries {
             for is_async in [false, true] {
-                if self.metadata(key, is_async).is_some() && self.dfs_visit(key, is_async, &mut visited, &mut stack) {
-                    let mut graph = stack.into_iter().map(|(key, _)| key).collect::<Vec<_>>();
-                    return Err(ValidationErrorKind::CyclicDependency {
-                        graph: (graph.remove(0), graph.into_boxed_slice()),
-                    });
+                if let Some((dependencies, _)) = entry.metadata(is_async) {
+                    if self.dfs_visit(key, is_async, dependencies, &mut visited, &mut stack) {
+                        let mut graph = stack.into_iter().map(|frame| frame.key).collect::<Vec<_>>();
+                        return Err(ValidationErrorKind::CyclicDependency {
+                            graph: (graph.remove(0), graph.into_boxed_slice()),
+                        });
+                    }
                 }
                 if !entry.selected.is_async() {
                     break;
@@ -373,16 +390,10 @@ impl Registry {
     pub(crate) fn detect_unreachable_scopes(&self) -> Result<(), ValidationErrorKind> {
         for (key, entry) in &self.entries {
             for is_async in [false, true] {
-                if let Some((dependencies, scope)) = self.metadata(key, is_async) {
+                if let Some((dependencies, scope)) = entry.metadata(is_async) {
                     for dependency in dependencies {
                         let target = self.entries.get(&dependency.type_info);
-                        let target_metadata = if is_async {
-                            target.and_then(|entry| entry.selected.metadata())
-                        } else {
-                            target
-                                .and_then(Entry::sync)
-                                .map(|data| (&data.metadata.dependencies, data.metadata.scope_data))
-                        };
+                        let target_metadata = target.and_then(|entry| entry.metadata(is_async));
                         if let Some((_, dependency_scope)) = target_metadata {
                             if !scope.can_access(&dependency_scope) {
                                 return Err(ValidationErrorKind::UnreachableDependency {
@@ -408,44 +419,60 @@ impl Registry {
         Ok(())
     }
 
-    fn metadata(&self, key: &TypeInfo, is_async: bool) -> Option<(&BTreeSet<Dependency>, ScopeData)> {
-        let entry = self.entries.get(key)?;
-        if is_async {
-            entry.selected.metadata()
-        } else {
-            entry.sync().map(|data| (&data.metadata.dependencies, data.metadata.scope_data))
-        }
-    }
-
-    fn dfs_visit(
-        &self,
+    fn dfs_visit<'a>(
+        &'a self,
         key: &TypeInfo,
         is_async: bool,
-        visited: &mut BTreeSet<(TypeInfo, bool)>,
-        stack: &mut Vec<(TypeInfo, bool)>,
+        dependencies: &'a BTreeSet<Dependency>,
+        visited: &mut BTreeMap<(TypeInfo, bool), bool>,
+        stack: &mut Vec<CycleFrame<'a>>,
     ) -> bool {
-        let node = (key.clone(), is_async);
-        if visited.contains(&node) {
-            return false;
-        }
-        if stack.contains(&node) {
-            return true;
-        }
-        stack.push(node.clone());
-        if let Some((dependencies, _)) = self.metadata(key, is_async) {
-            for dependency in dependencies {
-                if let Some(target) = self.entries.get(&dependency.type_info) {
-                    let target_async = is_async && target.selected.is_async();
-                    if self.metadata(&dependency.type_info, target_async).is_some()
-                        && self.dfs_visit(&dependency.type_info, target_async, visited, stack)
-                    {
-                        return true;
-                    }
-                }
+        match visited.entry((key.clone(), is_async)) {
+            alloc::collections::btree_map::Entry::Occupied(state) => return *state.get(),
+            alloc::collections::btree_map::Entry::Vacant(state) => {
+                state.insert(true);
             }
         }
-        stack.pop();
-        visited.insert(node);
+        stack.push(CycleFrame {
+            key: key.clone(),
+            is_async,
+            dependencies: dependencies.iter(),
+        });
+        // Retain one iterator per active node so entering and returning from a
+        // child follows exactly the recursive BTree dependency order.
+        while !stack.is_empty() {
+            let next = {
+                let frame = stack.last_mut().expect("active DFS frame exists");
+                frame.dependencies.next().map(|dependency| (frame.is_async, &dependency.type_info))
+            };
+            if let Some((current_async, dependency)) = next {
+                if let Some(target) = self.entries.get(dependency) {
+                    let target_async = current_async && target.selected.is_async();
+                    if let Some((target_dependencies, _)) = target.metadata(target_async) {
+                        match visited.entry((dependency.clone(), target_async)) {
+                            alloc::collections::btree_map::Entry::Occupied(state) => {
+                                if *state.get() {
+                                    // Do not append the repeated target or trim a
+                                    // leading path: both would change the error graph.
+                                    return true;
+                                }
+                            }
+                            alloc::collections::btree_map::Entry::Vacant(state) => {
+                                state.insert(true);
+                                stack.push(CycleFrame {
+                                    key: dependency.clone(),
+                                    is_async: target_async,
+                                    dependencies: target_dependencies.iter(),
+                                });
+                            }
+                        }
+                    }
+                }
+            } else {
+                let frame = stack.pop().expect("completed DFS frame exists");
+                *visited.get_mut(&(frame.key, frame.is_async)).expect("DFS node remains recorded") = false;
+            }
+        }
         false
     }
 }

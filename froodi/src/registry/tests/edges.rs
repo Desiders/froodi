@@ -1480,3 +1480,136 @@ fn errors_and_panics_preserve_indexed_dependencies_and_finalizer_ownership() {
         ]
     );
 }
+
+#[test]
+fn runtime_validation_preserves_cycle_path_and_dependency_alias_names() {
+    use crate::errors::ValidationErrorKind;
+
+    struct A;
+    struct B;
+    struct C;
+    let mut native = native_registry! {
+        provide(App, || Ok::<_, InstantiateErrorKind>(A)),
+        provide(App, || Ok::<_, InstantiateErrorKind>(B)),
+        provide(App, || Ok::<_, InstantiateErrorKind>(C)),
+    };
+    let mut keys = [TypeInfo::of::<A>(), TypeInfo::of::<B>(), TypeInfo::of::<C>()];
+    keys.sort();
+    let mut aliases = keys.clone();
+    for (key, name) in aliases.iter_mut().zip(["cycle node zero", "cycle node one", "cycle node two"]) {
+        key.name = name;
+    }
+    for (source, target) in [(0, 1), (1, 2), (2, 0)] {
+        native
+            .entries
+            .get_mut(&keys[source])
+            .unwrap()
+            .sync_mut()
+            .unwrap()
+            .metadata
+            .dependencies = BTreeSet::from([Dependency {
+            type_info: aliases[target].clone(),
+        }]);
+    }
+    let error = native.detect_cyclic_dependencies().unwrap_err();
+    let ValidationErrorKind::CyclicDependency { graph: (first, rest) } = error else {
+        panic!("expected a cycle diagnostic");
+    };
+    let actual = core::iter::once(first)
+        .chain(rest.into_vec())
+        .map(|key| (key.id, key.name))
+        .collect::<Vec<_>>();
+    let expected = [keys[0].clone(), aliases[1].clone(), aliases[2].clone()].map(|key| (key.id, key.name));
+    assert_eq!(actual, expected);
+}
+
+#[test]
+fn runtime_validation_keeps_missing_dependency_boundaries_valid() {
+    struct Value;
+    struct Missing;
+    let mut native = native_registry! { provide(App, || Ok::<_, InstantiateErrorKind>(Value)) };
+    let mut missing = TypeInfo::of::<Missing>();
+    missing.name = "declared elsewhere";
+    native
+        .entries
+        .get_mut(&TypeInfo::of::<Value>())
+        .unwrap()
+        .sync_mut()
+        .unwrap()
+        .metadata
+        .dependencies = BTreeSet::from([Dependency { type_info: missing }]);
+    assert!(native.validate().is_ok());
+}
+
+#[cfg(feature = "async")]
+#[test]
+fn runtime_cycle_validation_keeps_sync_and_async_views_distinct() {
+    use crate::{errors::ValidationErrorKind, registry::Selected};
+
+    struct Value;
+    let mut native = native_registry! { provide(App, || Ok::<_, InstantiateErrorKind>(Value)) };
+    native.extend(native_async_registry! { provide(App, async || Ok::<_, InstantiateErrorKind>(Value)) });
+    let key = TypeInfo::of::<Value>();
+    let entry = native.entries.get_mut(&key).unwrap();
+    assert!(entry.sync().unwrap().metadata.dependencies.is_empty());
+    let Selected::Async(data) = &mut entry.selected else {
+        panic!("expected async selection");
+    };
+    let mut alias = key.clone();
+    alias.name = "async self dependency";
+    data.metadata.dependencies = BTreeSet::from([Dependency { type_info: alias }]);
+    let error = native.detect_cyclic_dependencies().unwrap_err();
+    let ValidationErrorKind::CyclicDependency { graph: (first, rest) } = error else {
+        panic!("expected a cycle diagnostic");
+    };
+    assert_eq!((first.id, first.name), (key.id, key.name));
+    assert!(rest.is_empty());
+}
+
+#[test]
+fn runtime_cycle_diagnostic_preserves_the_prefix_and_first_incoming_alias() {
+    use crate::errors::ValidationErrorKind;
+
+    struct A;
+    struct B;
+    struct C;
+    struct D;
+    let mut native = native_registry! {
+        provide(App, || Ok::<_, InstantiateErrorKind>(A)),
+        provide(App, || Ok::<_, InstantiateErrorKind>(B)),
+        provide(App, || Ok::<_, InstantiateErrorKind>(C)),
+        provide(App, || Ok::<_, InstantiateErrorKind>(D)),
+    };
+    let mut keys = [TypeInfo::of::<A>(), TypeInfo::of::<B>(), TypeInfo::of::<C>(), TypeInfo::of::<D>()];
+    keys.sort();
+    let mut aliases = keys.clone();
+    aliases[1].name = "prefix alias";
+    aliases[2].name = "first incoming cycle alias";
+    aliases[3].name = "last cycle alias";
+    for (source, target) in [(0, 1), (1, 2), (2, 3)] {
+        native
+            .entries
+            .get_mut(&keys[source])
+            .unwrap()
+            .sync_mut()
+            .unwrap()
+            .metadata
+            .dependencies = BTreeSet::from([Dependency {
+            type_info: aliases[target].clone(),
+        }]);
+    }
+    let mut closing = keys[2].clone();
+    closing.name = "different closing edge alias";
+    native.entries.get_mut(&keys[3]).unwrap().sync_mut().unwrap().metadata.dependencies =
+        BTreeSet::from([Dependency { type_info: closing }]);
+    let error = native.detect_cyclic_dependencies().unwrap_err();
+    let ValidationErrorKind::CyclicDependency { graph: (first, rest) } = error else {
+        panic!("expected a cycle diagnostic");
+    };
+    let actual = core::iter::once(first)
+        .chain(rest.into_vec())
+        .map(|key| (key.id, key.name))
+        .collect::<Vec<_>>();
+    let expected = [keys[0].clone(), aliases[1].clone(), aliases[2].clone(), aliases[3].clone()].map(|key| (key.id, key.name));
+    assert_eq!(actual, expected);
+}
