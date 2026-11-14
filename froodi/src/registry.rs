@@ -354,8 +354,8 @@ impl Registry {
 
     #[inline]
     #[must_use]
-    pub(crate) fn get_scope_with_child_scopes(&self) -> ScopeDataWithChildScopesData {
-        ScopeDataWithChildScopesData::new_with_sort(self.scopes_data.clone())
+    pub(crate) fn get_scope_with_child_scopes(&self) -> ScopeDataWithChildScopesData<'_> {
+        ScopeDataWithChildScopesData::from_sorted(&self.scopes_data)
     }
 
     pub fn validate(&self) -> Result<(), ValidationErrorKind> {

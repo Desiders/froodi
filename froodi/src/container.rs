@@ -1,4 +1,4 @@
-use alloc::{boxed::Box, vec::Vec};
+use alloc::boxed::Box;
 #[cfg(feature = "thread_safe")]
 use tracing::trace;
 use tracing::{debug, error};
@@ -55,24 +55,34 @@ impl Container {
     /// # Panics
     /// Panics if the scopes are exhausted before `is_target` accepts one (e.g. no scopes at all, or
     /// every scope is skipped / none matches the requested priority).
-    fn build_root(registry: Registry, is_target: impl Fn(&ScopeData) -> bool) -> Self {
-        let mut scopes = registry.get_scope_with_child_scopes();
+    fn build_root(mut registry: Registry, is_target: impl Fn(&ScopeData) -> bool) -> Self {
+        // Validation has finished. Freeze one stably sorted sequence in the shared registry.
+        registry.scopes_data.sort_by_key(|scope| scope.priority);
+        let scope_data = registry
+            .get_scope_with_child_scopes()
+            .scope_data
+            .expect("scopes len (is 0) should be > 0");
         let registry = RcThreadSafety::new(registry);
+        let mut child_scopes_start = 1;
         let mut container = BoxedContainerInner {
             cache: Cache::new(),
             context: Context::new(),
             registry: registry.clone(),
-            scope_data: scopes.scope_data.expect("scopes len (is 0) should be > 0"),
-            child_scopes_data: scopes.child_scopes_data.clone(),
+            scope_data,
+            child_scopes_start,
             parent: None,
             close_parent: false,
             #[cfg(feature = "thread_safe")]
             per_type_locks: PerTypeSyncLocks::default(),
         };
         while !is_target(&container.scope_data) {
-            scopes = scopes.child();
-            let scope_data = scopes.scope_data.expect("scope chain ended before reaching a target scope");
-            container = container.init_child(registry.clone(), scope_data, scopes.child_scopes_data.clone(), true);
+            let scope_data = registry
+                .scopes_data
+                .get(child_scopes_start)
+                .copied()
+                .expect("scope chain ended before reaching a target scope");
+            child_scopes_start += 1;
+            container = container.init_child(registry.clone(), scope_data, child_scopes_start, true);
         }
         container.into()
     }
@@ -314,7 +324,7 @@ impl Container {
         context: Context,
         registry: RcThreadSafety<Registry>,
         scope_data: ScopeData,
-        child_scopes_data: Vec<ScopeData>,
+        child_scopes_start: usize,
         close_parent: bool,
     ) -> Container {
         let mut cache = self.inner.cache.write().child();
@@ -328,7 +338,7 @@ impl Container {
                 context,
                 registry,
                 scope_data,
-                child_scopes_data,
+                child_scopes_start,
                 parent: Some(self),
                 close_parent,
             }),
@@ -340,7 +350,7 @@ impl Container {
         self,
         registry: RcThreadSafety<Registry>,
         scope_data: ScopeData,
-        child_scopes_data: Vec<ScopeData>,
+        child_scopes_start: usize,
         close_parent: bool,
     ) -> Container {
         let cache = self.inner.cache.write().child();
@@ -354,7 +364,7 @@ impl Container {
                 context,
                 registry,
                 scope_data,
-                child_scopes_data,
+                child_scopes_start,
                 parent: Some(self),
                 close_parent,
             }),
@@ -373,30 +383,24 @@ impl Container {
         no_target: impl Fn() -> E,
     ) -> Result<Container, E> {
         let scopes = self.inner.get_scope_with_child_scopes().child();
-        let mut child = self.init_descendant(context.clone(), scopes.scope_data.ok_or(no_child)?, scopes.child_scopes_data, false);
+        let scope_data = scopes.scope_data;
+        let child_scopes_start = self.inner.child_scopes_start + 1;
+        // Keep the original receiver/context evaluation order on failed scope builds.
+        let mut child = self.init_descendant(context.clone(), scope_data.ok_or(no_child)?, child_scopes_start, false);
         while !is_target(&child.inner.scope_data) {
             let scopes = child.inner.get_scope_with_child_scopes().child();
-            child = child.init_descendant(
-                context.clone(),
-                scopes.scope_data.ok_or_else(&no_target)?,
-                scopes.child_scopes_data,
-                true,
-            );
+            let scope_data = scopes.scope_data;
+            let child_scopes_start = child.inner.child_scopes_start + 1;
+            child = child.init_descendant(context.clone(), scope_data.ok_or_else(&no_target)?, child_scopes_start, true);
         }
         Ok(child)
     }
 
-    fn init_descendant(
-        self,
-        context: Option<Context>,
-        scope_data: ScopeData,
-        child_scopes_data: Vec<ScopeData>,
-        close_parent: bool,
-    ) -> Container {
+    fn init_descendant(self, context: Option<Context>, scope_data: ScopeData, child_scopes_start: usize, close_parent: bool) -> Container {
         let registry = self.inner.registry.clone();
         match context {
-            Some(context) => self.init_child_with_context(context, registry, scope_data, child_scopes_data, close_parent),
-            None => self.init_child(registry, scope_data, child_scopes_data, close_parent),
+            Some(context) => self.init_child_with_context(context, registry, scope_data, child_scopes_start, close_parent),
+            None => self.init_child(registry, scope_data, child_scopes_start, close_parent),
         }
     }
 }
@@ -561,7 +565,7 @@ pub(crate) struct BoxedContainerInner {
     pub(crate) context: Context,
     pub(crate) registry: RcThreadSafety<Registry>,
     pub(crate) scope_data: ScopeData,
-    pub(crate) child_scopes_data: Vec<ScopeData>,
+    pub(crate) child_scopes_start: usize,
     pub(crate) parent: Option<Box<BoxedContainerInner>>,
     pub(crate) close_parent: bool,
     #[cfg(feature = "thread_safe")]
@@ -574,7 +578,7 @@ impl BoxedContainerInner {
         self,
         registry: RcThreadSafety<Registry>,
         scope_data: ScopeData,
-        child_scopes_data: Vec<ScopeData>,
+        child_scopes_start: usize,
         close_parent: bool,
     ) -> Self {
         let cache = self.cache.child();
@@ -588,7 +592,7 @@ impl BoxedContainerInner {
             context,
             registry,
             scope_data,
-            child_scopes_data,
+            child_scopes_start,
             close_parent,
         }
     }
@@ -601,7 +605,7 @@ impl From<BoxedContainerInner> for Container {
             context,
             registry,
             scope_data,
-            child_scopes_data,
+            child_scopes_start,
             parent,
             close_parent,
             #[cfg(feature = "thread_safe")]
@@ -614,7 +618,7 @@ impl From<BoxedContainerInner> for Container {
                 context,
                 registry,
                 scope_data,
-                child_scopes_data,
+                child_scopes_start,
                 parent: parent.map(|parent| (*parent).into()),
                 close_parent,
             }),
@@ -629,15 +633,20 @@ pub(crate) struct ContainerInner {
     pub(crate) context: Context,
     pub(crate) registry: RcThreadSafety<Registry>,
     pub(crate) scope_data: ScopeData,
-    pub(crate) child_scopes_data: Vec<ScopeData>,
+    pub(crate) child_scopes_start: usize,
     pub(crate) parent: Option<Container>,
     pub(crate) close_parent: bool,
 }
 
 impl ContainerInner {
     #[inline]
-    pub(crate) fn get_scope_with_child_scopes(&self) -> ScopeDataWithChildScopesData {
-        ScopeDataWithChildScopesData::new(self.scope_data, self.child_scopes_data.clone())
+    pub(crate) fn get_scope_with_child_scopes(&self) -> ScopeDataWithChildScopesData<'_> {
+        ScopeDataWithChildScopesData::new(self.scope_data, &self.registry.scopes_data[self.child_scopes_start..])
+    }
+
+    #[cfg(test)]
+    fn child_scopes_data(&self) -> &[ScopeData] {
+        &self.registry.scopes_data[self.child_scopes_start..]
     }
 
     #[inline]
@@ -839,7 +848,7 @@ mod tests {
             app_container_inner.parent.as_ref().unwrap().inner.scope_data.priority,
             Runtime.priority()
         );
-        assert_eq!(app_container_inner.child_scopes_data.len(), 4);
+        assert_eq!(app_container_inner.child_scopes_data().len(), 4);
         assert_eq!(app_container_inner.scope_data.priority, App.priority());
 
         // Session scope is skipped by default, but it is still present in the child registries
@@ -847,26 +856,26 @@ mod tests {
             request_container_inner.parent.as_ref().unwrap().inner.scope_data.priority,
             Session.priority()
         );
-        assert_eq!(request_container_inner.child_scopes_data.len(), 2);
+        assert_eq!(request_container_inner.child_scopes_data().len(), 2);
         assert_eq!(request_container_inner.scope_data.priority, Request.priority());
         // Session scope is skipped by default, so it is not the first child registry
         assert_eq!(
             request_container_inner.scope_data.priority,
-            app_container_inner.child_scopes_data[1].priority
+            app_container_inner.child_scopes_data()[1].priority
         );
         assert_eq!(
             action_container_inner.scope_data.priority,
-            request_container_inner.child_scopes_data[0].priority
+            request_container_inner.child_scopes_data()[0].priority
         );
 
-        assert_eq!(action_container_inner.child_scopes_data.len(), 1);
+        assert_eq!(action_container_inner.child_scopes_data().len(), 1);
         assert_eq!(action_container_inner.scope_data.priority, Action.priority());
 
-        assert_eq!(step_container_inner.child_scopes_data.len(), 0);
+        assert_eq!(step_container_inner.child_scopes_data().len(), 0);
         assert_eq!(step_container_inner.scope_data.priority, Step.priority());
         assert_eq!(
             step_container_inner.scope_data.priority,
-            action_container_inner.child_scopes_data[0].priority
+            action_container_inner.child_scopes_data()[0].priority
         );
     }
 
@@ -911,42 +920,42 @@ mod tests {
         let step_container_inner = step_container.inner;
 
         assert!(runtime_container_inner.parent.is_none());
-        assert_eq!(runtime_container_inner.child_scopes_data.len(), 5);
+        assert_eq!(runtime_container_inner.child_scopes_data().len(), 5);
         assert_eq!(runtime_container_inner.scope_data.priority, Runtime.priority());
         assert_eq!(
             app_container_inner.scope_data.priority,
-            runtime_container_inner.child_scopes_data[0].priority
+            runtime_container_inner.child_scopes_data()[0].priority
         );
 
-        assert_eq!(app_container_inner.child_scopes_data.len(), 4);
+        assert_eq!(app_container_inner.child_scopes_data().len(), 4);
         assert_eq!(app_container_inner.scope_data.priority, App.priority());
         assert_eq!(
             session_container_inner.scope_data.priority,
-            app_container_inner.child_scopes_data[0].priority
+            app_container_inner.child_scopes_data()[0].priority
         );
 
-        assert_eq!(session_container_inner.child_scopes_data.len(), 3);
+        assert_eq!(session_container_inner.child_scopes_data().len(), 3);
         assert_eq!(session_container_inner.scope_data.priority, Session.priority());
         assert_eq!(
             request_container_inner.scope_data.priority,
-            session_container_inner.child_scopes_data[0].priority
+            session_container_inner.child_scopes_data()[0].priority
         );
 
-        assert_eq!(request_container_inner.child_scopes_data.len(), 2);
+        assert_eq!(request_container_inner.child_scopes_data().len(), 2);
         assert_eq!(request_container_inner.scope_data.priority, Request.priority());
         assert_eq!(
             action_container_inner.scope_data.priority,
-            request_container_inner.child_scopes_data[0].priority
+            request_container_inner.child_scopes_data()[0].priority
         );
 
-        assert_eq!(action_container_inner.child_scopes_data.len(), 1);
+        assert_eq!(action_container_inner.child_scopes_data().len(), 1);
         assert_eq!(action_container_inner.scope_data.priority, Action.priority());
         assert_eq!(
             step_container_inner.scope_data.priority,
-            action_container_inner.child_scopes_data[0].priority
+            action_container_inner.child_scopes_data()[0].priority
         );
 
-        assert_eq!(step_container_inner.child_scopes_data.len(), 0);
+        assert_eq!(step_container_inner.child_scopes_data().len(), 0);
         assert_eq!(step_container_inner.scope_data.priority, Step.priority());
     }
 
@@ -1297,5 +1306,35 @@ mod tests {
             2,
             "each get must re-instantiate at the owning scope"
         );
+    }
+
+    #[test]
+    fn index_scope_traversal_keeps_equal_priority_order_and_skipped_parent() {
+        let mut native = crate::Registry::new_with_default_entries();
+        let first = crate::ScopeData {
+            priority: 7,
+            name: "first",
+            is_skipped_by_default: true,
+        };
+        let second = crate::ScopeData {
+            priority: 7,
+            name: "second",
+            is_skipped_by_default: false,
+        };
+        let root = crate::ScopeData {
+            priority: 0,
+            name: "root",
+            is_skipped_by_default: false,
+        };
+        native.scopes_data = alloc::vec![first, second, root];
+        let root_container = Container::new_with_start_scope(native, Runtime);
+        assert_eq!(root_container.inner.scope_data, root);
+        let child = root_container.clone().enter_build().unwrap();
+        assert_eq!(child.inner.scope_data, second);
+        assert_eq!(child.inner.parent.as_ref().unwrap().inner.scope_data, first);
+        assert_eq!(child.inner.child_scopes_start, 3);
+        assert!(child.inner.child_scopes_data().is_empty());
+        assert_eq!(root_container.inner.child_scopes_data(), &[first, second]);
+        assert!(matches!(child.enter_build(), Err(crate::ScopeErrorKind::NoChildRegistries)));
     }
 }
