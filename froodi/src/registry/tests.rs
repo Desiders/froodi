@@ -1,3 +1,12 @@
+extern crate std;
+
+use core::cell::Cell;
+use std::thread_local;
+
+thread_local! {
+    pub(super) static CYCLE_CHECKS: Cell<usize> = const { Cell::new(0) };
+}
+
 macro_rules! native_registry {
     ($($tokens:tt)*) => {
         crate::registry! { $($tokens)* }.into_registry()

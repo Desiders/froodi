@@ -9,6 +9,7 @@ use alloc::{
     vec::Vec,
 };
 
+use super::CYCLE_CHECKS;
 #[cfg(feature = "async")]
 use crate::async_impl::{Container as AsyncContainer, Instantiator as AsyncInstantiator};
 use crate::{
@@ -18,7 +19,6 @@ use crate::{
     instantiator::RegistrationInstantiator,
     registry,
     registry::RegistrationId,
-    registry::CYCLE_CHECKS,
     utils::thread_safety::RcThreadSafety,
     Config, Container as SyncContainer, Context,
     DefaultScope::{App, Request},

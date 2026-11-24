@@ -29,8 +29,6 @@ use alloc::boxed::Box;
     not(feature = "lock-spin")
 ))]
 use core::any::TypeId;
-#[cfg(test)]
-use core::cell::Cell;
 #[cfg(feature = "async")]
 use core::mem::replace;
 
@@ -42,14 +40,6 @@ use crate::async_impl::{
     },
     Container as AsyncContainer,
 };
-
-#[cfg(test)]
-extern crate std;
-
-#[cfg(test)]
-std::thread_local! {
-    pub(crate) static CYCLE_CHECKS: Cell<usize> = const { Cell::new(0) };
-}
 
 use crate::{
     any::TypeInfo,
@@ -435,7 +425,7 @@ impl Registry {
 
     pub(crate) fn detect_cyclic_dependencies(&self) -> Result<(), ValidationErrorKind> {
         #[cfg(test)]
-        CYCLE_CHECKS.with(|checks| checks.set(checks.get() + 1));
+        tests::CYCLE_CHECKS.with(|checks| checks.set(checks.get() + 1));
         // true: active path; false: fully visited.
         let mut visited = BTreeMap::new();
         let mut stack = Vec::new();
