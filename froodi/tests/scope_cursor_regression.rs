@@ -45,8 +45,11 @@ fn sibling_requests_keep_context_and_skipped_parent_cleanup_independent() {
 async fn async_sibling_requests_preserve_context_and_skipped_parent_cleanup() {
     use froodi::async_impl::Container as AsyncContainer;
 
+    struct SyncSessionValue;
+
     let events = RcThreadSafety::new(Mutex::new(Vec::new()));
     let (app_events, session_events, request_events) = (events.clone(), events.clone(), events.clone());
+    let sync_session_events = events.clone();
     let app = AsyncContainer::new(registry! {
         provide(App, async || Ok(AppValue), finalizer = move |_| {
             let events = app_events.clone();
@@ -56,8 +59,9 @@ async fn async_sibling_requests_preserve_context_and_skipped_parent_cleanup() {
             let events = session_events.clone();
             async move { events.lock().unwrap().push("session"); }
         }),
+        provide(Session, || Ok(SyncSessionValue), finalizer = move |_| sync_session_events.lock().unwrap().push("sync session")),
         provide(Request, declare::<Label>()),
-        provide(Request, async |_: Inject<SessionValue>, Inject(label): Inject<Label>| Ok(RequestValue(label.0)),
+        provide(Request, async |_: Inject<SessionValue>, _: Inject<SyncSessionValue>, Inject(label): Inject<Label>| Ok(RequestValue(label.0)),
             finalizer = move |value: RcThreadSafety<RequestValue>| {
                 let events = request_events.clone();
                 async move { events.lock().unwrap().push(value.0); }
@@ -72,10 +76,16 @@ async fn async_sibling_requests_preserve_context_and_skipped_parent_cleanup() {
     assert_eq!(left.get::<RequestValue>().await.unwrap().0, "left");
     assert_eq!(right.get::<RequestValue>().await.unwrap().0, "right");
     left.close().await;
-    assert_eq!(*events.lock().unwrap(), ["left", "session"]);
+    assert_eq!(*events.lock().unwrap(), ["left", "sync session", "session"]);
     assert_eq!(right.get::<RequestValue>().await.unwrap().0, "right");
     right.close().await;
-    assert_eq!(*events.lock().unwrap(), ["left", "session", "right", "session"]);
+    assert_eq!(
+        *events.lock().unwrap(),
+        ["left", "sync session", "session", "right", "sync session", "session"]
+    );
     app.close().await;
-    assert_eq!(*events.lock().unwrap(), ["left", "session", "right", "session", "app"]);
+    assert_eq!(
+        *events.lock().unwrap(),
+        ["left", "sync session", "session", "right", "sync session", "session", "app"]
+    );
 }

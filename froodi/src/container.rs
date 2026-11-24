@@ -122,7 +122,7 @@ impl Container {
 
     pub(crate) fn get_selected<Dep: SendSafety + SyncSafety + 'static>(
         &self,
-        selected: Selection<'_, InstantiatorData>,
+        selected: Selection<&InstantiatorData>,
     ) -> Result<RcThreadSafety<Dep>, ResolveErrorKind> {
         let type_info = TypeInfo::of::<Dep>();
         let dep_name = type_info.name;
@@ -245,7 +245,7 @@ impl Container {
         self.get_transient_selected::<Dep>(Selection::ByType)
     }
 
-    pub(crate) fn get_transient_selected<Dep: 'static>(&self, selected: Selection<'_, InstantiatorData>) -> Result<Dep, ResolveErrorKind> {
+    pub(crate) fn get_transient_selected<Dep: 'static>(&self, selected: Selection<&InstantiatorData>) -> Result<Dep, ResolveErrorKind> {
         let type_info = TypeInfo::of::<Dep>();
         let dep_name = type_info.name;
         let scope_name = self.inner.scope_data.name;

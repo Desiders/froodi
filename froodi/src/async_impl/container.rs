@@ -5,13 +5,15 @@ use alloc::boxed::Box;
 use core::{
     cmp::Ordering,
     future::{poll_fn, Future},
-    mem::replace,
     pin::Pin,
     task::{ready, Poll},
 };
 use tracing::{debug, error, trace, warn};
 
-use super::{instantiator::InstantiatorFuture, service::Service as _};
+use super::{
+    instantiator::{ErasedResult, InstantiatorFuture},
+    service::Service as _,
+};
 #[cfg(feature = "thread_safe")]
 use crate::lock::PerTypeSyncLocks;
 use crate::registry::{finish, IntoRegistry};
@@ -139,9 +141,9 @@ impl Container {
 
     pub(crate) fn get_selected<'a, Dep: SendSafety + SyncSafety + 'static>(
         &'a self,
-        mut selected: Selection<'a, InstantiatorData>,
+        selected: Selection<&'a InstantiatorData>,
     ) -> impl Future<Output = Result<RcThreadSafety<Dep>, ResolveErrorKind>> + SendSafety + 'a {
-        let mut cold: Option<Pin<Box<_>>> = None;
+        let mut cold = None;
         // Check the cache on first poll; box only the cold path to keep this future Unpin.
         poll_fn(move |cx| {
             let future = match &mut cold {
@@ -153,7 +155,6 @@ impl Container {
                         return Poll::Ready(Ok(dependency));
                     }
                     debug!("Not found in cache");
-                    let selected = replace(&mut selected, Selection::ByType);
                     let by_type = matches!(selected, Selection::ByType);
                     let Some(data) = selected.or_lookup(|| self.inner.registry.get_async(&type_info)) else {
                         debug!("No instantiator found, trying sync container");
@@ -177,7 +178,7 @@ impl Container {
     ) -> Pin<Box<impl Future<Output = Result<RcThreadSafety<Dep>, ResolveErrorKind>> + SendSafety + 'a>> {
         let dep_name = type_info.name;
         let scope_name = self.inner.scope_data.name;
-        let fut = async move {
+        Box::pin(async move {
             let InstantiatorData {
                 instantiator,
                 finalizer,
@@ -188,31 +189,12 @@ impl Container {
             let dep_priority = scope_data.priority;
 
             if current_priority > dep_priority {
-                let mut parent = self
-                    .inner
-                    .parent
-                    .as_ref()
-                    .expect("parent should exist for lower-priority dependency");
-                while parent.scope_data.priority != dep_priority {
-                    parent = parent.parent.as_ref().expect("parent with target priority should exist");
+                let parent = self.ancestor(dep_priority);
+                let dependency = parent.get_selected::<Dep>(Selection::Indexed(Some(data))).await?;
+                if config.cache_provides {
+                    self.inner.cache.write().insert_rc(type_info, dependency.clone());
                 }
-
-                return match (Self {
-                    inner: parent.clone(),
-                    sync: self.sync.clone(),
-                    per_type_locks: self.per_type_locks.clone(),
-                })
-                .get_selected::<Dep>(Selection::Indexed(Some(data)))
-                .await
-                {
-                    Ok(dependency) => {
-                        if config.cache_provides {
-                            self.inner.cache.write().insert_rc(type_info, dependency.clone());
-                        }
-                        Ok(dependency)
-                    }
-                    Err(err) => Err(err),
-                };
+                return Ok(dependency);
             }
             if dep_priority > current_priority {
                 let err = ResolveErrorKind::NoAccessible {
@@ -232,48 +214,27 @@ impl Container {
                 return Ok(dependency);
             }
 
-            match instantiator.call(self).await {
-                Ok(dependency) => match dependency.downcast::<Dep>() {
-                    Ok(dependency) => {
-                        let dependency = RcThreadSafety::new(*dependency);
-                        let cache_provides = config.cache_provides;
-                        let has_finalizer = finalizer.is_some();
-                        if cache_provides || has_finalizer {
-                            let mut cache = self.inner.cache.write();
-                            if cache_provides {
-                                cache.insert_rc(type_info.clone(), dependency.clone());
-                                debug!("Cached");
-                            }
-                            if has_finalizer {
-                                cache.push_resolved(Resolved {
-                                    type_info,
-                                    dependency: dependency.clone(),
-                                });
-                                debug!("Pushed to resolved set");
-                            }
-                        }
-                        Ok(dependency)
-                    }
-                    Err(incorrect_type) => {
-                        let err = ResolveErrorKind::IncorrectType {
-                            expected: type_info,
-                            actual: TypeInfo::of_val(&*incorrect_type),
-                        };
-                        error!(dependency = dep_name, scope = scope_name, error = %err, "Failed to resolve dependency");
-                        Err(err)
-                    }
-                },
-                Err(InstantiatorErrorKind::Deps(err)) => {
-                    error!(dependency = dep_name, scope = scope_name, error = %err, "Failed to resolve dependency");
-                    Err(ResolveErrorKind::Instantiator(InstantiatorErrorKind::Deps(Box::new(err))))
+            let result = downcast_instantiation::<Dep>(instantiator.call(self).await, &type_info);
+            if let Err(err) = &result {
+                error!(dependency = dep_name, scope = scope_name, error = %err, "Failed to resolve dependency");
+            }
+            let dependency = RcThreadSafety::new(*result?);
+            if config.cache_provides || finalizer.is_some() {
+                let mut cache = self.inner.cache.write();
+                if config.cache_provides {
+                    cache.insert_rc(type_info.clone(), dependency.clone());
+                    debug!("Cached");
                 }
-                Err(InstantiatorErrorKind::Factory(err)) => {
-                    error!(dependency = dep_name, scope = scope_name, error = %err, "Failed to resolve dependency");
-                    Err(ResolveErrorKind::Instantiator(InstantiatorErrorKind::Factory(err)))
+                if finalizer.is_some() {
+                    cache.push_resolved(Resolved {
+                        type_info,
+                        dependency: dependency.clone(),
+                    });
+                    debug!("Pushed to resolved set");
                 }
             }
-        };
-        Box::pin(fut)
+            Ok(dependency)
+        })
     }
 
     /// Constructs a fresh dependency on every call.
@@ -290,7 +251,7 @@ impl Container {
 
     pub(crate) fn get_transient_selected<'a, Dep: 'static>(
         &'a self,
-        mut selected: Selection<'a, InstantiatorData>,
+        selected: Selection<&'a InstantiatorData>,
     ) -> impl Future<Output = Result<Dep, ResolveErrorKind>> + SendSafety + 'a {
         let mut pending = None;
         poll_fn(move |cx| {
@@ -299,7 +260,6 @@ impl Container {
             let (future, scope_name) = match &mut pending {
                 Some(pending) => pending,
                 slot @ None => {
-                    let selected = replace(&mut selected, Selection::ByType);
                     let by_type = matches!(selected, Selection::ByType);
                     let Some(data) = selected.or_lookup(|| self.inner.registry.get_async(&type_info)) else {
                         debug!("No instantiator found, trying sync container");
@@ -309,67 +269,63 @@ impl Container {
                             self.sync.get_transient_selected(Selection::Indexed(None))
                         });
                     };
-                    let instantiator = &data.instantiator;
-                    let scope_data = &data.metadata.scope_data;
-                    let current_priority = self.inner.scope_data.priority;
-                    let dep_priority = scope_data.priority;
-                    let scope_name = self.inner.scope_data.name;
-                    let (future, scope_name): (InstantiatorFuture<'a>, _) = match current_priority.cmp(&dep_priority) {
-                        Ordering::Greater => {
-                            let mut parent = self
-                                .inner
-                                .parent
-                                .as_ref()
-                                .expect("parent should exist for lower-priority dependency");
-                            while parent.scope_data.priority != dep_priority {
-                                parent = parent.parent.as_ref().expect("parent with target priority should exist");
-                            }
-                            let scope_name = parent.scope_data.name;
-                            let container = Self {
-                                inner: parent.clone(),
-                                sync: self.sync.clone(),
-                                per_type_locks: self.per_type_locks.clone(),
-                            };
-                            (Box::pin(async move { instantiator.call(&container).await }), scope_name)
-                        }
-                        Ordering::Less => {
-                            let err = ResolveErrorKind::NoAccessible {
-                                expected_scope_data: *scope_data,
-                                actual_scope_data: self.inner.scope_data,
-                            };
-                            error!(dependency = dep_name, scope = scope_name, error = %err, "Failed to resolve transient dependency");
+                    match self.start_transient(data) {
+                        Ok(instantiation) => slot.insert(instantiation),
+                        Err(err) => {
+                            let scope = self.inner.scope_data.name;
+                            error!(dependency = dep_name, scope, error = %err, "Failed to resolve transient dependency");
                             return Poll::Ready(Err(err));
                         }
-                        Ordering::Equal => (instantiator.call_boxed(self), scope_name),
-                    };
-                    slot.insert((future, scope_name))
+                    }
                 }
             };
-            let dependency = ready!(future.as_mut().poll(cx));
-            let scope_name = *scope_name;
+            let output = ready!(future.as_mut().poll(cx));
+            let scope = *scope_name;
             pending = None;
-            Poll::Ready(match dependency {
-                Ok(dependency) => match dependency.downcast::<Dep>() {
-                    Ok(dependency) => Ok(*dependency),
-                    Err(incorrect_type) => {
-                        let err = ResolveErrorKind::IncorrectType {
-                            expected: type_info,
-                            actual: TypeInfo::of_val(&*incorrect_type),
-                        };
-                        error!(dependency = dep_name, scope = scope_name, error = %err, "Failed to resolve transient dependency");
-                        Err(err)
-                    }
-                },
-                Err(InstantiatorErrorKind::Deps(err)) => {
-                    error!(dependency = dep_name, scope = scope_name, error = %err, "Failed to resolve transient dependency");
-                    Err(ResolveErrorKind::Instantiator(InstantiatorErrorKind::Deps(Box::new(err))))
-                }
-                Err(InstantiatorErrorKind::Factory(err)) => {
-                    error!(dependency = dep_name, scope = scope_name, error = %err, "Failed to resolve transient dependency");
-                    Err(ResolveErrorKind::Instantiator(InstantiatorErrorKind::Factory(err)))
-                }
-            })
+
+            let result = downcast_instantiation::<Dep>(output, &type_info);
+            if let Err(err) = &result {
+                error!(dependency = dep_name, scope, error = %err, "Failed to resolve transient dependency");
+            }
+            Poll::Ready(result.map(|dependency| *dependency))
         })
+    }
+
+    #[inline]
+    fn start_transient<'a>(&'a self, data: &'a InstantiatorData) -> Result<(InstantiatorFuture<'a>, &'static str), ResolveErrorKind> {
+        let current_scope = self.inner.scope_data;
+        let target_scope = data.metadata.scope_data;
+        let instantiator = &data.instantiator;
+
+        match current_scope.priority.cmp(&target_scope.priority) {
+            Ordering::Greater => {
+                let parent = self.ancestor(target_scope.priority);
+                let scope_name = parent.inner.scope_data.name;
+                Ok((Box::pin(async move { instantiator.call(&parent).await }), scope_name))
+            }
+            Ordering::Less => Err(ResolveErrorKind::NoAccessible {
+                expected_scope_data: target_scope,
+                actual_scope_data: current_scope,
+            }),
+            Ordering::Equal => Ok((instantiator.call_boxed(self), current_scope.name)),
+        }
+    }
+
+    fn ancestor(&self, priority: u8) -> Self {
+        let mut inner = self
+            .inner
+            .parent
+            .as_ref()
+            .expect("parent should exist for lower-priority dependency");
+        while inner.scope_data.priority != priority {
+            inner = inner.parent.as_ref().expect("parent with target priority should exist");
+        }
+
+        Self {
+            inner: inner.clone(),
+            sync: self.sync.clone(),
+            per_type_locks: self.per_type_locks.clone(),
+        }
     }
 
     /// Closes the container, calling finalizers for resolved dependencies in LIFO order.
@@ -377,31 +333,37 @@ impl Container {
     /// # Warning
     /// This method can be called multiple times, but it will only call finalizers for dependencies that were resolved since the last call
     pub fn close(&self) -> impl Future<Output = ()> + SendSafety + '_ {
-        let fut = async move {
-            self.inner.close().await;
-            self.sync.inner.close_with_parent_flag(false);
+        Box::pin(async move {
+            let mut scope = self.inner.as_ref();
+            let mut sync_scope = self.sync.inner.as_ref();
 
-            let mut inner_parent = self.inner.parent.as_ref();
-            let mut sync_parent = self.sync.inner.parent.as_ref();
+            scope.close().await;
+            sync_scope.close_with_parent_flag(false);
 
-            let mut close_parent = self.inner.close_parent;
-            while close_parent {
-                match (inner_parent, sync_parent) {
-                    (Some(container), Some(sync_container)) => {
-                        sync_container.inner.close_with_parent_flag(false);
-                        container.close().await;
-
-                        close_parent = container.close_parent;
-
-                        inner_parent = container.parent.as_ref();
-                        sync_parent = sync_container.inner.parent.as_ref();
+            while scope.close_parent {
+                match (scope.parent.as_deref(), sync_scope.parent.as_ref()) {
+                    (Some(parent), Some(sync_parent)) => {
+                        scope = parent;
+                        sync_scope = sync_parent.inner.as_ref();
+                        sync_scope.close_with_parent_flag(false);
+                        scope.close().await;
                     }
                     (None, None) => break,
                     _ => unreachable!(),
                 }
             }
-        };
-        Box::pin(fut)
+        })
+    }
+}
+
+fn downcast_instantiation<Dep: 'static>(output: ErasedResult, expected: &TypeInfo) -> Result<Box<Dep>, ResolveErrorKind> {
+    match output {
+        Ok(dependency) => dependency.downcast().map_err(|actual| ResolveErrorKind::IncorrectType {
+            expected: expected.clone(),
+            actual: TypeInfo::of_val(&*actual),
+        }),
+        Err(InstantiatorErrorKind::Deps(err)) => Err(ResolveErrorKind::Instantiator(InstantiatorErrorKind::Deps(Box::new(err)))),
+        Err(InstantiatorErrorKind::Factory(err)) => Err(ResolveErrorKind::Instantiator(InstantiatorErrorKind::Factory(err))),
     }
 }
 
@@ -789,27 +751,25 @@ impl ContainerInner {
     }
 
     #[allow(clippy::missing_panics_doc)]
-    fn close(&self) -> impl Future<Output = ()> + SendSafety + '_ {
-        let mut resolved_set = { self.cache.write().take_resolved_set() };
-        Box::pin(async move {
-            while let Some(Resolved { type_info, dependency }) = resolved_set.0.pop_back() {
-                let InstantiatorData { finalizer, .. } = self
-                    .registry
-                    .get_async(&type_info)
-                    .expect("Instantiator should be present for resolved type");
+    async fn close(&self) {
+        let mut resolved_set = self.cache.write().take_resolved_set();
+        while let Some(Resolved { type_info, dependency }) = resolved_set.0.pop_back() {
+            let InstantiatorData { finalizer, .. } = self
+                .registry
+                .get_async(&type_info)
+                .expect("Instantiator should be present for resolved type");
 
-                if let Some(finalizer) = finalizer {
-                    let _ = finalizer.clone().call(dependency).await;
-                    debug!(%type_info, "Finalizer called");
-                }
+            if let Some(finalizer) = finalizer {
+                let _ = finalizer.clone().call(dependency).await;
+                debug!(%type_info, "Finalizer called");
             }
+        }
 
-            // We need to clear cache and fill it with the context as in start of the container usage
-            #[allow(clippy::assigning_clones)]
-            {
-                self.cache.write().map = self.context.map.clone();
-            }
-        })
+        // We need to clear cache and fill it with the context as in start of the container usage
+        #[allow(clippy::assigning_clones)]
+        {
+            self.cache.write().map = self.context.map.clone();
+        }
     }
 }
 

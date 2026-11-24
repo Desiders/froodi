@@ -535,13 +535,14 @@ impl Registry {
     }
 }
 
-pub(crate) enum Selection<'a, Data> {
+#[derive(Clone, Copy)]
+pub(crate) enum Selection<Data> {
     ByType,
-    Indexed(Option<&'a Data>),
+    Indexed(Option<Data>),
 }
 
-impl<'a, Data> Selection<'a, Data> {
-    pub(crate) fn or_lookup(self, lookup: impl FnOnce() -> Option<&'a Data>) -> Option<&'a Data> {
+impl<Data> Selection<Data> {
+    pub(crate) fn or_lookup(self, lookup: impl FnOnce() -> Option<Data>) -> Option<Data> {
         match self {
             Self::ByType => lookup(),
             Self::Indexed(data) => data,

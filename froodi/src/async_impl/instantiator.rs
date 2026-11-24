@@ -139,7 +139,7 @@ impl From<BoxedCloneInstantiator<ResolveErrorKind, InstantiateErrorKind>> for Re
     }
 }
 
-type ErasedResult = Result<Box<dyn Any>, InstantiatorErrorKind<ResolveErrorKind, InstantiateErrorKind>>;
+pub(super) type ErasedResult = Result<Box<dyn Any>, InstantiatorErrorKind<ResolveErrorKind, InstantiateErrorKind>>;
 pub(super) type InstantiatorFuture<'a> = BoxFuture<'a, ErasedResult>;
 
 impl RegistrationInstantiator {
