@@ -139,9 +139,8 @@ impl Container {
 
     pub(crate) fn get_selected<'a, Dep: SendSafety + SyncSafety + 'static>(
         &'a self,
-        selected: Selection<'a, InstantiatorData>,
+        mut selected: Selection<'a, InstantiatorData>,
     ) -> impl Future<Output = Result<RcThreadSafety<Dep>, ResolveErrorKind>> + SendSafety + 'a {
-        let mut selected = selected;
         let mut cold: Option<Pin<Box<_>>> = None;
         // Check the cache on first poll; box only the cold path to keep this future Unpin.
         poll_fn(move |cx| {
@@ -291,10 +290,9 @@ impl Container {
 
     pub(crate) fn get_transient_selected<'a, Dep: 'static>(
         &'a self,
-        selected: Selection<'a, InstantiatorData>,
+        mut selected: Selection<'a, InstantiatorData>,
     ) -> impl Future<Output = Result<Dep, ResolveErrorKind>> + SendSafety + 'a {
-        let mut selected = selected;
-        let mut pending: Option<(InstantiatorFuture<'a>, &'static str)> = None;
+        let mut pending = None;
         poll_fn(move |cx| {
             let type_info = TypeInfo::of::<Dep>();
             let dep_name = type_info.name;
