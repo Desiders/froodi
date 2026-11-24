@@ -288,7 +288,7 @@ mod dense_per_type {
     impl<M> TypeKeyedLocks<M> {
         #[inline]
         pub(crate) fn from_registry(registry: &Registry) -> Self {
-            Self::with_indexed_keys(registry.dense_lock_keys())
+            registry.dense_lock_keys().map_or_else(Self::default, Self::with_indexed_keys)
         }
 
         // Keys are unique TypeIds in frozen registry order.

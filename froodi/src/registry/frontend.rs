@@ -421,7 +421,7 @@ mod once_lock_metadata_tests {
         assert_eq!(by_type.index(), canonical);
         assert_eq!(first_graph.index(), canonical);
         assert_eq!(duplicate_graph.index(), canonical);
-        let locks = PerTypeSyncLocks::with_indexed_keys(registry.dense_lock_keys());
+        let locks = PerTypeSyncLocks::from_registry(&registry);
         let ordinary = locks.get(&TypeInfo::of::<u32>(), by_type);
         let linked = locks.get(&TypeInfo::of::<u32>(), duplicate_graph);
         assert!(ptr_eq(&*ordinary, &*linked));
@@ -437,7 +437,7 @@ mod once_lock_metadata_tests {
         assert!(ptr_eq(&*parent, &*child));
         let legacy = Container::new(RuntimeRegistry::new_with_default_entries());
         assert!(legacy.inner.registry.indexed.is_empty());
-        assert_eq!(legacy.inner.registry.dense_lock_keys().count(), 0);
+        assert!(legacy.inner.registry.dense_lock_keys().is_none());
         let implicit = legacy.get::<Container>().unwrap();
         let id = RegistrationId::UNINDEXED_LOCK;
         let outer = legacy.per_type_locks.get(&TypeInfo::of::<Container>(), id);
@@ -454,7 +454,7 @@ mod once_lock_metadata_tests {
         let sync_id = registry.get(&TypeInfo::of::<u32>()).unwrap().metadata.lock_id.index();
         let async_id = registry.get_async(&TypeInfo::of::<u32>()).unwrap().metadata.lock_id.index();
         assert_eq!(sync_id, async_id);
-        let dense_keys: Vec<_> = registry.dense_lock_keys().collect();
+        let dense_keys: Vec<_> = registry.dense_lock_keys().unwrap().collect();
         assert_eq!(dense_keys[sync_id], TypeInfo::of::<u32>().id);
         let indexed = registry.indexed.iter().find(|(key, _)| key.id == TypeInfo::of::<u32>().id).unwrap();
         assert_eq!(indexed.1.sync().unwrap().metadata.lock_id.index(), sync_id);

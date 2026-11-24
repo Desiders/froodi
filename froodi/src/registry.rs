@@ -333,10 +333,12 @@ impl Registry {
         not(feature = "lock-parking-lot"),
         not(feature = "lock-spin")
     ))]
-    pub(crate) fn dense_lock_keys(&self) -> impl Iterator<Item = TypeId> + '_ {
-        // No linked executors means the old lazy map path, with no dense allocation.
-        let len = if self.indexed.is_empty() { 0 } else { self.entries.len() };
-        self.entries.keys().take(len).map(|key| key.id)
+    pub(crate) fn dense_lock_keys(&self) -> Option<impl Iterator<Item = TypeId> + '_> {
+        if self.indexed.is_empty() {
+            return None;
+        }
+
+        Some(self.entries.keys().map(|key| key.id))
     }
 
     #[allow(clippy::similar_names)]
