@@ -4,6 +4,7 @@ mod snapshot_tests;
 use alloc::boxed::Box;
 use core::{
     future::{poll_fn, Future},
+    mem::replace,
     pin::Pin,
     task::Poll,
 };
@@ -139,19 +140,23 @@ impl Container {
         &'a self,
         selected: Selection<'a, InstantiatorData>,
     ) -> impl Future<Output = Result<RcThreadSafety<Dep>, ResolveErrorKind>> + SendSafety + 'a {
-        let mut selected = Some(selected);
+        let mut selected = selected;
         let mut cold: Option<Pin<Box<_>>> = None;
         // Check the cache on first poll; box only the cold path to keep this future Unpin.
         poll_fn(move |cx| {
-            if cold.is_none() {
-                let type_info = TypeInfo::of::<Dep>();
-                if let Some(dependency) = { self.inner.cache.read().get(&type_info) } {
-                    debug!("Found in cache");
-                    return Poll::Ready(Ok(dependency));
+            let future = match &mut cold {
+                Some(future) => future,
+                slot @ None => {
+                    let type_info = TypeInfo::of::<Dep>();
+                    if let Some(dependency) = { self.inner.cache.read().get(&type_info) } {
+                        debug!("Found in cache");
+                        return Poll::Ready(Ok(dependency));
+                    }
+                    let selected = replace(&mut selected, Selection::ByType);
+                    slot.insert(self.get_selected_cold(selected))
                 }
-                cold = Some(self.get_selected_cold(selected.take().expect("cold resolver initialized only once")));
-            }
-            cold.as_mut().expect("cold resolver initialized above").as_mut().poll(cx)
+            };
+            future.as_mut().poll(cx)
         })
     }
 
