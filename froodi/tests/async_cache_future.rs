@@ -2,7 +2,7 @@
 
 use froodi::{async_impl::Container, registry, DefaultScope::App};
 use std::{
-    future::{pending, Future},
+    future::{pending, poll_fn, Future},
     marker::PhantomPinned,
     sync::{
         atomic::{AtomicUsize, Ordering},
@@ -76,4 +76,26 @@ fn cancelling_cold_resolution_releases_the_instantiation_lock() {
         _ => panic!("retry should acquire the released lock and finish immediately"),
     }
     assert_eq!(calls.load(Ordering::SeqCst), 2);
+}
+
+#[test]
+fn transient_resolution_resumes_parent_factory_after_pending() {
+    let container = Container::new(registry! { provide(App, async || {
+        let mut ready = false;
+        poll_fn(move |cx| {
+            if ready {
+                return Poll::Ready(Ok(42_u64));
+            }
+            ready = true;
+            cx.waker().wake_by_ref();
+            Poll::Pending
+        }).await
+    }) });
+    let child = container.enter_build().unwrap();
+    let mut future = Box::pin(child.get_transient::<u64>());
+    let waker = Waker::from(Arc::new(NoopWake));
+    let mut cx = Context::from_waker(&waker);
+
+    assert!(future.as_mut().poll(&mut cx).is_pending());
+    assert!(matches!(future.as_mut().poll(&mut cx), Poll::Ready(Ok(42))));
 }

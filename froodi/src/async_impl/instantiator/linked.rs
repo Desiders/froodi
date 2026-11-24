@@ -1,21 +1,15 @@
-use super::{Instantiator, RegistrationInstantiator};
+use super::{Instantiator, InstantiatorFuture, RegistrationInstantiator};
 use crate::{
     async_impl::Container,
-    errors::{InstantiateErrorKind, InstantiatorErrorKind},
     registry::RegistrationId,
-    utils::{
-        future::BoxFuture,
-        thread_safety::{RcThreadSafety, SendSafety, SyncSafety},
-    },
-    DependencyResolver, ResolveErrorKind, TypeInfo,
+    utils::thread_safety::{RcThreadSafety, SendSafety, SyncSafety},
+    DependencyResolver, TypeInfo,
 };
 use alloc::{boxed::Box, collections::BTreeMap, vec::Vec};
 use core::{any::Any, marker::PhantomData};
 
-type InstError = InstantiatorErrorKind<ResolveErrorKind, InstantiateErrorKind>;
-
 trait LinkedCall: SendSafety + SyncSafety {
-    fn call<'a>(&'a self, container: &'a Container, edges: &'a [RegistrationId]) -> BoxFuture<'a, Result<Box<dyn Any>, InstError>>;
+    fn call<'a>(&'a self, container: &'a Container, edges: &'a [RegistrationId]) -> InstantiatorFuture<'a>;
 }
 
 struct InstAdapter<Inst, Deps> {
@@ -28,7 +22,7 @@ where
     Inst: Instantiator<Deps> + SendSafety + SyncSafety,
     Deps: DependencyResolver + SendSafety + 'static,
 {
-    fn call<'a>(&'a self, container: &'a Container, edges: &'a [RegistrationId]) -> BoxFuture<'a, Result<Box<dyn Any>, InstError>> {
+    fn call<'a>(&'a self, container: &'a Container, edges: &'a [RegistrationId]) -> InstantiatorFuture<'a> {
         let future = self.inst.instantiate_linked(container, edges);
         Box::pin(async move { future.await.map(|out| Box::new(out) as Box<dyn Any>) })
     }
@@ -58,8 +52,8 @@ impl RegistrationInstantiator {
 
 impl ErasedInstantiator {
     #[inline]
-    pub(super) async fn call(&self, container: Container) -> Result<Box<dyn Any>, InstError> {
-        self.inst.call(&container, &self.edges).await
+    pub(super) fn call<'a>(&'a self, container: &'a Container) -> InstantiatorFuture<'a> {
+        self.inst.call(container, &self.edges)
     }
 
     pub(crate) fn remap(&mut self, ids: &BTreeMap<TypeInfo, RegistrationId>) {

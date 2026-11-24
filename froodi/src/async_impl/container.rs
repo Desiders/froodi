@@ -3,14 +3,15 @@ mod snapshot_tests;
 
 use alloc::boxed::Box;
 use core::{
+    cmp::Ordering,
     future::{poll_fn, Future},
     mem::replace,
     pin::Pin,
-    task::Poll,
+    task::{ready, Poll},
 };
 use tracing::{debug, error, trace, warn};
 
-use super::service::Service as _;
+use super::{instantiator::InstantiatorFuture, service::Service as _};
 #[cfg(feature = "thread_safe")]
 use crate::lock::PerTypeSyncLocks;
 use crate::registry::{finish, IntoRegistry};
@@ -152,8 +153,18 @@ impl Container {
                         debug!("Found in cache");
                         return Poll::Ready(Ok(dependency));
                     }
+                    debug!("Not found in cache");
                     let selected = replace(&mut selected, Selection::ByType);
-                    slot.insert(self.get_selected_cold(selected))
+                    let by_type = matches!(selected, Selection::ByType);
+                    let Some(data) = selected.or_lookup(|| self.inner.registry.get_async(&type_info)) else {
+                        debug!("No instantiator found, trying sync container");
+                        return Poll::Ready(if by_type {
+                            self.sync.get()
+                        } else {
+                            self.sync.get_selected(Selection::Indexed(None))
+                        });
+                    };
+                    slot.insert(self.get_selected_cold(type_info, data))
                 }
             };
             future.as_mut().poll(cx)
@@ -162,30 +173,17 @@ impl Container {
 
     fn get_selected_cold<'a, Dep: SendSafety + SyncSafety + 'static>(
         &'a self,
-        selected: Selection<'a, InstantiatorData>,
+        type_info: TypeInfo,
+        data: &'a InstantiatorData,
     ) -> Pin<Box<impl Future<Output = Result<RcThreadSafety<Dep>, ResolveErrorKind>> + SendSafety + 'a>> {
-        let type_info = TypeInfo::of::<Dep>();
         let dep_name = type_info.name;
         let scope_name = self.inner.scope_data.name;
         let fut = async move {
-            debug!("Not found in cache");
-
-            let by_type = matches!(selected, Selection::ByType);
-            let Some(
-                data @ InstantiatorData {
-                    instantiator,
-                    finalizer,
-                    metadata: RegistrationMetadata { config, scope_data, .. },
-                },
-            ) = selected.or_lookup(|| self.inner.registry.get_async(&type_info))
-            else {
-                debug!("No instantiator found, trying sync container");
-                return if by_type {
-                    self.sync.get()
-                } else {
-                    self.sync.get_selected(Selection::Indexed(None))
-                };
-            };
+            let InstantiatorData {
+                instantiator,
+                finalizer,
+                metadata: RegistrationMetadata { config, scope_data, .. },
+            } = data;
 
             let current_priority = self.inner.scope_data.priority;
             let dep_priority = scope_data.priority;
@@ -235,7 +233,7 @@ impl Container {
                 return Ok(dependency);
             }
 
-            match instantiator.call(self.clone()).await {
+            match instantiator.call(self).await {
                 Ok(dependency) => match dependency.downcast::<Dep>() {
                     Ok(dependency) => {
                         let dependency = RcThreadSafety::new(*dependency);
@@ -295,57 +293,64 @@ impl Container {
         &'a self,
         selected: Selection<'a, InstantiatorData>,
     ) -> impl Future<Output = Result<Dep, ResolveErrorKind>> + SendSafety + 'a {
-        let type_info = TypeInfo::of::<Dep>();
-        let dep_name = type_info.name;
-        let scope_name = self.inner.scope_data.name;
-        let fut = async move {
-            let by_type = matches!(selected, Selection::ByType);
-            let Some(
-                data @ InstantiatorData {
-                    instantiator,
-                    metadata: RegistrationMetadata { scope_data, .. },
-                    ..
-                },
-            ) = selected.or_lookup(|| self.inner.registry.get_async(&type_info))
-            else {
-                debug!("No instantiator found, trying sync container");
-                return if by_type {
-                    self.sync.get_transient()
-                } else {
-                    self.sync.get_transient_selected(Selection::Indexed(None))
-                };
-            };
-
-            let current_priority = self.inner.scope_data.priority;
-            let dep_priority = scope_data.priority;
-
-            if current_priority > dep_priority {
-                let mut parent = self
-                    .inner
-                    .parent
-                    .as_ref()
-                    .expect("parent should exist for lower-priority dependency");
-                while parent.scope_data.priority != dep_priority {
-                    parent = parent.parent.as_ref().expect("parent with target priority should exist");
+        let mut selected = selected;
+        let mut pending: Option<(InstantiatorFuture<'a>, &'static str)> = None;
+        poll_fn(move |cx| {
+            let type_info = TypeInfo::of::<Dep>();
+            let dep_name = type_info.name;
+            let (future, scope_name) = match &mut pending {
+                Some(pending) => pending,
+                slot @ None => {
+                    let selected = replace(&mut selected, Selection::ByType);
+                    let by_type = matches!(selected, Selection::ByType);
+                    let Some(data) = selected.or_lookup(|| self.inner.registry.get_async(&type_info)) else {
+                        debug!("No instantiator found, trying sync container");
+                        return Poll::Ready(if by_type {
+                            self.sync.get_transient()
+                        } else {
+                            self.sync.get_transient_selected(Selection::Indexed(None))
+                        });
+                    };
+                    let instantiator = &data.instantiator;
+                    let scope_data = &data.metadata.scope_data;
+                    let current_priority = self.inner.scope_data.priority;
+                    let dep_priority = scope_data.priority;
+                    let scope_name = self.inner.scope_data.name;
+                    let (future, scope_name): (InstantiatorFuture<'a>, _) = match current_priority.cmp(&dep_priority) {
+                        Ordering::Greater => {
+                            let mut parent = self
+                                .inner
+                                .parent
+                                .as_ref()
+                                .expect("parent should exist for lower-priority dependency");
+                            while parent.scope_data.priority != dep_priority {
+                                parent = parent.parent.as_ref().expect("parent with target priority should exist");
+                            }
+                            let scope_name = parent.scope_data.name;
+                            let container = Self {
+                                inner: parent.clone(),
+                                sync: self.sync.clone(),
+                                per_type_locks: self.per_type_locks.clone(),
+                            };
+                            (Box::pin(async move { instantiator.call(&container).await }), scope_name)
+                        }
+                        Ordering::Less => {
+                            let err = ResolveErrorKind::NoAccessible {
+                                expected_scope_data: *scope_data,
+                                actual_scope_data: self.inner.scope_data,
+                            };
+                            error!(dependency = dep_name, scope = scope_name, error = %err, "Failed to resolve transient dependency");
+                            return Poll::Ready(Err(err));
+                        }
+                        Ordering::Equal => (instantiator.call_boxed(self), scope_name),
+                    };
+                    slot.insert((future, scope_name))
                 }
-                return (Self {
-                    inner: parent.clone(),
-                    sync: self.sync.clone(),
-                    per_type_locks: self.per_type_locks.clone(),
-                })
-                .get_transient_selected(Selection::Indexed(Some(data)))
-                .await;
-            }
-            if dep_priority > current_priority {
-                let err = ResolveErrorKind::NoAccessible {
-                    expected_scope_data: *scope_data,
-                    actual_scope_data: self.inner.scope_data,
-                };
-                error!(dependency = dep_name, scope = scope_name, error = %err, "Failed to resolve transient dependency");
-                return Err(err);
-            }
-
-            match instantiator.call(self.clone()).await {
+            };
+            let dependency = ready!(future.as_mut().poll(cx));
+            let scope_name = *scope_name;
+            pending = None;
+            Poll::Ready(match dependency {
                 Ok(dependency) => match dependency.downcast::<Dep>() {
                     Ok(dependency) => Ok(*dependency),
                     Err(incorrect_type) => {
@@ -365,9 +370,8 @@ impl Container {
                     error!(dependency = dep_name, scope = scope_name, error = %err, "Failed to resolve transient dependency");
                     Err(ResolveErrorKind::Instantiator(InstantiatorErrorKind::Factory(err)))
                 }
-            }
-        };
-        Box::pin(fut)
+            })
+        })
     }
 
     /// Closes the container, calling finalizers for resolved dependencies in LIFO order.

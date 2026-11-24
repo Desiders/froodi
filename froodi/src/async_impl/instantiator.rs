@@ -14,7 +14,10 @@ use crate::{
     dependency::Dependency,
     dependency_resolver::DependencyResolver,
     errors::{InstantiateErrorKind, InstantiatorErrorKind},
-    utils::thread_safety::{SendSafety, SyncSafety},
+    utils::{
+        future::BoxFuture,
+        thread_safety::{SendSafety, SyncSafety},
+    },
     ResolveErrorKind,
 };
 
@@ -136,17 +139,27 @@ impl From<BoxedCloneInstantiator<ResolveErrorKind, InstantiateErrorKind>> for Re
     }
 }
 
+type ErasedResult = Result<Box<dyn Any>, InstantiatorErrorKind<ResolveErrorKind, InstantiateErrorKind>>;
+pub(super) type InstantiatorFuture<'a> = BoxFuture<'a, ErasedResult>;
+
 impl RegistrationInstantiator {
     #[allow(clippy::manual_async_fn)]
-    pub(crate) fn call(
-        &self,
-        container: Container,
-    ) -> impl Future<Output = Result<Box<dyn Any>, InstantiatorErrorKind<ResolveErrorKind, InstantiateErrorKind>>> + SendSafety + '_ {
+    pub(crate) fn call<'a>(&'a self, container: &'a Container) -> impl Future<Output = ErasedResult> + SendSafety + 'a {
         async move {
             match self {
-                Self::Runtime(inst) => Service::call(&mut inst.clone(), container).await,
+                Self::Runtime(inst) => {
+                    let container = container.clone();
+                    Service::call(&mut inst.clone(), container).await
+                }
                 Self::Linked(inst) => inst.call(container).await,
             }
+        }
+    }
+
+    pub(super) fn call_boxed<'a>(&'a self, container: &'a Container) -> InstantiatorFuture<'a> {
+        match self {
+            Self::Linked(inst) => inst.call(container),
+            Self::Runtime(_) => Box::pin(self.call(container)),
         }
     }
 }
