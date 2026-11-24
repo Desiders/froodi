@@ -1,10 +1,12 @@
 extern crate std;
+
 use super::Container;
 use crate::{
     registry, Context,
     DefaultScope::{App, Runtime},
     TypeInfo,
 };
+
 use std::{
     sync::{mpsc, Arc},
     thread,
@@ -12,6 +14,7 @@ use std::{
 };
 
 struct Value(u64);
+
 fn parent() -> (Container, Arc<Value>) {
     let value = Arc::new(Value(7));
     let mut context = Context::new();

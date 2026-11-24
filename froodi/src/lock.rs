@@ -340,54 +340,6 @@ mod dense_per_type {
             }
         }
     }
-
-    #[cfg(test)]
-    mod tests {
-        use super::{LockRegistry, TypeKeyedLocks};
-        use crate::{any::TypeInfo, registry::RegistrationId};
-        use core::{any::TypeId, ptr};
-
-        struct First;
-        struct Second;
-
-        #[test]
-        fn dense_locks_remain_lazy_and_shared_without_per_get_arc() {
-            let locks = TypeKeyedLocks::<usize>::with_indexed_keys([TypeId::of::<First>(), TypeId::of::<Second>()].into_iter());
-            let LockRegistry::Indexed(indexed) = &*locks.locks else {
-                panic!("expected indexed locks");
-            };
-            assert!(indexed.iter().all(|slot| slot.value.get().is_none()));
-            let shared = locks.clone();
-            let first = locks.get(&TypeInfo::of::<First>(), RegistrationId(0));
-            let again = shared.get(&TypeInfo::of::<First>(), RegistrationId(0));
-            assert!(ptr::eq(&*first, &*again));
-            assert!(indexed[1].value.get().is_none());
-            let second = locks.get(&TypeInfo::of::<Second>(), RegistrationId(1));
-            assert!(!ptr::eq(&*first, &*second));
-        }
-
-        #[test]
-        #[should_panic(expected = "invalid lock index 1 for type froodi::lock::dense_per_type::tests::First")]
-        fn mismatched_index_panics() {
-            let locks = TypeKeyedLocks::<usize>::with_indexed_keys([TypeId::of::<First>(), TypeId::of::<Second>()].into_iter());
-            locks.get(&TypeInfo::of::<First>(), RegistrationId(1));
-        }
-
-        #[test]
-        fn map_locks_are_shared_across_clones() {
-            let locks = TypeKeyedLocks::<usize>::default();
-            let shared = locks.clone();
-            let first = locks.get(&TypeInfo::of::<First>(), RegistrationId::UNINDEXED_LOCK);
-            assert!(ptr::eq(
-                &*first,
-                &*shared.get(&TypeInfo::of::<First>(), RegistrationId::UNINDEXED_LOCK)
-            ));
-            let LockRegistry::Map(map) = &*locks.locks else {
-                panic!("expected map locks");
-            };
-            assert_eq!(map.read().len(), 1);
-        }
-    }
 }
 
 #[cfg(feature = "thread_safe")]
@@ -425,3 +377,12 @@ pub(crate) type PerTypeSyncLocks = TypeKeyedLocks<SyncMutex<()>>;
 /// Async per-type instantiation locks.
 #[cfg(feature = "async")]
 pub(crate) type PerTypeAsyncLocks = TypeKeyedLocks<AsyncMutex<()>>;
+
+#[cfg(all(
+    test,
+    feature = "std",
+    feature = "thread_safe",
+    not(feature = "lock-parking-lot"),
+    not(feature = "lock-spin")
+))]
+mod tests;

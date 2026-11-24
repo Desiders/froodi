@@ -9,6 +9,7 @@ use std::sync::Mutex;
 type Events = RcThreadSafety<Mutex<Vec<&'static str>>>;
 struct Resource;
 struct ContextDrop(Events);
+
 impl Drop for ContextDrop {
     fn drop(&mut self) {
         self.0.lock().unwrap().push("context");
@@ -44,6 +45,7 @@ fn failed_sync_scope_build_keeps_parent_finalizer_before_context_drop() {
 #[tokio::test(flavor = "current_thread")]
 async fn failed_async_scope_build_keeps_sync_finalizer_before_context_drop() {
     use froodi::async_impl::Container as AsyncContainer;
+
     for no_children in [true, false] {
         let events = RcThreadSafety::new(Mutex::new(Vec::new()));
         let finalized = events.clone();

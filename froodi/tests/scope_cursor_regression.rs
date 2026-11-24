@@ -44,6 +44,7 @@ fn sibling_requests_keep_context_and_skipped_parent_cleanup_independent() {
 #[tokio::test(flavor = "current_thread")]
 async fn async_sibling_requests_preserve_context_and_skipped_parent_cleanup() {
     use froodi::async_impl::Container as AsyncContainer;
+
     let events = RcThreadSafety::new(Mutex::new(Vec::new()));
     let (app_events, session_events, request_events) = (events.clone(), events.clone(), events.clone());
     let app = AsyncContainer::new(registry! {

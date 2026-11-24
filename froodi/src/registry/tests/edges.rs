@@ -1489,6 +1489,7 @@ fn runtime_validation_preserves_cycle_path_and_dependency_alias_names() {
     struct A;
     struct B;
     struct C;
+
     let mut native = native_registry! {
         provide(App, || Ok::<_, InstantiateErrorKind>(A)),
         provide(App, || Ok::<_, InstantiateErrorKind>(B)),
@@ -1525,6 +1526,7 @@ fn runtime_validation_preserves_cycle_path_and_dependency_alias_names() {
 fn runtime_validation_keeps_missing_dependency_boundaries_valid() {
     struct Value;
     struct Missing;
+
     let mut native = native_registry! { provide(App, || Ok::<_, InstantiateErrorKind>(Value)) };
     let mut missing = TypeInfo::of::<Missing>();
     missing.name = "declared elsewhere";
@@ -1545,6 +1547,7 @@ fn runtime_cycle_validation_keeps_sync_and_async_views_distinct() {
     use crate::{errors::ValidationErrorKind, registry::Selected};
 
     struct Value;
+
     let mut native = native_registry! { provide(App, || Ok::<_, InstantiateErrorKind>(Value)) };
     native.extend(native_async_registry! { provide(App, async || Ok::<_, InstantiateErrorKind>(Value)) });
     let key = TypeInfo::of::<Value>();
@@ -1572,6 +1575,7 @@ fn runtime_cycle_diagnostic_preserves_the_prefix_and_first_incoming_alias() {
     struct B;
     struct C;
     struct D;
+
     let mut native = native_registry! {
         provide(App, || Ok::<_, InstantiateErrorKind>(A)),
         provide(App, || Ok::<_, InstantiateErrorKind>(B)),

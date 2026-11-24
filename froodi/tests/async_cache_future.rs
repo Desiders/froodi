@@ -12,6 +12,7 @@ use std::{
 };
 
 fn assert_unpin(_: &(impl Future + Unpin)) {}
+
 #[cfg(feature = "thread_safe")]
 fn assert_send(_: &(impl Future + Send)) {}
 
@@ -46,6 +47,7 @@ async fn cached_resolution_observes_cache_when_polled_not_when_created() {
 }
 
 struct NoopWake;
+
 impl Wake for NoopWake {
     fn wake(self: Arc<Self>) {}
 }

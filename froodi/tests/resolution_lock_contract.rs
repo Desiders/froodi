@@ -1,4 +1,8 @@
-use froodi::{registry, utils::thread_safety::RcThreadSafety, Container, DefaultScope::App};
+#![cfg(any(feature = "async", feature = "thread_safe"))]
+
+#[cfg(feature = "thread_safe")]
+use froodi::Container;
+use froodi::{registry, utils::thread_safety::RcThreadSafety, DefaultScope::App};
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Arc,
@@ -11,6 +15,7 @@ struct Payload(usize);
 #[test]
 fn sync_concurrent_cached_get_constructs_one_shared_value() {
     use std::{sync::Barrier, thread, time::Duration};
+
     let calls = Arc::new(AtomicUsize::new(0));
     let factory_calls = calls.clone();
     let container = Container::new(registry! {
@@ -58,6 +63,7 @@ mod asynchronous {
     use tokio::sync::Semaphore;
 
     fn assert_unpin(_: &(impl Future + Unpin)) {}
+
     #[cfg(feature = "thread_safe")]
     fn assert_send(_: &(impl Future + Send)) {}
 
@@ -79,6 +85,7 @@ mod asynchronous {
         clones: Arc<AtomicUsize>,
         calls: Arc<AtomicUsize>,
     }
+
     impl Clone for CountingFactory {
         fn clone(&self) -> Self {
             self.clones.fetch_add(1, Ordering::SeqCst);
@@ -88,6 +95,7 @@ mod asynchronous {
             }
         }
     }
+
     impl Instantiator<()> for CountingFactory {
         type Provides = usize;
         type Error = InstantiateErrorKind;
@@ -135,6 +143,7 @@ mod asynchronous {
             sync::{Barrier, Notify},
             task::yield_now,
         };
+
         let calls = Arc::new(AtomicUsize::new(0));
         let permits = Arc::new(Semaphore::new(0));
         let entered = Arc::new(Notify::new());
@@ -177,6 +186,7 @@ mod asynchronous {
     }
 
     struct NoopWake;
+
     impl Wake for NoopWake {
         fn wake(self: Arc<Self>) {}
     }
