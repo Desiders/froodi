@@ -214,11 +214,13 @@ impl Container {
                 return Ok(dependency);
             }
 
-            let result = downcast_instantiation::<Dep>(instantiator.call(self).await, &type_info);
-            if let Err(err) = &result {
-                error!(dependency = dep_name, scope = scope_name, error = %err, "Failed to resolve dependency");
-            }
-            let dependency = RcThreadSafety::new(*result?);
+            let dependency = match downcast_instantiation::<Dep>(instantiator.call(self).await, &type_info) {
+                Ok(dependency) => RcThreadSafety::new(*dependency),
+                Err(err) => {
+                    error!(dependency = dep_name, scope = scope_name, error = %err, "Failed to resolve dependency");
+                    return Err(err);
+                }
+            };
             if config.cache_provides || finalizer.is_some() {
                 let mut cache = self.inner.cache.write();
                 if config.cache_provides {
@@ -283,11 +285,13 @@ impl Container {
             let scope = *scope_name;
             pending = None;
 
-            let result = downcast_instantiation::<Dep>(output, &type_info);
-            if let Err(err) = &result {
-                error!(dependency = dep_name, scope, error = %err, "Failed to resolve transient dependency");
-            }
-            Poll::Ready(result.map(|dependency| *dependency))
+            Poll::Ready(match downcast_instantiation::<Dep>(output, &type_info) {
+                Ok(dependency) => Ok(*dependency),
+                Err(err) => {
+                    error!(dependency = dep_name, scope, error = %err, "Failed to resolve transient dependency");
+                    Err(err)
+                }
+            })
         })
     }
 
