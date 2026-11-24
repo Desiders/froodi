@@ -227,7 +227,7 @@ impl Container {
             }
 
             trace!("Lock instantiator call");
-            let inst_call_lock = self.per_type_locks.get_for(type_info.id, &data.metadata);
+            let inst_call_lock = self.per_type_locks.get_for(&type_info, &data.metadata);
             let _guard = inst_call_lock.lock().await;
 
             if let Some(dependency) = { self.inner.cache.read().get(&type_info) } {

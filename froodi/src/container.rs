@@ -182,7 +182,7 @@ impl Container {
         #[cfg(feature = "thread_safe")]
         trace!("Lock instantiator call");
         #[cfg(feature = "thread_safe")]
-        let inst_call_lock = self.per_type_locks.get_for(type_info.id, &data.metadata);
+        let inst_call_lock = self.per_type_locks.get_for(&type_info, &data.metadata);
         #[cfg(feature = "thread_safe")]
         let _guard = inst_call_lock.lock();
 

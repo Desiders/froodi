@@ -422,8 +422,8 @@ mod once_lock_metadata_tests {
         assert_eq!(first_graph.index(), canonical);
         assert_eq!(duplicate_graph.index(), canonical);
         let locks = PerTypeSyncLocks::with_indexed_keys(registry.dense_lock_keys());
-        let ordinary = locks.get(TypeInfo::of::<u32>().id, by_type);
-        let linked = locks.get(TypeInfo::of::<u32>().id, duplicate_graph);
+        let ordinary = locks.get(&TypeInfo::of::<u32>(), by_type);
+        let linked = locks.get(&TypeInfo::of::<u32>(), duplicate_graph);
         assert!(ptr_eq(&*ordinary, &*linked));
     }
 
@@ -432,16 +432,16 @@ mod once_lock_metadata_tests {
         let app = Container::new(registry! { provide(App, || Ok(7_u32)) });
         let request = app.clone().enter_build().unwrap();
         let id = app.inner.registry.get(&TypeInfo::of::<u32>()).unwrap().metadata.lock_id;
-        let parent = app.per_type_locks.get(TypeInfo::of::<u32>().id, id);
-        let child = request.per_type_locks.get(TypeInfo::of::<u32>().id, id);
+        let parent = app.per_type_locks.get(&TypeInfo::of::<u32>(), id);
+        let child = request.per_type_locks.get(&TypeInfo::of::<u32>(), id);
         assert!(ptr_eq(&*parent, &*child));
         let legacy = Container::new(RuntimeRegistry::new_with_default_entries());
         assert!(legacy.inner.registry.indexed.is_empty());
         assert_eq!(legacy.inner.registry.dense_lock_keys().count(), 0);
         let implicit = legacy.get::<Container>().unwrap();
         let id = RegistrationId::UNINDEXED_LOCK;
-        let outer = legacy.per_type_locks.get(TypeInfo::of::<Container>().id, id);
-        let inner = implicit.per_type_locks.get(TypeInfo::of::<Container>().id, id);
+        let outer = legacy.per_type_locks.get(&TypeInfo::of::<Container>(), id);
+        let inner = implicit.per_type_locks.get(&TypeInfo::of::<Container>(), id);
         assert!(ptr_eq(&*outer, &*inner));
     }
 
