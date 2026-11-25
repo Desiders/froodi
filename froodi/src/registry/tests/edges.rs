@@ -18,7 +18,7 @@ use crate::{
     instance,
     instantiator::RegistrationInstantiator,
     registry,
-    registry::RegistrationId,
+    registry::{RegistrationId, RegistrationMetadata},
     utils::thread_safety::RcThreadSafety,
     Config, Container as SyncContainer, Context,
     DefaultScope::{App, Request},
@@ -1172,9 +1172,7 @@ fn invalid_edge_is_checked_instead_of_reinterpreting_a_value() {
         panic!("expected a linked instantiator");
     };
     inst.keys = vec![TypeInfo::of::<String>()].into();
-    data.metadata.dependencies = BTreeSet::from([Dependency {
-        type_info: TypeInfo::of::<String>(),
-    }]);
+    data.metadata.set_linked_dependencies(&[TypeInfo::of::<String>()]);
     let container = SyncContainer::new(native);
 
     let error = container.get::<Consumer>().err().unwrap();
@@ -1483,6 +1481,21 @@ fn errors_and_panics_preserve_indexed_dependencies_and_finalizer_ownership() {
 }
 
 #[test]
+fn linked_metadata_keeps_last_alias_for_repeated_dependency_type() {
+    let mut first = TypeInfo::of::<u32>();
+    first.name = "first alias";
+    let mut last = first.clone();
+    last.name = "last alias";
+
+    let mut metadata = RegistrationMetadata::new(BTreeSet::new(), Config::default(), App.into());
+    metadata.set_linked_dependencies(&[first, last]);
+
+    let dependencies = metadata.dependencies();
+    assert_eq!(dependencies.len(), 1);
+    assert_eq!(dependencies[0].type_info.name, "last alias");
+}
+
+#[test]
 fn runtime_validation_preserves_cycle_path_and_dependency_alias_names() {
     use crate::errors::ValidationErrorKind;
 
@@ -1509,9 +1522,7 @@ fn runtime_validation_preserves_cycle_path_and_dependency_alias_names() {
             .sync_mut()
             .unwrap()
             .metadata
-            .dependencies = BTreeSet::from([Dependency {
-            type_info: aliases[target].clone(),
-        }]);
+            .set_linked_dependencies(&[aliases[target].clone()]);
     }
     let error = native.detect_cyclic_dependencies().unwrap_err();
     let ValidationErrorKind::CyclicDependency { graph: (first, rest) } = error else {
@@ -1537,7 +1548,7 @@ fn runtime_validation_keeps_missing_dependency_boundaries_valid() {
         .sync_mut()
         .unwrap()
         .metadata
-        .dependencies = BTreeSet::from([Dependency { type_info: missing }]);
+        .set_linked_dependencies(&[missing]);
     assert!(native.validate().is_ok());
 }
 
@@ -1552,13 +1563,13 @@ fn runtime_cycle_validation_keeps_sync_and_async_views_distinct() {
     native.extend(native_async_registry! { provide(App, async || Ok::<_, InstantiateErrorKind>(Value)) });
     let key = TypeInfo::of::<Value>();
     let entry = native.entries.get_mut(&key).unwrap();
-    assert!(entry.sync().unwrap().metadata.dependencies.is_empty());
+    assert_eq!(entry.sync().unwrap().metadata.dependencies(), []);
     let Selected::Async(data) = &mut entry.selected else {
         panic!("expected async selection");
     };
     let mut alias = key.clone();
     alias.name = "async self dependency";
-    data.metadata.dependencies = BTreeSet::from([Dependency { type_info: alias }]);
+    data.metadata.set_linked_dependencies(&[alias]);
     let error = native.detect_cyclic_dependencies().unwrap_err();
     let ValidationErrorKind::CyclicDependency { graph: (first, rest) } = error else {
         panic!("expected a cycle diagnostic");
@@ -1596,14 +1607,18 @@ fn runtime_cycle_diagnostic_preserves_the_prefix_and_first_incoming_alias() {
             .sync_mut()
             .unwrap()
             .metadata
-            .dependencies = BTreeSet::from([Dependency {
-            type_info: aliases[target].clone(),
-        }]);
+            .set_linked_dependencies(&[aliases[target].clone()]);
     }
     let mut closing = keys[2].clone();
     closing.name = "different closing edge alias";
-    native.entries.get_mut(&keys[3]).unwrap().sync_mut().unwrap().metadata.dependencies =
-        BTreeSet::from([Dependency { type_info: closing }]);
+    native
+        .entries
+        .get_mut(&keys[3])
+        .unwrap()
+        .sync_mut()
+        .unwrap()
+        .metadata
+        .set_linked_dependencies(&[closing]);
     let error = native.detect_cyclic_dependencies().unwrap_err();
     let ValidationErrorKind::CyclicDependency { graph: (first, rest) } = error else {
         panic!("expected a cycle diagnostic");

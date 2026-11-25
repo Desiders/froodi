@@ -16,7 +16,7 @@ pub use boundary::declare;
 pub(crate) use frontend::{finish, IntoRegistry, RegistrationId};
 
 use alloc::{
-    collections::{btree_map::Entry as BTreeMapEntry, btree_set::Iter as BTreeSetIter, BTreeMap, BTreeSet},
+    collections::{btree_map::Entry as BTreeMapEntry, BTreeMap, BTreeSet},
     vec::Vec,
 };
 
@@ -31,6 +31,7 @@ use alloc::boxed::Box;
 use core::any::TypeId;
 #[cfg(feature = "async")]
 use core::mem::replace;
+use core::slice::Iter;
 
 #[cfg(feature = "async")]
 use crate::async_impl::{
@@ -48,6 +49,7 @@ use crate::{
     finalizer::BoxedCloneFinalizer,
     instantiator::{boxed_container_instantiator, RegistrationInstantiator},
     scope::{ScopeData, ScopeDataWithChildScopesData},
+    utils::thread_safety::RcThreadSafety,
     Config, Container, DefaultScope, Scope, Scopes,
 };
 
@@ -60,7 +62,7 @@ pub(crate) struct RegistrationMetadata {
         not(feature = "lock-spin")
     ))]
     pub(crate) lock_id: RegistrationId,
-    pub(crate) dependencies: BTreeSet<Dependency>,
+    dependencies: Option<RcThreadSafety<[Dependency]>>,
     pub(crate) config: Config,
     pub(crate) scope_data: ScopeData,
 }
@@ -76,10 +78,22 @@ impl RegistrationMetadata {
                 not(feature = "lock-spin")
             ))]
             lock_id: RegistrationId::UNINDEXED_LOCK,
-            dependencies,
+            dependencies: (!dependencies.is_empty()).then(|| dependencies.into_iter().collect()),
             config,
             scope_data,
         }
+    }
+
+    fn dependencies(&self) -> &[Dependency] {
+        self.dependencies.as_deref().unwrap_or(&[])
+    }
+
+    fn set_linked_dependencies(&mut self, keys: &[TypeInfo]) {
+        // Preserve the last name for duplicate TypeIds, as BTreeSet collection did.
+        let mut dependencies: Vec<_> = keys.iter().rev().cloned().map(|type_info| Dependency { type_info }).collect();
+        dependencies.sort();
+        dependencies.dedup();
+        self.dependencies = (!dependencies.is_empty()).then(|| dependencies.into());
     }
 }
 
@@ -107,11 +121,11 @@ pub(crate) enum Selected {
 }
 
 impl Selected {
-    fn metadata(&self) -> Option<(&BTreeSet<Dependency>, ScopeData)> {
+    fn metadata(&self) -> Option<(&[Dependency], ScopeData)> {
         match self {
-            Self::Sync(data) => Some((&data.metadata.dependencies, data.metadata.scope_data)),
+            Self::Sync(data) => Some((data.metadata.dependencies(), data.metadata.scope_data)),
             #[cfg(feature = "async")]
-            Self::Async(data) => Some((&data.metadata.dependencies, data.metadata.scope_data)),
+            Self::Async(data) => Some((data.metadata.dependencies(), data.metadata.scope_data)),
             Self::Missing => None,
         }
     }
@@ -123,7 +137,7 @@ impl Selected {
             Selected::Async(data) => {
                 if let AsyncRegistrationInstantiator::Linked(executor) = &mut data.instantiator {
                     executor.keys = executor.edges.iter().map(|id| keys[id.index()].clone()).collect::<Vec<_>>().into();
-                    data.metadata.dependencies = executor.keys.iter().cloned().map(|type_info| Dependency { type_info }).collect();
+                    data.metadata.set_linked_dependencies(&executor.keys);
                 }
             }
             Selected::Missing => (),
@@ -149,11 +163,11 @@ pub(crate) struct Entry {
 }
 
 impl Entry {
-    fn metadata(&self, is_async: bool) -> Option<(&BTreeSet<Dependency>, ScopeData)> {
+    fn metadata(&self, is_async: bool) -> Option<(&[Dependency], ScopeData)> {
         if is_async {
             self.selected.metadata()
         } else {
-            self.sync().map(|data| (&data.metadata.dependencies, data.metadata.scope_data))
+            self.sync().map(|data| (data.metadata.dependencies(), data.metadata.scope_data))
         }
     }
 
@@ -285,7 +299,7 @@ impl Entry {
 fn link_sync_keys(data: &mut InstantiatorData, keys: &[TypeInfo]) {
     if let RegistrationInstantiator::Linked(executor) = &mut data.instantiator {
         executor.keys = executor.edges.iter().map(|id| keys[id.index()].clone()).collect::<Vec<_>>().into();
-        data.metadata.dependencies = executor.keys.iter().cloned().map(|type_info| Dependency { type_info }).collect();
+        data.metadata.set_linked_dependencies(&executor.keys);
     }
 }
 
@@ -313,7 +327,7 @@ pub struct Registry {
 struct CycleFrame<'a> {
     key: TypeInfo,
     is_async: bool,
-    dependencies: BTreeSetIter<'a, Dependency>,
+    dependencies: Iter<'a, Dependency>,
 }
 
 impl Registry {
@@ -483,7 +497,7 @@ impl Registry {
         &'a self,
         key: &TypeInfo,
         is_async: bool,
-        dependencies: &'a BTreeSet<Dependency>,
+        dependencies: &'a [Dependency],
         visited: &mut BTreeMap<(TypeInfo, bool), bool>,
         stack: &mut Vec<CycleFrame<'a>>,
     ) -> bool {
