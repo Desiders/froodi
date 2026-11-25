@@ -2,7 +2,10 @@ use super::{Instantiator, InstantiatorFuture, RegistrationInstantiator, SharedFu
 use crate::{
     async_impl::Container,
     registry::RegistrationId,
-    utils::thread_safety::{RcAnyThreadSafety, RcThreadSafety, SendSafety, SyncSafety},
+    utils::{
+        shared_slice::SharedSlice,
+        thread_safety::{RcAnyThreadSafety, RcThreadSafety, SendSafety, SyncSafety},
+    },
     DependencyResolver, TypeInfo,
 };
 use alloc::{boxed::Box, collections::BTreeMap, vec::Vec};
@@ -38,8 +41,8 @@ where
 #[derive(Clone)]
 pub(crate) struct ErasedInstantiator {
     inst: RcThreadSafety<dyn LinkedCall>,
-    pub(crate) keys: RcThreadSafety<[TypeInfo]>,
-    pub(crate) edges: RcThreadSafety<[RegistrationId]>,
+    pub(crate) keys: SharedSlice<TypeInfo>,
+    pub(crate) edges: SharedSlice<RegistrationId>,
 }
 
 impl RegistrationInstantiator {
@@ -52,7 +55,7 @@ impl RegistrationInstantiator {
         let inst = RcThreadSafety::new(InstAdapter::<Inst, Deps> { inst, marker: PhantomData });
         Self::Linked(ErasedInstantiator {
             inst,
-            keys: Vec::new().into(),
+            keys: SharedSlice::new(),
             edges: edges.into(),
         })
     }

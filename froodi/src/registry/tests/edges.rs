@@ -24,7 +24,7 @@ use crate::{
     DefaultScope::{App, Request},
     Dependency, DependencyResolver, Inject, InjectCustom, InjectTransient, InstantiateErrorKind, Instantiator, ResolveErrorKind, TypeInfo,
 };
-use core::{cell::Cell, iter::once};
+use core::{cell::Cell, iter::once, ptr::eq as ptr_eq};
 use std::sync::Mutex;
 
 #[cfg(feature = "async")]
@@ -226,7 +226,7 @@ fn fixed_plan_keeps_linked_edge_storage() {
     let RegistrationInstantiator::Linked(executor) = &registry.get(&TypeInfo::of::<Combined>()).unwrap().instantiator else {
         panic!("expected linked instantiator");
     };
-    assert!(RcThreadSafety::ptr_eq(&edges, &executor.edges));
+    assert!(ptr_eq(&*edges, &*executor.edges));
 }
 
 #[test]
