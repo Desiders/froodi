@@ -43,7 +43,13 @@ fn sibling_requests_keep_context_and_skipped_parent_cleanup_independent() {
 #[cfg(feature = "async")]
 #[tokio::test(flavor = "current_thread")]
 async fn async_sibling_requests_preserve_context_and_skipped_parent_cleanup() {
+    use core::{
+        future::{poll_fn, Future},
+        pin::Pin,
+        task::Poll,
+    };
     use froodi::async_impl::Container as AsyncContainer;
+    use tokio::task::yield_now;
 
     struct SyncSessionValue;
 
@@ -64,7 +70,10 @@ async fn async_sibling_requests_preserve_context_and_skipped_parent_cleanup() {
         provide(Request, async |_: Inject<SessionValue>, _: Inject<SyncSessionValue>, Inject(label): Inject<Label>| Ok(RequestValue(label.0)),
             finalizer = move |value: RcThreadSafety<RequestValue>| {
                 let events = request_events.clone();
-                async move { events.lock().unwrap().push(value.0); }
+                async move {
+                    yield_now().await;
+                    events.lock().unwrap().push(value.0);
+                }
             }),
     });
     let mut context = Context::new();
@@ -75,7 +84,14 @@ async fn async_sibling_requests_preserve_context_and_skipped_parent_cleanup() {
     let right = app.clone().enter().with_context(context).build().unwrap();
     assert_eq!(left.get::<RequestValue>().await.unwrap().0, "left");
     assert_eq!(right.get::<RequestValue>().await.unwrap().0, "right");
-    left.close().await;
+    let mut closing = left.close();
+    poll_fn(|cx| {
+        assert!(Pin::new(&mut closing).poll(cx).is_pending());
+        Poll::Ready(())
+    })
+    .await;
+    assert!(events.lock().unwrap().is_empty());
+    closing.await;
     assert_eq!(*events.lock().unwrap(), ["left", "sync session", "session"]);
     assert_eq!(right.get::<RequestValue>().await.unwrap().0, "right");
     right.close().await;

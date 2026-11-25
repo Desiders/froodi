@@ -1,3 +1,5 @@
+mod close;
+
 #[cfg(all(test, feature = "thread_safe"))]
 mod snapshot_tests;
 
@@ -10,10 +12,7 @@ use core::{
 };
 use tracing::{debug, error, trace, warn};
 
-use super::{
-    instantiator::{downcast_instantiation, InstantiatorFuture},
-    service::Service as _,
-};
+use super::instantiator::{downcast_instantiation, InstantiatorFuture};
 #[cfg(feature = "thread_safe")]
 use crate::lock::PerTypeSyncLocks;
 use crate::registry::{finish, IntoRegistry};
@@ -330,33 +329,6 @@ impl Container {
             sync: self.sync.clone(),
             per_type_locks: self.per_type_locks.clone(),
         }
-    }
-
-    /// Closes the container, calling finalizers for resolved dependencies in LIFO order.
-    ///
-    /// # Warning
-    /// This method can be called multiple times, but it will only call finalizers for dependencies that were resolved since the last call
-    pub fn close(&self) -> impl Future<Output = ()> + SendSafety + '_ {
-        Box::pin(async move {
-            let mut scope = self.inner.as_ref();
-            let mut sync_scope = self.sync.inner.as_ref();
-
-            scope.close().await;
-            sync_scope.close_with_parent_flag(false);
-
-            while scope.close_parent {
-                match (scope.parent.as_deref(), sync_scope.parent.as_ref()) {
-                    (Some(parent), Some(sync_parent)) => {
-                        scope = parent;
-                        sync_scope = sync_parent.inner.as_ref();
-                        sync_scope.close_with_parent_flag(false);
-                        scope.close().await;
-                    }
-                    (None, None) => break,
-                    _ => unreachable!(),
-                }
-            }
-        })
     }
 }
 
@@ -741,28 +713,6 @@ impl ContainerInner {
     #[cfg(test)]
     fn child_scopes_data(&self) -> &[ScopeData] {
         &self.registry.scopes_data[self.child_scopes_start..]
-    }
-
-    #[allow(clippy::missing_panics_doc)]
-    async fn close(&self) {
-        let mut resolved_set = self.cache.write().take_resolved_set();
-        while let Some(Resolved { type_info, dependency }) = resolved_set.0.pop_back() {
-            let InstantiatorData { finalizer, .. } = self
-                .registry
-                .get_async(&type_info)
-                .expect("Instantiator should be present for resolved type");
-
-            if let Some(finalizer) = finalizer {
-                let _ = finalizer.clone().call(dependency).await;
-                debug!(%type_info, "Finalizer called");
-            }
-        }
-
-        // We need to clear cache and fill it with the context as in start of the container usage
-        #[allow(clippy::assigning_clones)]
-        {
-            self.cache.write().map = self.context.map.clone();
-        }
     }
 }
 
