@@ -177,16 +177,22 @@ impl Entry {
         not(feature = "lock-parking-lot"),
         not(feature = "lock-spin")
     ))]
-    pub(crate) fn set_lock_id(&mut self, id: RegistrationId) {
+    fn set_lock_ids(&mut self, next: &mut [u32; 2]) {
+        fn take_id(next: &mut u32) -> RegistrationId {
+            let id = RegistrationId(*next);
+            *next = next.checked_add(1).expect("too many registrations");
+            id
+        }
+
         match &mut self.selected {
-            Selected::Sync(data) => data.metadata.lock_id = id,
+            Selected::Sync(data) => data.metadata.lock_id = take_id(&mut next[0]),
             #[cfg(feature = "async")]
-            Selected::Async(data) => data.metadata.lock_id = id,
+            Selected::Async(data) => data.metadata.lock_id = take_id(&mut next[1]),
             Selected::Missing => (),
         }
         #[cfg(feature = "async")]
         if let Some(data) = &mut self.sync {
-            data.metadata.lock_id = id;
+            data.metadata.lock_id = take_id(&mut next[0]);
         }
     }
 
@@ -322,6 +328,13 @@ pub struct Registry {
     pub(crate) entries: BTreeMap<TypeInfo, Entry>,
     pub(crate) scopes_data: Vec<ScopeData>,
     pub(crate) indexed: Vec<(TypeInfo, Entry)>,
+    #[cfg(all(
+        feature = "std",
+        feature = "thread_safe",
+        not(feature = "lock-parking-lot"),
+        not(feature = "lock-spin")
+    ))]
+    lock_counts: [u32; 2],
 }
 
 struct CycleFrame<'a> {
@@ -337,12 +350,35 @@ impl Registry {
         not(feature = "lock-parking-lot"),
         not(feature = "lock-spin")
     ))]
-    pub(crate) fn dense_lock_keys(&self) -> Option<impl Iterator<Item = TypeId> + '_> {
+    pub(crate) fn index_locks(&mut self) {
+        let mut counts = [0, 0];
+        for entry in self.entries.values_mut() {
+            entry.set_lock_ids(&mut counts);
+        }
+        self.lock_counts = counts;
+    }
+
+    #[cfg(all(
+        feature = "std",
+        feature = "thread_safe",
+        not(feature = "lock-parking-lot"),
+        not(feature = "lock-spin")
+    ))]
+    pub(crate) fn dense_lock_keys(&self, is_async: bool) -> Option<(usize, impl Iterator<Item = TypeId> + '_)> {
         if self.indexed.is_empty() {
             return None;
         }
 
-        Some(self.entries.keys().map(|key| key.id))
+        let len = self.lock_counts[usize::from(is_async)] as usize;
+        let keys = self.entries.iter().filter_map(move |(key, entry)| {
+            let present = if is_async {
+                entry.selected.is_async()
+            } else {
+                entry.sync().is_some()
+            };
+            present.then_some(key.id)
+        });
+        Some((len, keys))
     }
 
     #[allow(clippy::similar_names)]

@@ -196,7 +196,7 @@ mod generic_per_type {
 
     impl<M> TypeKeyedLocks<M> {
         #[inline]
-        pub(crate) fn from_registry(_registry: &Registry) -> Self {
+        pub(super) fn for_registry(_registry: &Registry, _is_async: bool) -> Self {
             Self::default()
         }
     }
@@ -230,7 +230,7 @@ mod generic_per_type {
     not(feature = "lock-spin")
 ))]
 mod dense_per_type {
-    use alloc::{boxed::Box, collections::BTreeMap};
+    use alloc::{boxed::Box, collections::BTreeMap, vec::Vec};
     use core::{any::TypeId, ops::Deref};
     use std::sync::OnceLock;
 
@@ -287,18 +287,20 @@ mod dense_per_type {
 
     impl<M> TypeKeyedLocks<M> {
         #[inline]
-        pub(crate) fn from_registry(registry: &Registry) -> Self {
-            registry.dense_lock_keys().map_or_else(Self::default, Self::with_indexed_keys)
+        pub(super) fn for_registry(registry: &Registry, is_async: bool) -> Self {
+            registry
+                .dense_lock_keys(is_async)
+                .map_or_else(Self::default, |(len, keys)| Self::with_indexed_keys(len, keys))
         }
 
-        // Keys are unique TypeIds in frozen registry order.
-        pub(crate) fn with_indexed_keys(keys: impl Iterator<Item = TypeId>) -> Self {
-            let indexed: Box<[_]> = keys
-                .map(|type_id| IndexedLock {
-                    type_id,
-                    value: OnceLock::new(),
-                })
-                .collect();
+        // Keys are unique TypeIds for one execution kind in frozen registry order.
+        pub(crate) fn with_indexed_keys(len: usize, keys: impl Iterator<Item = TypeId>) -> Self {
+            let mut indexed = Vec::with_capacity(len);
+            indexed.extend(keys.map(|type_id| IndexedLock {
+                type_id,
+                value: OnceLock::new(),
+            }));
+            let indexed = indexed.into_boxed_slice();
             if indexed.is_empty() {
                 return Self::default();
             }
@@ -347,6 +349,9 @@ use backend::Mutex as SyncMutex;
 #[cfg(feature = "async")]
 use tokio::sync::Mutex as AsyncMutex;
 
+#[cfg(any(feature = "thread_safe", feature = "async"))]
+use crate::registry::Registry;
+
 #[cfg(all(
     feature = "std",
     feature = "thread_safe",
@@ -374,9 +379,23 @@ pub(crate) use generic::LocalLock;
 #[cfg(feature = "thread_safe")]
 pub(crate) type PerTypeSyncLocks = TypeKeyedLocks<SyncMutex<()>>;
 
+#[cfg(feature = "thread_safe")]
+impl PerTypeSyncLocks {
+    pub(crate) fn from_registry(registry: &Registry) -> Self {
+        Self::for_registry(registry, false)
+    }
+}
+
 /// Async per-type instantiation locks.
 #[cfg(feature = "async")]
 pub(crate) type PerTypeAsyncLocks = TypeKeyedLocks<AsyncMutex<()>>;
+
+#[cfg(feature = "async")]
+impl PerTypeAsyncLocks {
+    pub(crate) fn from_registry(registry: &Registry) -> Self {
+        Self::for_registry(registry, true)
+    }
+}
 
 #[cfg(all(
     test,

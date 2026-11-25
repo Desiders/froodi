@@ -22,7 +22,7 @@ fn dense_locks_remain_lazy_and_shared_without_per_get_arc() {
         }
     }
 
-    let locks = TypeKeyedLocks::<Lock>::with_indexed_keys([TypeId::of::<First>(), TypeId::of::<Second>()].into_iter());
+    let locks = TypeKeyedLocks::<Lock>::with_indexed_keys(2, [TypeId::of::<First>(), TypeId::of::<Second>()].into_iter());
     assert_eq!(INITIALIZATIONS.load(Ordering::Relaxed), 0);
 
     let shared = locks.clone();
@@ -40,14 +40,14 @@ fn dense_locks_remain_lazy_and_shared_without_per_get_arc() {
 #[test]
 #[should_panic(expected = "invalid lock index 1 for type froodi::lock::tests::First")]
 fn mismatched_index_panics() {
-    let locks = TypeKeyedLocks::<usize>::with_indexed_keys([TypeId::of::<First>(), TypeId::of::<Second>()].into_iter());
+    let locks = TypeKeyedLocks::<usize>::with_indexed_keys(2, [TypeId::of::<First>(), TypeId::of::<Second>()].into_iter());
     locks.get(&TypeInfo::of::<First>(), RegistrationId(1));
 }
 
 #[test]
 #[should_panic(expected = "invalid lock index 4294967295 for type froodi::lock::tests::First")]
 fn absent_index_panics() {
-    let locks = TypeKeyedLocks::<usize>::with_indexed_keys([TypeId::of::<First>()].into_iter());
+    let locks = TypeKeyedLocks::<usize>::with_indexed_keys(1, [TypeId::of::<First>()].into_iter());
     locks.get(&TypeInfo::of::<First>(), RegistrationId::UNINDEXED_LOCK);
 }
 

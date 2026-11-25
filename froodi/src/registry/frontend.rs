@@ -354,16 +354,14 @@ pub(crate) fn prepare(mut registry: RuntimeRegistry, cycles_checked: bool, plan:
         }
         ids.into_keys().collect()
     };
-    // Lock IDs are per TypeId, independent of sync/async graph indices.
+    // Assign lock IDs within each execution kind in registry order.
     #[cfg(all(
         feature = "std",
         feature = "thread_safe",
         not(feature = "lock-parking-lot"),
         not(feature = "lock-spin")
     ))]
-    for (index, entry) in registry.entries.values_mut().enumerate() {
-        entry.set_lock_id(RegistrationId(u32::try_from(index).expect("too many registrations")));
-    }
+    registry.index_locks();
     registry.indexed = keys
         .into_iter()
         .map(|key| {
@@ -417,7 +415,12 @@ mod once_lock_metadata_tests {
         let by_type = registry.get(&TypeInfo::of::<u32>()).unwrap().metadata.lock_id;
         let first_graph = registry.indexed[0].1.sync().unwrap().metadata.lock_id;
         let duplicate_graph = registry.indexed[1].1.sync().unwrap().metadata.lock_id;
-        let canonical = registry.entries.keys().position(|key| key.id == TypeInfo::of::<u32>().id).unwrap();
+        let canonical = registry
+            .dense_lock_keys(false)
+            .unwrap()
+            .1
+            .position(|id| id == TypeInfo::of::<u32>().id)
+            .unwrap();
         assert_eq!(by_type.index(), canonical);
         assert_eq!(first_graph.index(), canonical);
         assert_eq!(duplicate_graph.index(), canonical);
@@ -437,7 +440,7 @@ mod once_lock_metadata_tests {
         assert!(ptr_eq(&*parent, &*child));
         let legacy = Container::new(RuntimeRegistry::new_with_default_entries());
         assert!(legacy.inner.registry.indexed.is_empty());
-        assert!(legacy.inner.registry.dense_lock_keys().is_none());
+        assert!(legacy.inner.registry.dense_lock_keys(false).is_none());
         let implicit = legacy.get::<Container>().unwrap();
         let id = RegistrationId::UNINDEXED_LOCK;
         let outer = legacy.per_type_locks.get(&TypeInfo::of::<Container>(), id);
@@ -447,15 +450,32 @@ mod once_lock_metadata_tests {
 
     #[cfg(feature = "async")]
     #[test]
-    fn erased_mixed_sync_fallback_matches_async_and_indexed_metadata() {
-        let synchronous = registry! { provide(App, || Ok(7_u32)) }.into_registry();
-        let asynchronous = registry! { provide(App, async || Ok(9_u32)) }.into_registry();
+    fn mixed_registry_indexes_only_the_providers_for_each_lock_table() {
+        let synchronous = registry! {
+            provide(App, || Ok(7_u32)),
+            provide(App, || Ok(11_u64)),
+        }
+        .into_registry();
+        let asynchronous = registry! {
+            provide(App, async || Ok(9_u32)),
+            provide(App, async || Ok(true)),
+        }
+        .into_registry();
         let registry = prepare(registry! { extend(synchronous, asynchronous) }.into_registry(), false, None);
         let sync_id = registry.get(&TypeInfo::of::<u32>()).unwrap().metadata.lock_id.index();
         let async_id = registry.get_async(&TypeInfo::of::<u32>()).unwrap().metadata.lock_id.index();
-        assert_eq!(sync_id, async_id);
-        let dense_keys: Vec<_> = registry.dense_lock_keys().unwrap().collect();
-        assert_eq!(dense_keys[sync_id], TypeInfo::of::<u32>().id);
+        let (sync_count, sync_keys) = registry.dense_lock_keys(false).unwrap();
+        let (async_count, async_keys) = registry.dense_lock_keys(true).unwrap();
+        let sync_keys: Vec<_> = sync_keys.collect();
+        let async_keys: Vec<_> = async_keys.collect();
+        assert_eq!(sync_count, sync_keys.len());
+        assert_eq!(async_count, async_keys.len());
+        assert_eq!(sync_keys[sync_id], TypeInfo::of::<u32>().id);
+        assert_eq!(async_keys[async_id], TypeInfo::of::<u32>().id);
+        assert!(sync_keys.contains(&TypeInfo::of::<u64>().id));
+        assert!(async_keys.contains(&TypeInfo::of::<bool>().id));
+        assert!(!sync_keys.contains(&TypeInfo::of::<bool>().id));
+        assert!(!async_keys.contains(&TypeInfo::of::<u64>().id));
         let indexed = registry.indexed.iter().find(|(key, _)| key.id == TypeInfo::of::<u32>().id).unwrap();
         assert_eq!(indexed.1.sync().unwrap().metadata.lock_id.index(), sync_id);
     }
