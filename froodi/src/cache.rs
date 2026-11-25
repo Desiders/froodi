@@ -34,8 +34,7 @@ impl Cache {
 
     #[inline]
     pub(crate) fn extend_context(&mut self, context: &Context) {
-        self.map
-            .extend(context.map.iter().map(|(&type_id, value)| (type_id, value.clone())));
+        self.map.extend_from(&context.map);
     }
 
     #[inline]
@@ -129,7 +128,7 @@ mod tests {
     }
 
     #[test]
-    fn child_clones_map_but_not_resolved() {
+    fn child_keeps_a_cache_snapshot_and_starts_with_no_resolved_values() {
         let mut parent = Cache::new();
         let id = TypeId::of::<Foo>();
         let value = RcThreadSafety::new(Foo(7));
@@ -138,18 +137,22 @@ mod tests {
         parent.push_resolved(resolved_of(Bar(1)));
         assert_eq!(parent.resolved.0.len(), 1);
 
-        let child = parent.child();
+        let mut child = parent.child();
+        parent.insert_rc(id, RcThreadSafety::new(Foo(8)));
 
-        // child() clones the map but resets the resolved set.
         let got = child.get::<Foo>(&id).expect("child should see parent's cached value");
         assert!(RcThreadSafety::ptr_eq(&value, &got));
+
+        child.insert_rc(id, RcThreadSafety::new(Foo(9)));
+        assert_eq!(*parent.get::<Foo>(&id).unwrap(), Foo(8));
+        assert_eq!(*child.get::<Foo>(&id).unwrap(), Foo(9));
 
         assert_eq!(child.resolved.0.len(), 0);
         assert_eq!(parent.resolved.0.len(), 1);
     }
 
     #[test]
-    fn extend_context_copies_entries() {
+    fn extend_context_keeps_a_snapshot_of_entries() {
         let mut ctx = Context::new();
         assert!(ctx.insert(Bar(5)).is_none());
 
@@ -158,6 +161,7 @@ mod tests {
         assert!(cache.get::<Bar>(&id).is_none());
 
         cache.extend_context(&ctx);
+        ctx.insert(Bar(6));
 
         let got = cache.get::<Bar>(&id).expect("context entry must be present after extend_context");
         assert_eq!(*got, Bar(5));

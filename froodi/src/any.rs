@@ -6,7 +6,7 @@ use core::{
     hash::{Hash, Hasher},
 };
 
-use crate::utils::thread_safety::RcAnyThreadSafety;
+use crate::utils::thread_safety::{RcAnyThreadSafety, RcThreadSafety};
 
 #[derive(Debug, Clone)]
 pub struct TypeInfo {
@@ -112,7 +112,45 @@ impl TypeInfo {
     }
 }
 
-pub(crate) type Map = BTreeMap<TypeId, RcAnyThreadSafety>;
+#[derive(Clone)]
+pub(crate) struct Map(Option<RcThreadSafety<BTreeMap<TypeId, RcAnyThreadSafety>>>);
+
+impl Map {
+    #[inline]
+    pub(crate) const fn new() -> Self {
+        Self(None)
+    }
+
+    #[inline]
+    pub(crate) fn get(&self, type_id: &TypeId) -> Option<&RcAnyThreadSafety> {
+        self.0.as_ref()?.get(type_id)
+    }
+
+    #[inline]
+    pub(crate) fn insert(&mut self, type_id: TypeId, value: RcAnyThreadSafety) -> Option<RcAnyThreadSafety> {
+        let entries = self.0.get_or_insert_with(|| RcThreadSafety::new(BTreeMap::new()));
+        RcThreadSafety::make_mut(entries).insert(type_id, value)
+    }
+
+    pub(crate) fn extend_from(&mut self, other: &Self) {
+        let Some(other) = &other.0 else {
+            return;
+        };
+
+        if let Some(entries) = &mut self.0 {
+            if !RcThreadSafety::ptr_eq(entries, other) {
+                RcThreadSafety::make_mut(entries).extend(other.iter().map(|(&type_id, value)| (type_id, value.clone())));
+            }
+        } else {
+            self.0 = Some(other.clone());
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn len(&self) -> usize {
+        self.0.as_deref().map_or(0, BTreeMap::len)
+    }
+}
 
 #[cfg(test)]
 mod tests {
