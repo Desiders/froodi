@@ -16,9 +16,9 @@ use crate::{
     errors::{InstantiateErrorKind, InstantiatorErrorKind},
     utils::{
         future::BoxFuture,
-        thread_safety::{SendSafety, SyncSafety},
+        thread_safety::{RcAnyThreadSafety, RcThreadSafety, SendSafety, SyncSafety},
     },
-    ResolveErrorKind,
+    ResolveErrorKind, TypeInfo,
 };
 
 pub trait Instantiator<Deps>: Clone + 'static
@@ -139,8 +139,10 @@ impl From<BoxedCloneInstantiator<ResolveErrorKind, InstantiateErrorKind>> for Re
     }
 }
 
-pub(super) type ErasedResult = Result<Box<dyn Any>, InstantiatorErrorKind<ResolveErrorKind, InstantiateErrorKind>>;
+type ErasedError = InstantiatorErrorKind<ResolveErrorKind, InstantiateErrorKind>;
+type ErasedResult = Result<Box<dyn Any>, ErasedError>;
 pub(super) type InstantiatorFuture<'a> = BoxFuture<'a, ErasedResult>;
+type SharedFuture<'a> = BoxFuture<'a, Result<RcAnyThreadSafety, ErasedError>>;
 
 impl RegistrationInstantiator {
     #[allow(clippy::manual_async_fn)]
@@ -161,6 +163,42 @@ impl RegistrationInstantiator {
             Self::Linked(inst) => inst.call(container),
             Self::Runtime(_) => Box::pin(self.call(container)),
         }
+    }
+
+    pub(super) async fn call_shared<Dep: SendSafety + SyncSafety + 'static>(
+        &self,
+        container: &Container,
+        expected: &TypeInfo,
+    ) -> Result<RcThreadSafety<Dep>, ResolveErrorKind> {
+        match self {
+            Self::Linked(inst) => {
+                let value = inst.call_shared(container).await.map_err(resolve_instantiation_error)?;
+                value.downcast().map_err(|actual| incorrect_type(expected, &*actual))
+            }
+            Self::Runtime(_) => {
+                let value = downcast_instantiation::<Dep>(self.call(container).await, expected)?;
+                Ok(RcThreadSafety::new(*value))
+            }
+        }
+    }
+}
+
+pub(super) fn downcast_instantiation<Dep: 'static>(output: ErasedResult, expected: &TypeInfo) -> Result<Box<Dep>, ResolveErrorKind> {
+    let value = output.map_err(resolve_instantiation_error)?;
+    value.downcast().map_err(|actual| incorrect_type(expected, &*actual))
+}
+
+fn resolve_instantiation_error(error: ErasedError) -> ResolveErrorKind {
+    ResolveErrorKind::Instantiator(match error {
+        InstantiatorErrorKind::Deps(error) => InstantiatorErrorKind::Deps(Box::new(error)),
+        InstantiatorErrorKind::Factory(error) => InstantiatorErrorKind::Factory(error),
+    })
+}
+
+fn incorrect_type(expected: &TypeInfo, actual: &dyn Any) -> ResolveErrorKind {
+    ResolveErrorKind::IncorrectType {
+        expected: expected.clone(),
+        actual: TypeInfo::of_val(actual),
     }
 }
 

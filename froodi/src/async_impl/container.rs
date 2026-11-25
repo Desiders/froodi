@@ -11,7 +11,7 @@ use core::{
 use tracing::{debug, error, trace, warn};
 
 use super::{
-    instantiator::{ErasedResult, InstantiatorFuture},
+    instantiator::{downcast_instantiation, InstantiatorFuture},
     service::Service as _,
 };
 #[cfg(feature = "thread_safe")]
@@ -22,7 +22,7 @@ use crate::{
     cache::{Cache, Resolved},
     container::{BoxedContainerInner as BoxedSyncContainerInner, Container as SyncContainer, ContainerInner as SyncContainerInner},
     context::Context,
-    errors::{InstantiatorErrorKind, ResolveErrorKind, ScopeErrorKind, ScopeWithErrorKind},
+    errors::{ResolveErrorKind, ScopeErrorKind, ScopeWithErrorKind},
     lock::{LocalLock, PerTypeAsyncLocks},
     registry::{AsyncInstantiatorData as InstantiatorData, RegistrationMetadata, Registry, Selection},
     scope::{Scope, ScopeData, ScopeDataWithChildScopesData},
@@ -214,8 +214,8 @@ impl Container {
                 return Ok(dependency);
             }
 
-            let dependency = match downcast_instantiation::<Dep>(instantiator.call(self).await, &type_info) {
-                Ok(dependency) => RcThreadSafety::new(*dependency),
+            let dependency = match instantiator.call_shared::<Dep>(self, &type_info).await {
+                Ok(dependency) => dependency,
                 Err(err) => {
                     error!(dependency = dep_name, scope = scope_name, error = %err, "Failed to resolve dependency");
                     return Err(err);
@@ -357,17 +357,6 @@ impl Container {
                 }
             }
         })
-    }
-}
-
-fn downcast_instantiation<Dep: 'static>(output: ErasedResult, expected: &TypeInfo) -> Result<Box<Dep>, ResolveErrorKind> {
-    match output {
-        Ok(dependency) => dependency.downcast().map_err(|actual| ResolveErrorKind::IncorrectType {
-            expected: expected.clone(),
-            actual: TypeInfo::of_val(&*actual),
-        }),
-        Err(InstantiatorErrorKind::Deps(err)) => Err(ResolveErrorKind::Instantiator(InstantiatorErrorKind::Deps(Box::new(err)))),
-        Err(InstantiatorErrorKind::Factory(err)) => Err(ResolveErrorKind::Instantiator(InstantiatorErrorKind::Factory(err))),
     }
 }
 
