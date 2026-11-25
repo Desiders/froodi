@@ -1,5 +1,5 @@
 use alloc::collections::vec_deque::VecDeque;
-use core::mem;
+use core::{any::TypeId, mem};
 
 use crate::{
     any::{Map, TypeInfo},
@@ -26,16 +26,16 @@ impl Cache {
     #[inline]
     pub(crate) fn insert_rc<T: SendSafety + SyncSafety + 'static>(
         &mut self,
-        type_info: TypeInfo,
+        type_id: TypeId,
         value: RcThreadSafety<T>,
     ) -> Option<RcThreadSafety<T>> {
-        self.map.insert(type_info, value).and_then(|boxed| boxed.downcast().ok())
+        self.map.insert(type_id, value).and_then(|boxed| boxed.downcast().ok())
     }
 
     #[inline]
     pub(crate) fn extend_context(&mut self, context: &Context) {
         self.map
-            .extend(context.map.iter().map(|(type_info, value)| (type_info.clone(), value.clone())));
+            .extend(context.map.iter().map(|(&type_id, value)| (type_id, value.clone())));
     }
 
     #[inline]
@@ -48,8 +48,8 @@ impl Cache {
     }
 
     #[must_use]
-    pub(crate) fn get<T: SendSafety + SyncSafety + 'static>(&self, type_info: &TypeInfo) -> Option<RcThreadSafety<T>> {
-        self.map.get(type_info).and_then(|boxed| boxed.clone().downcast().ok())
+    pub(crate) fn get<T: SendSafety + SyncSafety + 'static>(&self, type_id: &TypeId) -> Option<RcThreadSafety<T>> {
+        self.map.get(type_id).and_then(|boxed| boxed.clone().downcast().ok())
     }
 
     #[inline]
@@ -86,7 +86,7 @@ impl ResolvedSet {
 #[cfg(test)]
 mod tests {
     extern crate std;
-    use super::{Cache, Resolved};
+    use super::{Cache, Resolved, TypeId};
     use crate::{any::TypeInfo, utils::thread_safety::RcThreadSafety, Context};
 
     #[derive(Debug, PartialEq, Eq)]
@@ -105,25 +105,25 @@ mod tests {
     #[test]
     fn new_get_insert_and_replace() {
         let mut cache = Cache::new();
-        let ti = TypeInfo::of::<Foo>();
+        let id = TypeId::of::<Foo>();
 
-        assert!(cache.get::<Foo>(&ti).is_none());
+        assert!(cache.get::<Foo>(&id).is_none());
 
         let first = RcThreadSafety::new(Foo(1));
-        let prev = cache.insert_rc::<Foo>(ti.clone(), first.clone());
+        let prev = cache.insert_rc::<Foo>(id, first.clone());
         assert!(prev.is_none());
 
         // get returns the same Arc (pointer identity).
-        let got = cache.get::<Foo>(&ti).expect("value must be present after insert");
+        let got = cache.get::<Foo>(&id).expect("value must be present after insert");
         assert!(RcThreadSafety::ptr_eq(&first, &got));
         assert_eq!(*got, Foo(1));
 
         let second = RcThreadSafety::new(Foo(2));
-        let returned = cache.insert_rc::<Foo>(ti.clone(), second.clone()).expect("previous value expected");
+        let returned = cache.insert_rc::<Foo>(id, second.clone()).expect("previous value expected");
         assert!(RcThreadSafety::ptr_eq(&first, &returned));
         assert_eq!(*returned, Foo(1));
 
-        let got2 = cache.get::<Foo>(&ti).expect("replacement must be present");
+        let got2 = cache.get::<Foo>(&id).expect("replacement must be present");
         assert!(RcThreadSafety::ptr_eq(&second, &got2));
         assert_eq!(*got2, Foo(2));
     }
@@ -131,9 +131,9 @@ mod tests {
     #[test]
     fn child_clones_map_but_not_resolved() {
         let mut parent = Cache::new();
-        let ti = TypeInfo::of::<Foo>();
+        let id = TypeId::of::<Foo>();
         let value = RcThreadSafety::new(Foo(7));
-        parent.insert_rc::<Foo>(ti.clone(), value.clone());
+        parent.insert_rc::<Foo>(id, value.clone());
 
         parent.push_resolved(resolved_of(Bar(1)));
         assert_eq!(parent.resolved.0.len(), 1);
@@ -141,7 +141,7 @@ mod tests {
         let child = parent.child();
 
         // child() clones the map but resets the resolved set.
-        let got = child.get::<Foo>(&ti).expect("child should see parent's cached value");
+        let got = child.get::<Foo>(&id).expect("child should see parent's cached value");
         assert!(RcThreadSafety::ptr_eq(&value, &got));
 
         assert_eq!(child.resolved.0.len(), 0);
@@ -154,12 +154,12 @@ mod tests {
         assert!(ctx.insert(Bar(5)).is_none());
 
         let mut cache = Cache::new();
-        let ti = TypeInfo::of::<Bar>();
-        assert!(cache.get::<Bar>(&ti).is_none());
+        let id = TypeId::of::<Bar>();
+        assert!(cache.get::<Bar>(&id).is_none());
 
         cache.extend_context(&ctx);
 
-        let got = cache.get::<Bar>(&ti).expect("context entry must be present after extend_context");
+        let got = cache.get::<Bar>(&id).expect("context entry must be present after extend_context");
         assert_eq!(*got, Bar(5));
     }
 

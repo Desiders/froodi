@@ -150,7 +150,7 @@ impl Container {
                 Some(future) => future,
                 slot @ None => {
                     let type_info = TypeInfo::of::<Dep>();
-                    if let Some(dependency) = { self.inner.cache.read().get(&type_info) } {
+                    if let Some(dependency) = { self.inner.cache.read().get(&type_info.id) } {
                         debug!("Found in cache");
                         return Poll::Ready(Ok(dependency));
                     }
@@ -192,7 +192,7 @@ impl Container {
                 let parent = self.ancestor(dep_priority);
                 let dependency = parent.get_selected::<Dep>(Selection::Indexed(Some(data))).await?;
                 if config.cache_provides {
-                    self.inner.cache.write().insert_rc(type_info, dependency.clone());
+                    self.inner.cache.write().insert_rc(type_info.id, dependency.clone());
                 }
                 return Ok(dependency);
             }
@@ -209,7 +209,7 @@ impl Container {
             let inst_call_lock = self.per_type_locks.get_for(&type_info, &data.metadata);
             let _guard = inst_call_lock.lock().await;
 
-            if let Some(dependency) = { self.inner.cache.read().get(&type_info) } {
+            if let Some(dependency) = { self.inner.cache.read().get(&type_info.id) } {
                 debug!("Found in cache after lock");
                 return Ok(dependency);
             }
@@ -224,7 +224,7 @@ impl Container {
             if config.cache_provides || finalizer.is_some() {
                 let mut cache = self.inner.cache.write();
                 if config.cache_provides {
-                    cache.insert_rc(type_info.clone(), dependency.clone());
+                    cache.insert_rc(type_info.id, dependency.clone());
                     debug!("Cached");
                 }
                 if finalizer.is_some() {

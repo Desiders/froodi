@@ -112,7 +112,7 @@ impl TypeInfo {
     }
 }
 
-pub(crate) type Map = BTreeMap<TypeInfo, RcAnyThreadSafety>;
+pub(crate) type Map = BTreeMap<TypeId, RcAnyThreadSafety>;
 
 #[cfg(test)]
 mod tests {

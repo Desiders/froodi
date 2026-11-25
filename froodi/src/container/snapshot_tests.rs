@@ -5,10 +5,10 @@ use super::Container;
 use crate::{
     registry, Context,
     DefaultScope::{App, Runtime},
-    TypeInfo,
 };
 
 use std::{
+    any::TypeId,
     sync::{mpsc, Arc, Barrier},
     thread,
     time::Duration,
@@ -61,7 +61,7 @@ fn ordinary_cache_read_and_write_do_not_wait_for_the_snapshot_gate() {
             .inner
             .cache
             .write()
-            .insert_rc(TypeInfo::of::<Value>(), replacement.clone());
+            .insert_rc(TypeId::of::<Value>(), replacement.clone());
         let second = worker_parent.get::<Value>().unwrap();
         send.send((first.0, previous.unwrap().0, Arc::ptr_eq(&replacement, &second)))
             .unwrap();
@@ -118,7 +118,7 @@ fn concurrent_snapshots_keep_identity_while_a_writer_replaces_the_parent_value()
                 .inner
                 .cache
                 .write()
-                .insert_rc(TypeInfo::of::<Value>(), writer_value.clone());
+                .insert_rc(TypeId::of::<Value>(), writer_value.clone());
             drop(previous);
         }
     }));

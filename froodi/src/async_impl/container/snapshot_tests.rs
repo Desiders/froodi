@@ -4,10 +4,10 @@ use super::Container;
 use crate::{
     registry, Context,
     DefaultScope::{App, Runtime},
-    TypeInfo,
 };
 
 use std::{
+    any::TypeId,
     sync::{mpsc, Arc},
     thread,
     time::Duration,
@@ -37,7 +37,7 @@ fn async_container_snapshots_share_existing_readers_in_both_caches() {
     let (send, receive) = mpsc::channel();
     let worker = thread::spawn(move || {
         let request = worker_parent.enter_build().unwrap();
-        let asynchronous = request.inner.cache.read().get::<Value>(&TypeInfo::of::<Value>()).unwrap();
+        let asynchronous = request.inner.cache.read().get::<Value>(&TypeId::of::<Value>()).unwrap();
         let synchronous = request.sync.get::<Value>().unwrap();
         send.send((
             asynchronous.0,
@@ -65,7 +65,7 @@ fn async_descendant_and_embedded_sync_cache_have_independent_parent_gates() {
     let (send, receive) = mpsc::channel();
     let worker = thread::spawn(move || {
         let action = request.enter_build().unwrap();
-        let asynchronous = action.inner.cache.read().get::<Value>(&TypeInfo::of::<Value>()).unwrap();
+        let asynchronous = action.inner.cache.read().get::<Value>(&TypeId::of::<Value>()).unwrap();
         let synchronous = action.sync.get::<Value>().unwrap();
         send.send((Arc::ptr_eq(&expected, &asynchronous), Arc::ptr_eq(&expected, &synchronous)))
             .unwrap();

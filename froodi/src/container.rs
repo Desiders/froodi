@@ -128,7 +128,7 @@ impl Container {
         let dep_name = type_info.name;
         let scope_name = self.inner.scope_data.name;
 
-        if let Some(dependency) = { self.inner.cache.read().get(&type_info) } {
+        if let Some(dependency) = { self.inner.cache.read().get(&type_info.id) } {
             debug!("Found in cache");
             return Ok(dependency);
         }
@@ -163,7 +163,7 @@ impl Container {
             return match parent.get_selected::<Dep>(Selection::Indexed(Some(data))) {
                 Ok(dependency) => {
                     if config.cache_provides {
-                        self.inner.cache.write().insert_rc(type_info, dependency.clone());
+                        self.inner.cache.write().insert_rc(type_info.id, dependency.clone());
                     }
                     Ok(dependency)
                 }
@@ -187,7 +187,7 @@ impl Container {
         let _guard = inst_call_lock.lock();
 
         #[cfg(feature = "thread_safe")]
-        if let Some(dependency) = { self.inner.cache.read().get(&type_info) } {
+        if let Some(dependency) = { self.inner.cache.read().get(&type_info.id) } {
             debug!("Found in cache after lock");
             return Ok(dependency);
         }
@@ -201,7 +201,7 @@ impl Container {
                     if cache_provides || has_finalizer {
                         let mut cache = self.inner.cache.write();
                         if cache_provides {
-                            cache.insert_rc(type_info.clone(), dependency.clone());
+                            cache.insert_rc(type_info.id, dependency.clone());
                             debug!("Cached");
                         }
                         if has_finalizer {
