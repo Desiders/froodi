@@ -171,31 +171,6 @@ impl Entry {
         }
     }
 
-    #[cfg(all(
-        feature = "std",
-        feature = "thread_safe",
-        not(feature = "lock-parking-lot"),
-        not(feature = "lock-spin")
-    ))]
-    fn set_lock_ids(&mut self, next: &mut [u32; 2]) {
-        fn take_id(next: &mut u32) -> RegistrationId {
-            let id = RegistrationId(*next);
-            *next = next.checked_add(1).expect("too many registrations");
-            id
-        }
-
-        match &mut self.selected {
-            Selected::Sync(data) => data.metadata.lock_id = take_id(&mut next[0]),
-            #[cfg(feature = "async")]
-            Selected::Async(data) => data.metadata.lock_id = take_id(&mut next[1]),
-            Selected::Missing => (),
-        }
-        #[cfg(feature = "async")]
-        if let Some(data) = &mut self.sync {
-            data.metadata.lock_id = take_id(&mut next[0]);
-        }
-    }
-
     pub(crate) fn sync(&self) -> Option<&InstantiatorData> {
         match &self.selected {
             Selected::Sync(data) => Some(data),
@@ -334,7 +309,19 @@ pub struct Registry {
         not(feature = "lock-parking-lot"),
         not(feature = "lock-spin")
     ))]
-    lock_counts: [u32; 2],
+    lock_counts: LockCounts,
+}
+
+#[cfg(all(
+    feature = "std",
+    feature = "thread_safe",
+    not(feature = "lock-parking-lot"),
+    not(feature = "lock-spin")
+))]
+#[derive(Clone, Default)]
+struct LockCounts {
+    sync: u32,
+    asynchronous: u32,
 }
 
 struct CycleFrame<'a> {
@@ -351,9 +338,24 @@ impl Registry {
         not(feature = "lock-spin")
     ))]
     pub(crate) fn index_locks(&mut self) {
-        let mut counts = [0, 0];
+        fn next_id(count: &mut u32) -> RegistrationId {
+            let id = RegistrationId(*count);
+            *count = count.checked_add(1).expect("too many registrations");
+            id
+        }
+
+        let mut counts = LockCounts::default();
         for entry in self.entries.values_mut() {
-            entry.set_lock_ids(&mut counts);
+            match &mut entry.selected {
+                Selected::Sync(data) => data.metadata.lock_id = next_id(&mut counts.sync),
+                #[cfg(feature = "async")]
+                Selected::Async(data) => data.metadata.lock_id = next_id(&mut counts.asynchronous),
+                Selected::Missing => (),
+            }
+            #[cfg(feature = "async")]
+            if let Some(data) = &mut entry.sync {
+                data.metadata.lock_id = next_id(&mut counts.sync);
+            }
         }
         self.lock_counts = counts;
     }
@@ -369,7 +371,11 @@ impl Registry {
             return None;
         }
 
-        let len = self.lock_counts[usize::from(is_async)] as usize;
+        let len = if is_async {
+            self.lock_counts.asynchronous
+        } else {
+            self.lock_counts.sync
+        };
         let keys = self.entries.iter().filter_map(move |(key, entry)| {
             let present = if is_async {
                 entry.selected.is_async()
@@ -378,7 +384,7 @@ impl Registry {
             };
             present.then_some(key.id)
         });
-        Some((len, keys))
+        Some((len as usize, keys))
     }
 
     #[allow(clippy::similar_names)]

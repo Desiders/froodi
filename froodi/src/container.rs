@@ -1,3 +1,5 @@
+mod close;
+
 #[cfg(all(test, feature = "thread_safe"))]
 mod snapshot_tests;
 
@@ -18,7 +20,6 @@ use crate::{
     lock::LocalLock,
     registry::{InstantiatorData, RegistrationMetadata, Registry, Selection},
     scope::{Scope, ScopeData, ScopeDataWithChildScopesData},
-    service::Service as _,
     utils::thread_safety::{RcThreadSafety, SendSafety, SyncSafety},
 };
 
@@ -307,15 +308,6 @@ impl Container {
                 Err(ResolveErrorKind::Instantiator(InstantiatorErrorKind::Factory(err)))
             }
         }
-    }
-
-    /// Closes the container, calling finalizers for resolved dependencies in LIFO order.
-    ///
-    /// # Warning
-    /// This method can be called multiple times, but it will only call finalizers for dependencies that were resolved since the last call
-    #[inline]
-    pub fn close(&self) {
-        self.inner.close();
     }
 }
 
@@ -667,47 +659,6 @@ impl ContainerInner {
     #[cfg(test)]
     fn child_scopes_data(&self) -> &[ScopeData] {
         &self.registry.scopes_data[self.child_scopes_start..]
-    }
-
-    #[inline]
-    #[allow(clippy::missing_panics_doc)]
-    fn close(&self) {
-        self.close_with_parent_flag(self.close_parent);
-    }
-
-    pub(crate) fn close_with_parent_flag(&self, close_parent: bool) {
-        let mut resolved_set = { self.cache.write().take_resolved_set() };
-        while let Some(Resolved { type_info, dependency }) = resolved_set.0.pop_back() {
-            let InstantiatorData { finalizer, .. } = self
-                .registry
-                .get(&type_info)
-                .expect("Instantiator should be present for resolved type");
-
-            if let Some(finalizer) = finalizer {
-                let _ = finalizer.clone().call(dependency);
-                debug!(%type_info, "Finalizer called");
-            }
-        }
-
-        // We need to clear cache and fill it with the context as in start of the container usage
-        #[allow(clippy::assigning_clones)]
-        {
-            self.cache.write().map = self.context.map.clone();
-        }
-
-        if close_parent {
-            if let Some(parent) = &self.parent {
-                parent.close();
-                debug!("Parent container closed");
-            }
-        }
-    }
-}
-
-impl Drop for ContainerInner {
-    fn drop(&mut self) {
-        self.close();
-        debug!(scope = %self.scope_data, "Container closed on drop");
     }
 }
 

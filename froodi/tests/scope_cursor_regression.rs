@@ -63,7 +63,10 @@ async fn async_sibling_requests_preserve_context_and_skipped_parent_cleanup() {
         }),
         provide(Session, async |_: Inject<AppValue>| Ok(SessionValue), finalizer = move |_| {
             let events = session_events.clone();
-            async move { events.lock().unwrap().push("session"); }
+            async move {
+                yield_now().await;
+                events.lock().unwrap().push("session");
+            }
         }),
         provide(Session, || Ok(SyncSessionValue), finalizer = move |_| sync_session_events.lock().unwrap().push("sync session")),
         provide(Request, declare::<Label>()),
@@ -86,11 +89,14 @@ async fn async_sibling_requests_preserve_context_and_skipped_parent_cleanup() {
     assert_eq!(right.get::<RequestValue>().await.unwrap().0, "right");
     let mut closing = left.close();
     poll_fn(|cx| {
-        assert!(Pin::new(&mut closing).poll(cx).is_pending());
+        let mut pinned = Pin::new(&mut closing);
+        assert!(pinned.as_mut().poll(cx).is_pending());
+        assert!(events.lock().unwrap().is_empty());
+        assert!(pinned.poll(cx).is_pending());
+        assert_eq!(*events.lock().unwrap(), ["left", "sync session"]);
         Poll::Ready(())
     })
     .await;
-    assert!(events.lock().unwrap().is_empty());
     closing.await;
     assert_eq!(*events.lock().unwrap(), ["left", "sync session", "session"]);
     assert_eq!(right.get::<RequestValue>().await.unwrap().0, "right");
