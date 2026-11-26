@@ -11,10 +11,13 @@ use alloc::{
 
 use super::CYCLE_CHECKS;
 #[cfg(feature = "async")]
-use crate::async_impl::{Container as AsyncContainer, Instantiator as AsyncInstantiator};
+use crate::{
+    async_impl::{Container as AsyncContainer, Instantiator as AsyncInstantiator},
+    registry::Selected,
+};
 use crate::{
     declare,
-    errors::InstantiatorErrorKind,
+    errors::{InstantiatorErrorKind, ValidationErrorKind},
     instance,
     instantiator::RegistrationInstantiator,
     registry,
@@ -24,7 +27,7 @@ use crate::{
     DefaultScope::{App, Request},
     Dependency, DependencyResolver, Inject, InjectCustom, InjectTransient, InstantiateErrorKind, Instantiator, ResolveErrorKind, TypeInfo,
 };
-use core::{cell::Cell, iter::once, ptr::eq as ptr_eq};
+use core::{cell::Cell, iter::once, ptr};
 use std::sync::Mutex;
 
 #[cfg(feature = "async")]
@@ -226,7 +229,7 @@ fn fixed_plan_keeps_linked_edge_storage() {
     let RegistrationInstantiator::Linked(executor) = &registry.get(&TypeInfo::of::<Combined>()).unwrap().instantiator else {
         panic!("expected linked instantiator");
     };
-    assert!(ptr_eq(&*edges, &*executor.edges));
+    assert!(ptr::eq(&*edges, &*executor.edges));
 }
 
 #[test]
@@ -1497,8 +1500,6 @@ fn linked_metadata_keeps_last_alias_for_repeated_dependency_type() {
 
 #[test]
 fn runtime_validation_preserves_cycle_path_and_dependency_alias_names() {
-    use crate::errors::ValidationErrorKind;
-
     struct A;
     struct B;
     struct C;
@@ -1555,8 +1556,6 @@ fn runtime_validation_keeps_missing_dependency_boundaries_valid() {
 #[cfg(feature = "async")]
 #[test]
 fn runtime_cycle_validation_keeps_sync_and_async_views_distinct() {
-    use crate::{errors::ValidationErrorKind, registry::Selected};
-
     struct Value;
 
     let mut native = native_registry! { provide(App, || Ok::<_, InstantiateErrorKind>(Value)) };
@@ -1580,8 +1579,6 @@ fn runtime_cycle_validation_keeps_sync_and_async_views_distinct() {
 
 #[test]
 fn runtime_cycle_diagnostic_preserves_the_prefix_and_first_incoming_alias() {
-    use crate::errors::ValidationErrorKind;
-
     struct A;
     struct B;
     struct C;

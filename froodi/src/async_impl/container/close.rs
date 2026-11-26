@@ -4,9 +4,9 @@ use core::{
     pin::Pin,
     task::{ready, Context, Poll},
 };
-use tracing::debug;
+use tracing::{debug, warn};
 
-use super::{Container, ContainerInner, SyncContainerInner};
+use super::{Container, ContainerInner, InstantiatorData, SyncContainerInner};
 use crate::{
     async_impl::{finalizer::BoxedCloneFinalizer, service::Service as _},
     cache::{Resolved, ResolvedSet},
@@ -21,11 +21,11 @@ impl Container {
     pub fn close(&self) -> impl Future<Output = ()> + SendSafety + '_ {
         let mut suspended = None;
         poll_fn(move |cx| match &mut suspended {
-            slot @ None => {
+            None => {
                 let mut closing = Closing::new(self);
                 let result = Pin::new(&mut closing).poll(cx);
                 if result.is_pending() {
-                    *slot = Some(Box::pin(closing));
+                    suspended = Some(Box::pin(closing));
                 }
                 result
             }
@@ -129,21 +129,35 @@ impl Future for AsyncClosing<'_> {
             let Some(Resolved { type_info, dependency }) = remaining.0.pop_back() else {
                 break;
             };
-            let data = this
+            let InstantiatorData { finalizer, .. } = this
                 .scope
                 .registry
                 .get_async(&type_info)
                 .expect("Instantiator should be present for resolved type");
-            let Some(finalizer) = &data.finalizer else { continue };
-            let mut service = finalizer.clone();
-            this.running = Some(RunningFinalizer {
-                future: service.call(dependency),
-                _service: service,
-                type_name: type_info.name,
-            });
+            if let Some(finalizer) = finalizer {
+                let mut service = finalizer.clone();
+                this.running = Some(RunningFinalizer {
+                    future: service.call(dependency),
+                    _service: service,
+                    type_name: type_info.name,
+                });
+            }
         }
         this.remaining = None;
         this.scope.cache.write().map.clone_from(&this.scope.context.map);
         Poll::Ready(())
+    }
+}
+
+impl Drop for ContainerInner {
+    fn drop(&mut self) {
+        let pending = self.cache.get_mut().resolved.0.len();
+        if pending > 0 {
+            warn!(
+                scope = %self.scope_data,
+                pending,
+                "async Container dropped without close().await; {pending} finalizer(s) will not run",
+            );
+        }
     }
 }

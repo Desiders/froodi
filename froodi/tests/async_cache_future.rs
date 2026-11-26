@@ -17,7 +17,7 @@ fn assert_unpin(_: &(impl Future + Unpin)) {}
 fn assert_send(_: &(impl Future + Send)) {}
 
 #[test]
-fn resolution_futures_keep_unpin_even_for_non_unpin_values() {
+fn resolution_futures_keep_unpin() {
     let container = Container::new(registry! { provide(App, async || Ok(PhantomPinned)) });
     let cached = container.get::<PhantomPinned>();
     let transient = container.get_transient::<PhantomPinned>();
@@ -31,7 +31,7 @@ fn resolution_futures_keep_unpin_even_for_non_unpin_values() {
 }
 
 #[tokio::test]
-async fn cached_resolution_observes_cache_when_polled_not_when_created() {
+async fn cached_resolution_reads_cache_on_first_poll() {
     let calls = Arc::new(AtomicUsize::new(0));
     let factory_calls = calls.clone();
     let container = Container::new(registry! { provide(App, move || {
@@ -53,7 +53,7 @@ impl Wake for NoopWake {
 }
 
 #[test]
-fn cancelling_cold_resolution_releases_the_instantiation_lock() {
+fn cancelling_get_releases_instantiation_lock() {
     let calls = Arc::new(AtomicUsize::new(0));
     let factory_calls = calls.clone();
     let container = Container::new(registry! { provide(App, move || {

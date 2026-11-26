@@ -22,16 +22,9 @@ use alloc::{
 
 #[cfg(feature = "async")]
 use alloc::boxed::Box;
-#[cfg(all(
-    feature = "std",
-    feature = "thread_safe",
-    not(feature = "lock-parking-lot"),
-    not(feature = "lock-spin")
-))]
-use core::any::TypeId;
 #[cfg(feature = "async")]
 use core::mem::replace;
-use core::slice::Iter;
+use core::{any::TypeId, slice::Iter};
 
 #[cfg(feature = "async")]
 use crate::async_impl::{
@@ -78,7 +71,11 @@ impl RegistrationMetadata {
                 not(feature = "lock-spin")
             ))]
             lock_id: RegistrationId::UNINDEXED_LOCK,
-            dependencies: (!dependencies.is_empty()).then(|| dependencies.into_iter().collect()),
+            dependencies: if dependencies.is_empty() {
+                None
+            } else {
+                Some(dependencies.into_iter().collect())
+            },
             config,
             scope_data,
         }
@@ -89,11 +86,16 @@ impl RegistrationMetadata {
     }
 
     fn set_linked_dependencies(&mut self, keys: &[TypeInfo]) {
+        if keys.is_empty() {
+            self.dependencies = None;
+            return;
+        }
+
         // Preserve the last name for duplicate TypeIds, as BTreeSet collection did.
         let mut dependencies: Vec<_> = keys.iter().rev().cloned().map(|type_info| Dependency { type_info }).collect();
         dependencies.sort();
         dependencies.dedup();
-        self.dependencies = (!dependencies.is_empty()).then(|| dependencies.into());
+        self.dependencies = Some(dependencies.into());
     }
 }
 
@@ -366,7 +368,7 @@ impl Registry {
         not(feature = "lock-parking-lot"),
         not(feature = "lock-spin")
     ))]
-    pub(crate) fn dense_lock_keys(&self, is_async: bool) -> Option<(usize, impl Iterator<Item = TypeId> + '_)> {
+    pub(crate) fn indexed_lock_keys(&self, is_async: bool) -> Option<(usize, impl Iterator<Item = TypeId> + '_)> {
         if self.indexed.is_empty() {
             return None;
         }
@@ -449,6 +451,18 @@ impl Registry {
     #[inline]
     pub(crate) fn get(&self, type_info: &TypeInfo) -> Option<&InstantiatorData> {
         self.entries.get(type_info).and_then(Entry::sync)
+    }
+
+    #[inline]
+    pub(crate) fn get_indexed<Dep: 'static>(&self, id: RegistrationId) -> Result<&Entry, ResolveErrorKind> {
+        let (actual, entry) = &self.indexed[id.index()];
+        if actual.id != TypeId::of::<Dep>() {
+            return Err(ResolveErrorKind::IncorrectType {
+                expected: TypeInfo::of::<Dep>(),
+                actual: actual.clone(),
+            });
+        }
+        Ok(entry)
     }
 
     pub(crate) fn unavailable(&self, type_info: TypeInfo) -> ResolveErrorKind {
@@ -555,36 +569,32 @@ impl Registry {
             dependencies: dependencies.iter(),
         });
         // Preserve recursive dependency order.
-        while !stack.is_empty() {
-            let next = {
-                let frame = stack.last_mut().expect("active DFS frame exists");
-                frame.dependencies.next().map(|dependency| (frame.is_async, &dependency.type_info))
-            };
-            if let Some((current_async, dependency)) = next {
-                if let Some(target) = self.entries.get(dependency) {
-                    let target_async = current_async && target.selected.is_async();
-                    if let Some((target_dependencies, _)) = target.metadata(target_async) {
-                        match visited.entry((dependency.clone(), target_async)) {
-                            BTreeMapEntry::Occupied(state) => {
-                                if *state.get() {
-                                    // Preserve the full diagnostic path, including any non-cyclic prefix.
-                                    return true;
-                                }
-                            }
-                            BTreeMapEntry::Vacant(state) => {
-                                state.insert(true);
-                                stack.push(CycleFrame {
-                                    key: dependency.clone(),
-                                    is_async: target_async,
-                                    dependencies: target_dependencies.iter(),
-                                });
-                            }
-                        }
-                    }
-                }
-            } else {
+        while let Some(frame) = stack.last_mut() {
+            let Some(dependency) = frame.dependencies.next() else {
                 let frame = stack.pop().expect("completed DFS frame exists");
                 *visited.get_mut(&(frame.key, frame.is_async)).expect("DFS node remains recorded") = false;
+                continue;
+            };
+            let type_info = &dependency.type_info;
+            let Some(target) = self.entries.get(type_info) else {
+                continue;
+            };
+            let target_async = frame.is_async && target.selected.is_async();
+            let Some((dependencies, _)) = target.metadata(target_async) else {
+                continue;
+            };
+            match visited.entry((type_info.clone(), target_async)) {
+                // Keep the full diagnostic path, including the prefix before the cycle.
+                BTreeMapEntry::Occupied(state) if *state.get() => return true,
+                BTreeMapEntry::Occupied(_) => (),
+                BTreeMapEntry::Vacant(state) => {
+                    state.insert(true);
+                    stack.push(CycleFrame {
+                        key: type_info.clone(),
+                        is_async: target_async,
+                        dependencies: dependencies.iter(),
+                    });
+                }
             }
         }
         false

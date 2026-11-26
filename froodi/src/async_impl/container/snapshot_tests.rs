@@ -6,8 +6,8 @@ use crate::{
     DefaultScope::{App, Runtime},
 };
 
+use core::any::TypeId;
 use std::{
-    any::TypeId,
     sync::{mpsc, Arc},
     thread,
     time::Duration,
@@ -29,7 +29,7 @@ fn parent() -> (Container, Arc<Value>) {
 }
 
 #[test]
-fn async_container_snapshots_share_existing_readers_in_both_caches() {
+fn snapshots_allow_readers_of_both_caches() {
     let (parent, expected) = parent();
     let async_reader = parent.inner.cache.read();
     let sync_reader = parent.sync.inner.cache.read();
@@ -57,7 +57,7 @@ fn async_container_snapshots_share_existing_readers_in_both_caches() {
 }
 
 #[test]
-fn async_descendant_and_embedded_sync_cache_have_independent_parent_gates() {
+fn child_snapshots_use_their_own_gates() {
     let (parent, expected) = parent();
     let request = parent.clone().enter_build().unwrap();
     let async_gate = parent.inner.snapshot_gate.write();

@@ -19,7 +19,11 @@ impl<T> Clone for SharedSlice<T> {
 
 impl<T> From<Vec<T>> for SharedSlice<T> {
     fn from(values: Vec<T>) -> Self {
-        Self((!values.is_empty()).then(|| values.into()))
+        if values.is_empty() {
+            Self::new()
+        } else {
+            Self(Some(values.into()))
+        }
     }
 }
 

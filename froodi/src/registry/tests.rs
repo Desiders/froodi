@@ -31,6 +31,13 @@ mod fragments;
 mod lifecycle;
 #[cfg(not(feature = "thread_safe"))]
 mod local;
+#[cfg(all(
+    feature = "std",
+    feature = "thread_safe",
+    not(feature = "lock-parking-lot"),
+    not(feature = "lock-spin")
+))]
+mod locks;
 #[cfg(feature = "async")]
 mod mixed_validation;
 mod scopes;

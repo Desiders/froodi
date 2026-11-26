@@ -1,8 +1,9 @@
-use super::{Instantiator, InstantiatorFuture, RegistrationInstantiator, SharedFuture};
+use super::{InstError, Instantiator, InstantiatorFuture, RegistrationInstantiator};
 use crate::{
     async_impl::Container,
     registry::RegistrationId,
     utils::{
+        future::BoxFuture,
         shared_slice::SharedSlice,
         thread_safety::{RcAnyThreadSafety, RcThreadSafety, SendSafety, SyncSafety},
     },
@@ -13,7 +14,11 @@ use core::{any::Any, marker::PhantomData};
 
 trait LinkedCall: SendSafety + SyncSafety {
     fn call<'a>(&'a self, container: &'a Container, edges: &'a [RegistrationId]) -> InstantiatorFuture<'a>;
-    fn call_shared<'a>(&'a self, container: &'a Container, edges: &'a [RegistrationId]) -> SharedFuture<'a>;
+    fn call_shared<'a>(
+        &'a self,
+        container: &'a Container,
+        edges: &'a [RegistrationId],
+    ) -> BoxFuture<'a, Result<RcAnyThreadSafety, InstError>>;
 }
 
 struct InstAdapter<Inst, Deps> {
@@ -32,7 +37,11 @@ where
         Box::pin(async move { future.await.map(|out| Box::new(out) as Box<dyn Any>) })
     }
 
-    fn call_shared<'a>(&'a self, container: &'a Container, edges: &'a [RegistrationId]) -> SharedFuture<'a> {
+    fn call_shared<'a>(
+        &'a self,
+        container: &'a Container,
+        edges: &'a [RegistrationId],
+    ) -> BoxFuture<'a, Result<RcAnyThreadSafety, InstError>> {
         let future = self.inst.instantiate_linked(container, edges);
         Box::pin(async move { future.await.map(|out| RcThreadSafety::new(out) as RcAnyThreadSafety) })
     }
@@ -68,7 +77,7 @@ impl ErasedInstantiator {
     }
 
     #[inline]
-    pub(super) fn call_shared<'a>(&'a self, container: &'a Container) -> SharedFuture<'a> {
+    pub(super) fn call_shared<'a>(&'a self, container: &'a Container) -> BoxFuture<'a, Result<RcAnyThreadSafety, InstError>> {
         self.inst.call_shared(container, &self.edges)
     }
 

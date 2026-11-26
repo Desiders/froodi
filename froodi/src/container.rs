@@ -380,14 +380,12 @@ impl Container {
         no_child: E,
         no_target: impl Fn() -> E,
     ) -> Result<Container, E> {
-        let scopes = self.inner.get_scope_with_child_scopes().child();
-        let scope_data = scopes.scope_data;
+        let scope_data = self.inner.get_scope_with_child_scopes().child().scope_data;
         let child_scopes_start = self.inner.child_scopes_start + 1;
         // Preserve Context clone/drop order on failed scope builds.
         let mut child = self.init_descendant(context.clone(), scope_data.ok_or(no_child)?, child_scopes_start, false);
         while !is_target(&child.inner.scope_data) {
-            let scopes = child.inner.get_scope_with_child_scopes().child();
-            let scope_data = scopes.scope_data;
+            let scope_data = child.inner.get_scope_with_child_scopes().child().scope_data;
             let child_scopes_start = child.inner.child_scopes_start + 1;
             child = child.init_descendant(context.clone(), scope_data.ok_or_else(&no_target)?, child_scopes_start, true);
         }
@@ -653,10 +651,10 @@ impl ContainerInner {
 
     #[inline]
     pub(crate) fn get_scope_with_child_scopes(&self) -> ScopeDataWithChildScopesData<'_> {
-        ScopeDataWithChildScopesData::new(self.scope_data, &self.registry.scopes_data[self.child_scopes_start..])
+        ScopeDataWithChildScopesData::new(self.scope_data, self.child_scopes_data())
     }
 
-    #[cfg(test)]
+    #[inline]
     fn child_scopes_data(&self) -> &[ScopeData] {
         &self.registry.scopes_data[self.child_scopes_start..]
     }

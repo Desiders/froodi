@@ -164,6 +164,7 @@ impl<'a> ScopeDataWithChildScopesData<'a> {
 #[cfg(test)]
 mod tests {
     extern crate std;
+
     use super::DefaultScope::*;
     use super::{DefaultScope, Scope, ScopeData, ScopeDataWithChildScopesData, Scopes};
     use alloc::{format, string::ToString as _, vec, vec::Vec};
@@ -266,32 +267,11 @@ mod tests {
 
     #[test]
     fn test_from_sorted() {
-        // Deliberately unsorted input so the sort is actually exercised.
-        let mut shuffled: Vec<ScopeData> = vec![
-            ScopeData::from(Action),  // 4
-            ScopeData::from(Runtime), // 0
-            ScopeData::from(Step),    // 5
-            ScopeData::from(App),     // 1
-            ScopeData::from(Request), // 3
-            ScopeData::from(Session), // 2
-        ];
-        shuffled.sort_by_key(|scope| scope.priority);
-        let result = ScopeDataWithChildScopesData::from_sorted(&shuffled);
+        let scopes = [Runtime, App, Session, Request, Action, Step].map(ScopeData::from);
+        let result = ScopeDataWithChildScopesData::from_sorted(&scopes);
 
         assert_eq!(result.scope_data, Some(ScopeData::from(Runtime)));
-
-        let priorities: Vec<u8> = result.child_scopes_data.iter().map(|s| s.priority).collect();
-        assert_eq!(priorities, vec![1, 2, 3, 4, 5]);
-        assert_eq!(
-            result.child_scopes_data,
-            vec![
-                ScopeData::from(App),
-                ScopeData::from(Session),
-                ScopeData::from(Request),
-                ScopeData::from(Action),
-                ScopeData::from(Step),
-            ]
-        );
+        assert_eq!(result.child_scopes_data, &scopes[1..]);
 
         let empty = ScopeDataWithChildScopesData::from_sorted(&[]);
         assert_eq!(empty.scope_data, None);

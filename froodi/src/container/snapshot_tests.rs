@@ -1,4 +1,3 @@
-// Timeouts detect deadlocks; they do not assert performance.
 extern crate std;
 
 use super::Container;
@@ -7,8 +6,8 @@ use crate::{
     DefaultScope::{App, Runtime},
 };
 
+use core::any::TypeId;
 use std::{
-    any::TypeId,
     sync::{mpsc, Arc, Barrier},
     thread,
     time::Duration,
@@ -31,7 +30,7 @@ fn parent() -> (Container, Arc<Value>) {
 }
 
 #[test]
-fn snapshot_can_complete_while_an_existing_cache_reader_is_held() {
+fn snapshot_allows_existing_cache_readers() {
     let (parent, expected) = parent();
     let existing_reader = parent.inner.cache.read();
     let worker_parent = parent.clone();
@@ -49,7 +48,7 @@ fn snapshot_can_complete_while_an_existing_cache_reader_is_held() {
 }
 
 #[test]
-fn ordinary_cache_read_and_write_do_not_wait_for_the_snapshot_gate() {
+fn cache_operations_bypass_snapshot_gate() {
     let (parent, expected) = parent();
     let gate = parent.inner.snapshot_gate.write();
     let worker_parent = parent.clone();
@@ -75,7 +74,7 @@ fn ordinary_cache_read_and_write_do_not_wait_for_the_snapshot_gate() {
 }
 
 #[test]
-fn a_descendant_uses_its_own_gate_instead_of_its_parents_gate() {
+fn child_snapshot_uses_its_own_gate() {
     let (parent, expected) = parent();
     let request = parent.clone().enter_build().unwrap();
     let gate = parent.inner.snapshot_gate.write();
@@ -92,7 +91,7 @@ fn a_descendant_uses_its_own_gate_instead_of_its_parents_gate() {
 }
 
 #[test]
-fn concurrent_snapshots_keep_identity_while_a_writer_replaces_the_parent_value() {
+fn concurrent_snapshots_keep_value_identity() {
     let (parent, original) = parent();
     let replacement = Arc::new(Value(9));
     let start = Arc::new(Barrier::new(5));

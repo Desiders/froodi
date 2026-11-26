@@ -85,8 +85,10 @@ impl ResolvedSet {
 #[cfg(test)]
 mod tests {
     extern crate std;
-    use super::{Cache, Resolved, TypeId};
+
+    use super::{Cache, Resolved};
     use crate::{any::TypeInfo, utils::thread_safety::RcThreadSafety, Context};
+    use core::any::TypeId;
 
     #[derive(Debug, PartialEq, Eq)]
     struct Foo(u32);
@@ -128,7 +130,7 @@ mod tests {
     }
 
     #[test]
-    fn child_keeps_a_cache_snapshot_and_starts_with_no_resolved_values() {
+    fn child_keeps_cache_and_resets_resolved() {
         let mut parent = Cache::new();
         let id = TypeId::of::<Foo>();
         let value = RcThreadSafety::new(Foo(7));
@@ -152,7 +154,7 @@ mod tests {
     }
 
     #[test]
-    fn extend_context_keeps_a_snapshot_of_entries() {
+    fn extend_context_keeps_entries() {
         let mut ctx = Context::new();
         assert!(ctx.insert(Bar(5)).is_none());
 

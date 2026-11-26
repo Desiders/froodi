@@ -1,4 +1,4 @@
-use core::{any::TypeId, slice::Iter};
+use core::slice::Iter;
 
 #[cfg(feature = "async")]
 use crate::async_impl::Container as AsyncContainer;
@@ -7,22 +7,10 @@ use crate::registry::Selected;
 use crate::{
     any::TypeInfo,
     dependency_resolver::DependencyResolver,
-    registry::{Entry, RegistrationId, Registry, Selection},
+    registry::{RegistrationId, Selection},
     utils::thread_safety::{RcThreadSafety, SendSafety, SyncSafety},
     Container, ResolveErrorKind,
 };
-
-#[inline]
-fn checked_linked_entry<Dep: 'static>(registry: &Registry, id: RegistrationId) -> Result<&Entry, ResolveErrorKind> {
-    let (actual, entry) = &registry.indexed[id.index()];
-    if actual.id != TypeId::of::<Dep>() {
-        return Err(ResolveErrorKind::IncorrectType {
-            expected: TypeInfo::of::<Dep>(),
-            actual: actual.clone(),
-        });
-    }
-    Ok(entry)
-}
 
 pub struct Inject<Dep, const PREFER_SYNC_OVER_ASYNC: bool = true>(pub RcThreadSafety<Dep>);
 
@@ -37,7 +25,7 @@ impl<Dep: SendSafety + SyncSafety + 'static> DependencyResolver for Inject<Dep> 
     #[inline]
     fn resolve_linked(container: &Container, edges: &mut Iter<'_, RegistrationId>) -> Result<Self, Self::Error> {
         let id = *edges.next().expect("one linked edge per injection");
-        let entry = checked_linked_entry::<Dep>(&container.inner.registry, id)?;
+        let entry = container.inner.registry.get_indexed::<Dep>(id)?;
         container.get_selected(Selection::Indexed(entry.sync())).map(Self)
     }
 
@@ -51,7 +39,7 @@ impl<Dep: SendSafety + SyncSafety + 'static> DependencyResolver for Inject<Dep> 
     #[cfg(feature = "async")]
     async fn resolve_async_linked(container: &AsyncContainer, edges: &mut Iter<'_, RegistrationId>) -> Result<Self, Self::Error> {
         let id = *edges.next().expect("one linked edge per injection");
-        let entry = checked_linked_entry::<Dep>(&container.inner.registry, id)?;
+        let entry = container.inner.registry.get_indexed::<Dep>(id)?;
         match &entry.selected {
             Selected::Sync(data) => container.sync.get_selected(Selection::Indexed(Some(data))).map(Self),
             Selected::Async(data) => container.get_selected(Selection::Indexed(Some(data))).await.map(Self),

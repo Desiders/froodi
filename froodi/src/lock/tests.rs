@@ -1,4 +1,4 @@
-use super::{dense_per_type::LockRef, TypeKeyedLocks};
+use super::{indexed_per_type::LockRef, TypeKeyedLocks};
 use crate::{any::TypeInfo, registry::RegistrationId};
 use core::{
     any::TypeId,
@@ -10,7 +10,7 @@ struct First;
 struct Second;
 
 #[test]
-fn dense_locks_remain_lazy_and_shared_without_per_get_arc() {
+fn indexed_locks_are_lazy_and_shared() {
     static INITIALIZATIONS: AtomicUsize = AtomicUsize::new(0);
 
     struct Lock(u8);

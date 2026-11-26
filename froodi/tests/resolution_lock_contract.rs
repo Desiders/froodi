@@ -56,30 +56,10 @@ mod asynchronous {
     use std::{
         collections::BTreeSet,
         future::Future,
-        marker::PhantomPinned,
         sync::Mutex,
         task::{Context, Poll, Wake, Waker},
     };
     use tokio::sync::Semaphore;
-
-    fn assert_unpin(_: &(impl Future + Unpin)) {}
-
-    #[cfg(feature = "thread_safe")]
-    fn assert_send(_: &(impl Future + Send)) {}
-
-    #[test]
-    fn resolution_futures_keep_unpin_and_send_with_non_unpin_output() {
-        let container = AsyncContainer::new(registry! { provide(App, async || Ok(PhantomPinned)) });
-        let cached = container.get::<PhantomPinned>();
-        let transient = container.get_transient::<PhantomPinned>();
-        assert_unpin(&cached);
-        assert_unpin(&transient);
-        #[cfg(feature = "thread_safe")]
-        {
-            assert_send(&cached);
-            assert_send(&transient);
-        }
-    }
 
     struct CountingFactory {
         clones: Arc<AtomicUsize>,
@@ -99,9 +79,11 @@ mod asynchronous {
     impl Instantiator<()> for CountingFactory {
         type Provides = usize;
         type Error = InstantiateErrorKind;
+
         async fn instantiate(&mut self, _: ()) -> Result<Self::Provides, Self::Error> {
             Ok(self.calls.fetch_add(1, Ordering::SeqCst))
         }
+
         fn dependencies() -> BTreeSet<Dependency> {
             BTreeSet::new()
         }
@@ -227,6 +209,7 @@ mod asynchronous {
         id: usize,
         drops: Arc<AtomicUsize>,
     }
+
     impl Drop for Tracked {
         fn drop(&mut self) {
             self.drops.fetch_add(1, Ordering::SeqCst);

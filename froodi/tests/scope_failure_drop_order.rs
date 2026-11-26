@@ -7,6 +7,7 @@ use froodi::{
 use std::sync::Mutex;
 
 type Events = RcThreadSafety<Mutex<Vec<&'static str>>>;
+
 struct Resource;
 struct ContextDrop(Events);
 
