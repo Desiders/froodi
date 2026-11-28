@@ -1,11 +1,13 @@
+use core::any::TypeId;
+
 use crate::{
-    any,
+    any::Map,
     utils::thread_safety::{RcThreadSafety, SendSafety, SyncSafety},
 };
 
 #[derive(Clone)]
 pub struct Context {
-    pub(crate) map: any::Map,
+    pub(crate) map: Map,
 }
 
 impl Default for Context {
@@ -18,21 +20,17 @@ impl Context {
     #[inline]
     #[must_use]
     pub fn new() -> Self {
-        Self { map: any::Map::new() }
+        Self { map: Map::new() }
     }
 
     #[inline]
     pub fn insert<T: SendSafety + SyncSafety + 'static>(&mut self, value: T) -> Option<RcThreadSafety<T>> {
-        self.map
-            .insert(any::TypeInfo::of::<T>(), RcThreadSafety::new(value))
-            .and_then(|boxed| boxed.downcast().ok())
+        self.insert_rc(RcThreadSafety::new(value))
     }
 
     #[inline]
     pub fn insert_rc<T: SendSafety + SyncSafety + 'static>(&mut self, value: RcThreadSafety<T>) -> Option<RcThreadSafety<T>> {
-        self.map
-            .insert(any::TypeInfo::of::<T>(), value)
-            .and_then(|boxed| boxed.downcast().ok())
+        self.map.insert(TypeId::of::<T>(), value).and_then(|boxed| boxed.downcast().ok())
     }
 }
 

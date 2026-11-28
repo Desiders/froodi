@@ -18,11 +18,28 @@ use alloc::{
 };
 use core::marker::PhantomData;
 
+#[cfg(feature = "async")]
+use crate::{
+    async_impl::{
+        instantiator::boxed_container_instantiator as boxed_async_container_instantiator, typed_registration::AsyncProvider,
+        Container as AsyncContainer,
+    },
+    registry::AsyncInstantiatorData,
+};
+
 #[doc(hidden)]
 #[derive(Clone, Copy)]
 pub struct RegistrationId(pub(crate) u32);
 
 impl RegistrationId {
+    #[cfg(all(
+        feature = "std",
+        feature = "thread_safe",
+        not(feature = "lock-parking-lot"),
+        not(feature = "lock-spin")
+    ))]
+    pub(crate) const UNINDEXED_LOCK: Self = Self(u32::MAX);
+
     pub(crate) const fn index(self) -> usize {
         self.0 as usize
     }
@@ -109,6 +126,9 @@ pub struct CollectedRegistration {
 }
 
 pub trait Collect {
+    const ENTRY_COUNT: usize = 0;
+    const RUNTIME_COUNT: usize = 0;
+
     fn collect(self, entries: &mut Vec<CollectedRegistration>, runtime: &mut Vec<RuntimeRegistry>);
 }
 
@@ -117,6 +137,9 @@ impl Collect for Empty {
 }
 
 impl<Left: Collect, Right: Collect> Collect for Node<Left, Right> {
+    const ENTRY_COUNT: usize = Left::ENTRY_COUNT + Right::ENTRY_COUNT;
+    const RUNTIME_COUNT: usize = Left::RUNTIME_COUNT + Right::RUNTIME_COUNT;
+
     fn collect(self, entries: &mut Vec<CollectedRegistration>, runtime: &mut Vec<RuntimeRegistry>) {
         self.0.collect(entries, runtime);
         self.1.collect(entries, runtime);
@@ -130,6 +153,8 @@ where
     Deps: DependencyResolver + 'static,
     Fin: Finalizer<Out> + SendSafety + SyncSafety,
 {
+    const ENTRY_COUNT: usize = 1;
+
     fn collect(self, entries: &mut Vec<CollectedRegistration>, _runtime: &mut Vec<RuntimeRegistry>) {
         let Registration {
             inst, fin, scope, config, ..
@@ -139,11 +164,7 @@ where
             data: Selected::Sync(InstantiatorData {
                 instantiator: RegistrationInstantiator::linked::<Inst, Deps>(inst, self.targets),
                 finalizer: fin.map(boxed_finalizer_factory),
-                metadata: RegistrationMetadata {
-                    dependencies: BTreeSet::new(),
-                    scope_data: scope,
-                    config,
-                },
+                metadata: RegistrationMetadata::new(BTreeSet::new(), config, scope),
             }),
         });
     }
@@ -168,17 +189,15 @@ impl<Root> Link<Root, ()> for ContainerLeaf {
 }
 
 impl Collect for ContainerLeaf {
+    const ENTRY_COUNT: usize = 1;
+
     fn collect(self, entries: &mut Vec<CollectedRegistration>, _runtime: &mut Vec<RuntimeRegistry>) {
         entries.push(CollectedRegistration {
             key: TypeInfo::of::<Container>(),
             data: Selected::Sync(InstantiatorData {
                 instantiator: boxed_container_instantiator().into(),
                 finalizer: None,
-                metadata: RegistrationMetadata {
-                    dependencies: BTreeSet::new(),
-                    config: Config { cache_provides: false },
-                    scope_data: self.scope,
-                },
+                metadata: RegistrationMetadata::new(BTreeSet::new(), Config { cache_provides: false }, self.scope),
             }),
         });
     }
@@ -195,7 +214,7 @@ pub struct AsyncContainerLeaf {
 
 #[cfg(feature = "async")]
 impl RegistryIndex for AsyncContainerLeaf {
-    type Index = crate::async_impl::typed_registration::AsyncProvider<crate::async_impl::Container>;
+    type Index = AsyncProvider<AsyncContainer>;
 }
 
 #[cfg(feature = "async")]
@@ -211,17 +230,15 @@ impl<Root> Link<Root, ()> for AsyncContainerLeaf {
 
 #[cfg(feature = "async")]
 impl Collect for AsyncContainerLeaf {
+    const ENTRY_COUNT: usize = 1;
+
     fn collect(self, entries: &mut Vec<CollectedRegistration>, _: &mut Vec<RuntimeRegistry>) {
         entries.push(CollectedRegistration {
-            key: TypeInfo::of::<crate::async_impl::Container>(),
-            data: Selected::Async(crate::registry::AsyncInstantiatorData {
-                instantiator: crate::async_impl::instantiator::boxed_container_instantiator().into(),
+            key: TypeInfo::of::<AsyncContainer>(),
+            data: Selected::Async(AsyncInstantiatorData {
+                instantiator: boxed_async_container_instantiator().into(),
                 finalizer: None,
-                metadata: RegistrationMetadata {
-                    dependencies: BTreeSet::new(),
-                    config: Config { cache_provides: false },
-                    scope_data: self.scope,
-                },
+                metadata: RegistrationMetadata::new(BTreeSet::new(), Config { cache_provides: false }, self.scope),
             }),
         });
     }
@@ -272,8 +289,8 @@ where
             self.tree,
             Node(ContainerLeaf { scope: scopes[0] }, AsyncContainerLeaf { scope: scopes[0] }),
         );
-        let mut entries = Vec::new();
-        let mut runtime = Vec::new();
+        let mut entries = Vec::with_capacity(<<Root<Tree> as Link<Index<Tree>, Links>>::Linked as Collect>::ENTRY_COUNT);
+        let mut runtime = Vec::with_capacity(<<Root<Tree> as Link<Index<Tree>, Links>>::Linked as Collect>::RUNTIME_COUNT);
         root.link().collect(&mut entries, &mut runtime);
         assemble(
             entries,
@@ -337,6 +354,14 @@ pub(crate) fn prepare(mut registry: RuntimeRegistry, cycles_checked: bool, plan:
         }
         ids.into_keys().collect()
     };
+    // Assign lock IDs within each execution kind in registry order.
+    #[cfg(all(
+        feature = "std",
+        feature = "thread_safe",
+        not(feature = "lock-parking-lot"),
+        not(feature = "lock-spin")
+    ))]
+    registry.index_locks();
     registry.indexed = keys
         .into_iter()
         .map(|key| {

@@ -43,6 +43,8 @@ impl<Root> Link<Root, ()> for RuntimeNode {
 }
 
 impl Collect for RuntimeNode {
+    const RUNTIME_COUNT: usize = 1;
+
     fn collect(self, _: &mut Vec<CollectedRegistration>, runtime: &mut Vec<RuntimeRegistry>) {
         runtime.push(self.0);
     }
@@ -77,6 +79,8 @@ impl<Root, T> Link<Root, ()> for BoundaryLeaf<T> {
 }
 
 impl<T: 'static> Collect for BoundaryLeaf<T> {
+    const ENTRY_COUNT: usize = 1;
+
     fn collect(self, entries: &mut Vec<CollectedRegistration>, _: &mut Vec<RuntimeRegistry>) {
         entries.push(CollectedRegistration {
             key: TypeInfo::of::<T>(),

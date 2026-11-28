@@ -9,13 +9,16 @@ use super::{
 mod linked;
 
 use self::linked::ErasedInstantiator;
-use crate::registry::RegistrationId;
 use crate::{
     dependency::Dependency,
     dependency_resolver::DependencyResolver,
     errors::{InstantiateErrorKind, InstantiatorErrorKind},
-    utils::thread_safety::{SendSafety, SyncSafety},
-    ResolveErrorKind,
+    registry::RegistrationId,
+    utils::{
+        future::BoxFuture,
+        thread_safety::{RcThreadSafety, SendSafety, SyncSafety},
+    },
+    ResolveErrorKind, TypeInfo,
 };
 
 pub trait Instantiator<Deps>: Clone + 'static
@@ -136,17 +139,57 @@ impl From<BoxedCloneInstantiator<ResolveErrorKind, InstantiateErrorKind>> for Re
     }
 }
 
+type InstError = InstantiatorErrorKind<ResolveErrorKind, InstantiateErrorKind>;
+pub(super) type InstantiatorFuture<'a> = BoxFuture<'a, Result<Box<dyn Any>, InstError>>;
+
 impl RegistrationInstantiator {
     #[allow(clippy::manual_async_fn)]
-    pub(crate) fn call(
-        &self,
-        container: Container,
-    ) -> impl Future<Output = Result<Box<dyn Any>, InstantiatorErrorKind<ResolveErrorKind, InstantiateErrorKind>>> + SendSafety + '_ {
+    pub(crate) fn call<'a>(&'a self, container: &'a Container) -> impl Future<Output = Result<Box<dyn Any>, InstError>> + SendSafety + 'a {
         async move {
             match self {
-                Self::Runtime(inst) => Service::call(&mut inst.clone(), container).await,
+                Self::Runtime(inst) => {
+                    let container = container.clone();
+                    Service::call(&mut inst.clone(), container).await
+                }
                 Self::Linked(inst) => inst.call(container).await,
             }
+        }
+    }
+
+    pub(super) fn call_boxed<'a>(&'a self, container: &'a Container) -> InstantiatorFuture<'a> {
+        match self {
+            Self::Linked(inst) => inst.call(container),
+            Self::Runtime(_) => Box::pin(self.call(container)),
+        }
+    }
+
+    pub(super) async fn call_shared<Dep: SendSafety + SyncSafety + 'static>(
+        &self,
+        container: &Container,
+        type_info: &TypeInfo,
+    ) -> Result<RcThreadSafety<Dep>, ResolveErrorKind> {
+        match self {
+            Self::Linked(inst) => match inst.call_shared(container).await {
+                Ok(dependency) => dependency
+                    .downcast::<Dep>()
+                    .map_err(|incorrect_type| ResolveErrorKind::IncorrectType {
+                        expected: type_info.clone(),
+                        actual: TypeInfo::of_val::<dyn Any>(&*incorrect_type),
+                    }),
+                Err(InstantiatorErrorKind::Deps(err)) => Err(ResolveErrorKind::Instantiator(InstantiatorErrorKind::Deps(Box::new(err)))),
+                Err(InstantiatorErrorKind::Factory(err)) => Err(ResolveErrorKind::Instantiator(InstantiatorErrorKind::Factory(err))),
+            },
+            Self::Runtime(_) => match self.call(container).await {
+                Ok(dependency) => match dependency.downcast::<Dep>() {
+                    Ok(dependency) => Ok(RcThreadSafety::new(*dependency)),
+                    Err(incorrect_type) => Err(ResolveErrorKind::IncorrectType {
+                        expected: type_info.clone(),
+                        actual: TypeInfo::of_val(&*incorrect_type),
+                    }),
+                },
+                Err(InstantiatorErrorKind::Deps(err)) => Err(ResolveErrorKind::Instantiator(InstantiatorErrorKind::Deps(Box::new(err)))),
+                Err(InstantiatorErrorKind::Factory(err)) => Err(ResolveErrorKind::Instantiator(InstantiatorErrorKind::Factory(err))),
+            },
         }
     }
 }

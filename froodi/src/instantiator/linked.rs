@@ -2,7 +2,10 @@ use super::{Instantiator, RegistrationInstantiator};
 use crate::{
     errors::InstantiatorErrorKind,
     registry::RegistrationId,
-    utils::thread_safety::{RcThreadSafety, SendSafety, SyncSafety},
+    utils::{
+        shared_slice::SharedSlice,
+        thread_safety::{RcThreadSafety, SendSafety, SyncSafety},
+    },
     Container, DependencyResolver, InstantiateErrorKind, ResolveErrorKind, TypeInfo,
 };
 use alloc::{boxed::Box, collections::BTreeMap, vec::Vec};
@@ -34,8 +37,8 @@ where
 #[derive(Clone)]
 pub(crate) struct ErasedInstantiator {
     inst: RcThreadSafety<dyn LinkedCall>,
-    pub(crate) keys: RcThreadSafety<[TypeInfo]>,
-    pub(crate) edges: RcThreadSafety<[RegistrationId]>,
+    pub(crate) keys: SharedSlice<TypeInfo>,
+    pub(crate) edges: SharedSlice<RegistrationId>,
 }
 
 impl RegistrationInstantiator {
@@ -47,7 +50,7 @@ impl RegistrationInstantiator {
         let inst = RcThreadSafety::new(InstAdapter::<Inst, Deps> { inst, marker: PhantomData });
         Self::Linked(ErasedInstantiator {
             inst,
-            keys: Vec::new().into(),
+            keys: SharedSlice::new(),
             edges: edges.into(),
         })
     }
@@ -55,8 +58,8 @@ impl RegistrationInstantiator {
 
 impl ErasedInstantiator {
     #[inline]
-    pub(super) fn call(&self, container: Container) -> Result<Box<dyn Any>, InstError> {
-        self.inst.call(&container, &self.edges)
+    pub(super) fn call(&self, container: &Container) -> Result<Box<dyn Any>, InstError> {
+        self.inst.call(container, &self.edges)
     }
 
     pub(crate) fn remap(&mut self, ids: &BTreeMap<TypeInfo, RegistrationId>) {

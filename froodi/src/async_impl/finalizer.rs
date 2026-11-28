@@ -1,4 +1,3 @@
-use alloc::boxed::Box;
 use core::future::Future;
 
 use super::service::{service_fn, BoxCloneService};
@@ -16,7 +15,7 @@ where
     Dep: SendSafety + SyncSafety + 'static,
     Fin: Finalizer<Dep> + SendSafety + SyncSafety,
 {
-    BoxCloneService::new(Box::new(service_fn(move |dependency: RcAnyThreadSafety| {
+    BoxCloneService::new(service_fn(move |dependency: RcAnyThreadSafety| {
         let mut finalizer = finalizer.clone();
         let dependency = dependency.downcast::<Dep>().expect("Failed to downcast value in finalizer factory");
 
@@ -24,7 +23,7 @@ where
             finalizer.finalize(dependency).await;
             Ok(())
         }
-    })))
+    }))
 }
 
 impl<F, Fut, Dep> Finalizer<Dep> for F

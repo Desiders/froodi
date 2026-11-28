@@ -151,13 +151,25 @@ mod generic {
     }
 }
 
-#[cfg(any(feature = "thread_safe", feature = "async"))]
+#[cfg(all(
+    any(feature = "thread_safe", feature = "async"),
+    not(all(
+        feature = "std",
+        feature = "thread_safe",
+        not(feature = "lock-parking-lot"),
+        not(feature = "lock-spin")
+    ))
+))]
 mod generic_per_type {
     use alloc::collections::BTreeMap;
     use core::any::TypeId;
 
     use super::generic::LocalLock;
-    use crate::utils::thread_safety::RcThreadSafety;
+    use crate::{
+        any::TypeInfo,
+        registry::{RegistrationMetadata, Registry},
+        utils::thread_safety::RcThreadSafety,
+    };
 
     /// A `TypeId`-keyed registry of lazily-created locks of type `M`.
     ///
@@ -182,10 +194,18 @@ mod generic_per_type {
         }
     }
 
+    impl<M> TypeKeyedLocks<M> {
+        #[inline]
+        pub(super) fn for_registry(_registry: &Registry, _is_async: bool) -> Self {
+            Self::default()
+        }
+    }
+
     impl<M: Default> TypeKeyedLocks<M> {
         #[inline]
         #[must_use]
-        pub(crate) fn get(&self, type_id: TypeId) -> RcThreadSafety<M> {
+        pub(crate) fn get_for(&self, type_info: &TypeInfo, _metadata: &RegistrationMetadata) -> RcThreadSafety<M> {
+            let type_id = type_info.id;
             if let Some(lock) = self.locks.read().get(&type_id) {
                 return lock.clone();
             }
@@ -199,6 +219,154 @@ mod generic_per_type {
     }
 }
 
+#[cfg(all(
+    feature = "std",
+    feature = "thread_safe",
+    not(feature = "lock-parking-lot"),
+    not(feature = "lock-spin")
+))]
+mod indexed_per_type {
+    use alloc::{boxed::Box, collections::BTreeMap, vec::Vec};
+    use core::{any::TypeId, ops::Deref};
+    use std::sync::OnceLock;
+
+    use super::generic::LocalLock;
+    use crate::{
+        any::TypeInfo,
+        registry::{RegistrationId, RegistrationMetadata, Registry},
+        utils::thread_safety::RcThreadSafety,
+    };
+
+    struct IndexedLock<M> {
+        type_id: TypeId,
+        value: OnceLock<M>,
+    }
+
+    enum LockRegistry<M> {
+        Indexed(Box<[IndexedLock<M>]>),
+        Map(LocalLock<BTreeMap<TypeId, RcThreadSafety<M>>>),
+    }
+
+    pub(crate) struct TypeKeyedLocks<M> {
+        locks: RcThreadSafety<LockRegistry<M>>,
+    }
+
+    pub(crate) enum LockRef<'a, M> {
+        Indexed(&'a M),
+        Map(RcThreadSafety<M>),
+    }
+
+    impl<M> Deref for LockRef<'_, M> {
+        type Target = M;
+
+        fn deref(&self) -> &Self::Target {
+            match self {
+                Self::Indexed(lock) => lock,
+                Self::Map(lock) => lock,
+            }
+        }
+    }
+
+    impl<M> Clone for TypeKeyedLocks<M> {
+        #[inline]
+        fn clone(&self) -> Self {
+            Self { locks: self.locks.clone() }
+        }
+    }
+
+    impl<M> Default for TypeKeyedLocks<M> {
+        fn default() -> Self {
+            Self {
+                locks: RcThreadSafety::new(LockRegistry::Map(LocalLock::new(BTreeMap::new()))),
+            }
+        }
+    }
+
+    impl<M> TypeKeyedLocks<M> {
+        #[inline]
+        pub(super) fn for_registry(registry: &Registry, is_async: bool) -> Self {
+            match registry.indexed_lock_keys(is_async) {
+                Some((len, keys)) => Self::with_indexed_keys(len, keys),
+                None => Self::default(),
+            }
+        }
+
+        // Keys are unique TypeIds for one execution kind in frozen registry order.
+        pub(crate) fn with_indexed_keys(len: usize, keys: impl Iterator<Item = TypeId>) -> Self {
+            let mut indexed = Vec::with_capacity(len);
+            indexed.extend(keys.map(|type_id| IndexedLock {
+                type_id,
+                value: OnceLock::new(),
+            }));
+            if indexed.is_empty() {
+                return Self::default();
+            }
+            Self {
+                locks: RcThreadSafety::new(LockRegistry::Indexed(indexed.into_boxed_slice())),
+            }
+        }
+    }
+
+    impl<M: Default> TypeKeyedLocks<M> {
+        #[inline]
+        pub(crate) fn get_for(&self, type_info: &TypeInfo, metadata: &RegistrationMetadata) -> LockRef<'_, M> {
+            self.get(type_info, metadata.lock_id)
+        }
+
+        #[inline]
+        pub(crate) fn get(&self, type_info: &TypeInfo, id: RegistrationId) -> LockRef<'_, M> {
+            match &*self.locks {
+                LockRegistry::Indexed(locks) => {
+                    let index = id.index();
+                    let slot = locks
+                        .get(index)
+                        .filter(|slot| slot.type_id == type_info.id)
+                        .unwrap_or_else(|| panic!("invalid lock index {index} for type {}", type_info.name));
+                    LockRef::Indexed(slot.value.get_or_init(M::default))
+                }
+                LockRegistry::Map(locks) => {
+                    if let Some(lock) = locks.read().get(&type_info.id) {
+                        return LockRef::Map(lock.clone());
+                    }
+                    LockRef::Map(
+                        locks
+                            .write()
+                            .entry(type_info.id)
+                            .or_insert_with(|| RcThreadSafety::new(M::default()))
+                            .clone(),
+                    )
+                }
+            }
+        }
+    }
+}
+
+#[cfg(feature = "thread_safe")]
+use backend::Mutex as SyncMutex;
+#[cfg(feature = "async")]
+use tokio::sync::Mutex as AsyncMutex;
+
+#[cfg(any(feature = "thread_safe", feature = "async"))]
+use crate::registry::Registry;
+
+#[cfg(all(
+    any(feature = "thread_safe", feature = "async"),
+    not(all(
+        feature = "std",
+        feature = "thread_safe",
+        not(feature = "lock-parking-lot"),
+        not(feature = "lock-spin")
+    ))
+))]
+use generic_per_type::TypeKeyedLocks;
+#[cfg(all(
+    feature = "std",
+    feature = "thread_safe",
+    not(feature = "lock-parking-lot"),
+    not(feature = "lock-spin")
+))]
+use indexed_per_type::TypeKeyedLocks;
+
 pub(crate) use generic::LocalLock;
 
 /// Synchronous per-type instantiation locks using the selected synchronization backend.
@@ -206,8 +374,31 @@ pub(crate) use generic::LocalLock;
 /// This deliberately uses the same backend as [`LocalLock`], so choosing an override replaces all
 /// synchronous locking primitives rather than only the container-state lock.
 #[cfg(feature = "thread_safe")]
-pub(crate) type PerTypeSyncLocks = generic_per_type::TypeKeyedLocks<backend::Mutex<()>>;
+pub(crate) type PerTypeSyncLocks = TypeKeyedLocks<SyncMutex<()>>;
 
-/// Async per-type instantiation locks (`tokio::sync::Mutex`).
+#[cfg(feature = "thread_safe")]
+impl PerTypeSyncLocks {
+    pub(crate) fn from_registry(registry: &Registry) -> Self {
+        Self::for_registry(registry, false)
+    }
+}
+
+/// Async per-type instantiation locks.
 #[cfg(feature = "async")]
-pub(crate) type PerTypeAsyncLocks = generic_per_type::TypeKeyedLocks<tokio::sync::Mutex<()>>;
+pub(crate) type PerTypeAsyncLocks = TypeKeyedLocks<AsyncMutex<()>>;
+
+#[cfg(feature = "async")]
+impl PerTypeAsyncLocks {
+    pub(crate) fn from_registry(registry: &Registry) -> Self {
+        Self::for_registry(registry, true)
+    }
+}
+
+#[cfg(all(
+    test,
+    feature = "std",
+    feature = "thread_safe",
+    not(feature = "lock-parking-lot"),
+    not(feature = "lock-spin")
+))]
+mod tests;

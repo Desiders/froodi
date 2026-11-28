@@ -29,11 +29,7 @@ where
         InstantiatorData {
             instantiator: boxed_instantiator(inst).into(),
             finalizer: fin.map(boxed_finalizer_factory),
-            metadata: RegistrationMetadata {
-                dependencies: Inst::dependencies(),
-                config: config.unwrap_or_default(),
-                scope_data: scope.into(),
-            },
+            metadata: RegistrationMetadata::new(Inst::dependencies(), config.unwrap_or_default(), scope.into()),
         },
     )
 }

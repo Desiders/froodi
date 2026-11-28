@@ -24,10 +24,9 @@ impl<Dep: SendSafety + SyncSafety + 'static> DependencyResolver for Inject<Dep> 
 
     #[inline]
     fn resolve_linked(container: &Container, edges: &mut Iter<'_, RegistrationId>) -> Result<Self, Self::Error> {
-        let id = edges.next().expect("one linked edge per injection");
-        container
-            .get_selected(Selection::Indexed(container.inner.registry.indexed[id.index()].1.sync()))
-            .map(Self)
+        let id = *edges.next().expect("one linked edge per injection");
+        let entry = container.inner.registry.get_indexed::<Dep>(id)?;
+        container.get_selected(Selection::Indexed(entry.sync())).map(Self)
     }
 
     #[inline]
@@ -40,7 +39,8 @@ impl<Dep: SendSafety + SyncSafety + 'static> DependencyResolver for Inject<Dep> 
     #[cfg(feature = "async")]
     async fn resolve_async_linked(container: &AsyncContainer, edges: &mut Iter<'_, RegistrationId>) -> Result<Self, Self::Error> {
         let id = *edges.next().expect("one linked edge per injection");
-        match &container.inner.registry.indexed[id.index()].1.selected {
+        let entry = container.inner.registry.get_indexed::<Dep>(id)?;
+        match &entry.selected {
             Selected::Sync(data) => container.sync.get_selected(Selection::Indexed(Some(data))).map(Self),
             Selected::Async(data) => container.get_selected(Selection::Indexed(Some(data))).await.map(Self),
             Selected::Missing => container.get_selected(Selection::Indexed(None)).await.map(Self),
